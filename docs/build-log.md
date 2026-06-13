@@ -57,3 +57,19 @@ Per ECC Principle 7B: every build session appends a 5-line entry. Read this befo
   - AI chunks expose `tokensIn / tokensOut / model` in the UI's per-row badge.
 - **Skipped (Principle 10B):** brief pane is rendered but disabled (lands in step 5); other tabs are signpost stubs.
 
+---
+
+## Step 5 — single-agent end-to-end (done 2026-06-13)
+
+- `packages/orchestrator` ships `submitBrief()` (Chief-of-Staff dispatcher) and `decideApproval()` + `listPending()`. Idempotent CoS agent provisioning per workspace (one row per role+workspace).
+- `apps/server`: two new route modules — `routes/briefs.ts` (`POST /api/workspaces/:id/briefs`) and `routes/approvals.ts` (`GET /api/workspaces/:id/approvals/pending`, `POST /api/approvals/:id?workspace=...`).
+- `apps/web/app/ops`: `BriefPane` (live textarea + ⌘↵ submit) and `PendingTray` (1.5s poll, approve/deny buttons), wired into the right rail of `/ops`.
+- Synthetic Bash tool-use is appended at the end of every brief to demo the approval pathway; **step 8 will replace this with a real MCP permission-prompt-tool hook**.
+- **Verified (pass@2):**
+  - **Run 1 (approve):** brief "Plan how to ship our v0.1 docs site by Friday" → 4 chunks captured, agent responded, synthetic Bash approval surfaced → `POST /api/approvals/...?workspace=demo {decision:'approved'}` → events.jsonl ends with `approval: approved` + `system: approved Bash(...) — would execute`.
+  - **Run 2 (deny):** brief "Outline a tiny CI pipeline in 3 bullets" → same flow → `decision:'denied'` → events.jsonl ends with `approval: denied` + `system: denied Bash(...)`.
+  - Same agent id reused on second brief (idempotent provisioning).
+  - 11 events written per run, all parse-clean.
+- **Bug noted:** `tsx watch` killed the server during build when a route imported `@guideai/orchestrator` before the workspace `pnpm install` had been run. Workflow lesson: install new workspace packages BEFORE saving routes that import them, or restart dev after install.
+- **Skipped (Principle 10B):** real tool interception via MCP permission-prompt-tool (step 8); brief is sent through one-shot `runOnce` rather than long-running `spawn` (step 6+ when phases need stdin replies).
+

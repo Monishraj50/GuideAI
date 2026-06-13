@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@guideai/messaging": "workspace:*",
+    "@guideai/orchestrator": "workspace:*",
     "@guideai/policies": "workspace:*",
     "@guideai/shared": "workspace:*",
     "fastify": "^5.2.0"

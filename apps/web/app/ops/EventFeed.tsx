@@ -49,7 +49,10 @@ export function EventFeed({ workspaceId }: { workspaceId: string }) {
   const [replayed, setReplayed] = useState<number | null>(null);
   const [tokensIn, setTokensIn] = useState(0);
   const [tokensOut, setTokensOut] = useState(0);
+  const [hintTs, setHintTs] = useState<number | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { setHintTs(Date.now()); }, []);
 
   useEffect(() => {
     const es = new EventSource(`/api/workspaces/${workspaceId}/events`);
@@ -97,8 +100,8 @@ export function EventFeed({ workspaceId }: { workspaceId: string }) {
         {events.length === 0 && (
           <li className="text-dim italic py-4">
             Waiting for events. Try:<br />
-            <code className="text-ink">curl -X POST -H 'content-type: application/json' \</code><br />
-            <code className="text-ink">&nbsp;&nbsp;-d '{`{"id":"t1","ts":${Date.now()},"workspaceId":"${workspaceId}","kind":"system","text":"hello","level":"info"}`}' \</code><br />
+            <code className="text-ink">curl -X POST -H &apos;content-type: application/json&apos; \</code><br />
+            <code className="text-ink">&nbsp;&nbsp;-d &apos;{`{"id":"t1","ts":${hintTs ?? 0},"workspaceId":"${workspaceId}","kind":"system","text":"hello","level":"info"}`}&apos; \</code><br />
             <code className="text-ink">&nbsp;&nbsp;http://localhost:3000/api/workspaces/{workspaceId}/events</code>
           </li>
         )}
