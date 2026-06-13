@@ -8,12 +8,14 @@
   "exports": {
     ".": "./src/index.ts",
     "./cos": "./src/cos.ts",
-    "./approvals": "./src/approvals.ts"
+    "./approvals": "./src/approvals.ts",
+    "./hiring": "./src/hiring.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@guideai/agents-catalog": "workspace:*",
     "@guideai/messaging": "workspace:*",
     "@guideai/policies": "workspace:*",
     "@guideai/runtime-claude": "workspace:*",

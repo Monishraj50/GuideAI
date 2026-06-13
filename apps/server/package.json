@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@guideai/agents-catalog": "workspace:*",
     "@guideai/messaging": "workspace:*",
     "@guideai/orchestrator": "workspace:*",
     "@guideai/policies": "workspace:*",

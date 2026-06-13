@@ -116,3 +116,19 @@ Per ECC Principle 7B: every build session appends a 5-line entry. Read this befo
   - **Run 2:** brief "Pick one log line we should always emit at startup" → synthetic Bash emitted → policy engine matched the rule → `ToolChunk(status:'denied')` + `ApprovalChunk(decision:'denied', ruleId: rule-syn-bash-…)` + `system: auto-denied Bash(...) via rule-syn-bash-…` — **no new pending approval row created**.
 - **Surfaced (Principle 10B):** rules apply only to *new* decisions; stale pending approvals from before the rule existed stay queued until the user acts on them. That's intentional (avoids surprising retroactive auto-flips), worth a UI bulk-clear later.
 
+---
+
+## Step 9 — Hire Marketplace (done 2026-06-13)
+
+- `packages/agents-catalog` ships `loadCatalog()`, `departments()`, `findAgent()`, and a `seed.ts` script that fetches the full catalog from `VoltAgent/awesome-claude-code-subagents` via GitHub trees API + `raw.githubusercontent.com` (no rate-limit on raw). One-time `pnpm --filter @guideai/agents-catalog seed` writes `~/.guideai/catalog/catalog.json` (~880KB) with 154 agents across 10 departments.
+- `packages/orchestrator/src/hiring.ts` ships `hireAgent()`, `retireAgent()`, `listRoster()`. Hires are idempotent on `role` (returns the existing live agent if present); retire sets `status: 'retired'` (doesn't delete — preserves audit). Re-hiring after retire creates a new agent row with a fresh id.
+- `apps/server/src/routes/catalog.ts`: `GET /api/catalog` (departments + count), `GET /api/catalog/agents` (filter by `?dept=…&q=…`), `GET /api/catalog/agents/:role` (full body for preview), `POST /api/workspaces/:id/agents {role}`, `DELETE /api/workspaces/:id/agents/:agentId`, `GET /api/workspaces/:id/agents` (roster).
+- `/hire` page: 3-column layout — department list (incl. live counts) + active filter, search-by-substring middle pane with hire button, and a right-rail preview that loads the system-prompt body on hover.
+- **Verified end-to-end:**
+  - seed → 154 agents written; departments breakdown matches VoltAgent's repo (Language Specialists 30, Quality & Security 17, Infrastructure 16, etc.).
+  - `POST /api/workspaces/demo/agents {role:'backend-developer'}` → row inserted with tools `[Read,Write,Edit,Bash,Glob,Grep]`; second identical call returns the same id (idempotent).
+  - Hired three roles (backend-developer, frontend-developer, qa-expert) → roster of 4 (plus CoS).
+  - Retired backend-developer → roster shrinks to 3 → hired again → got a NEW id (`backend-developer-92331b`), proving non-destructive retire + clean re-hire.
+  - Every hire/retire emits a `system: hired … into workspace` / `system: retired …` chunk; SSE confirms 5 such events across the test.
+- **Surfaced (Principle 10B):** `prettyName()` title-cases naively → "qa-expert" renders as "Qa Expert" instead of "QA Expert". Cosmetic, easy fix in step 10 when Org Chart polishes the display names; agent identity is by `role`, not by display name, so no functional impact.
+
