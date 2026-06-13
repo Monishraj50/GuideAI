@@ -1,0 +1,18 @@
+node_modules
+dist
+.next
+.turbo
+*.log
+.DS_Store
+.env
+.env.local
+coverage
+*.tsbuildinfo
+
+# Runtime data (created at first launch; user-specific)
+~/.guideai/
+
+# Local-only AI assistant configuration (kept on disk, not committed)
+CLAUDE.md
+.mcp.json
+.claude/

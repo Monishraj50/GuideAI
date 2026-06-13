@@ -1,0 +1,9 @@
+{
+  "name": "@guideai/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node -e \"console.log('[web] placeholder until step 4 (Mission Control feed). Server is on :4000.'); setInterval(()=>{}, 1e9)\""
+  }
+}
