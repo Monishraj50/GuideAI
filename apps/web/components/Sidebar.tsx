@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { Killswitch } from './Killswitch';
 
 const TABS = [
   { href: '/', label: 'Home', hint: 'digest' },
@@ -27,9 +28,12 @@ export function Sidebar() {
           <span className="text-dim text-xs group-hover:text-ink">{t.hint}</span>
         </Link>
       ))}
-      <div className="mt-auto px-2 py-2 border-t border-line text-xs text-dim">
-        <div>workspace: <span className="text-ink">demo</span></div>
-        <div>step 4 / 15</div>
+      <div className="mt-auto">
+        <Killswitch workspaceId="demo" />
+        <div className="px-2 py-2 border-t border-line text-xs text-dim">
+          <div>workspace: <span className="text-ink">demo</span></div>
+          <div>step 15 / 15</div>
+        </div>
       </div>
     </aside>
   );

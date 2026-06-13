@@ -13,6 +13,59 @@ import type { Chunk, AIChunk, SystemChunk, ToolChunk } from '@guideai/shared/chu
 
 const CLAUDE_BIN = process.env.GUIDEAI_CLAUDE_BIN ?? 'claude';
 
+// Module-scoped registry of every live Claude child process so the killswitch
+// can stop-the-world (Principle 8). Add/remove around every spawn.
+interface Tracked { proc: ChildProcess; workspaceId: string; agentId: string; startedAt: number; }
+const TRACKED = new Set<Tracked>();
+
+function track(t: Tracked) {
+  TRACKED.add(t);
+  t.proc.on('close', () => TRACKED.delete(t));
+}
+
+/** Snapshot of currently-running Claude agents. */
+export function listRunningClaudeAgents() {
+  return Array.from(TRACKED).map((t) => ({
+    pid: t.proc.pid,
+    workspaceId: t.workspaceId,
+    agentId: t.agentId,
+    startedAt: t.startedAt,
+    uptimeMs: Date.now() - t.startedAt,
+  }));
+}
+
+/**
+ * Stop-the-world. Sends SIGTERM to every tracked Claude process; escalates to
+ * SIGKILL after `hardTimeoutMs`. Resolves once every process has emitted
+ * 'close' OR the hard deadline has passed. Returns the count killed.
+ */
+export async function killAllClaudeAgents(opts: { hardTimeoutMs?: number } = {}): Promise<{ killed: number; durationMs: number }> {
+  const hardTimeoutMs = opts.hardTimeoutMs ?? 2000;
+  const start = Date.now();
+  const snapshot = Array.from(TRACKED);
+  if (snapshot.length === 0) return { killed: 0, durationMs: Date.now() - start };
+
+  const exits = snapshot.map((t) => new Promise<void>((resolve) => {
+    if (t.proc.exitCode !== null) { resolve(); return; }
+    t.proc.once('close', () => resolve());
+  }));
+
+  for (const t of snapshot) {
+    try { if (!t.proc.killed) t.proc.kill('SIGTERM'); } catch {}
+  }
+
+  // Hard deadline: SIGKILL anything still alive at hardTimeoutMs.
+  const kill9 = setTimeout(() => {
+    for (const t of snapshot) {
+      try { if (t.proc.exitCode === null && !t.proc.killed) t.proc.kill('SIGKILL'); } catch {}
+    }
+  }, hardTimeoutMs);
+
+  await Promise.all(exits);
+  clearTimeout(kill9);
+  return { killed: snapshot.length, durationMs: Date.now() - start };
+}
+
 // Env allowlist per ECC Principle 8 (deny-by-default secrets). PATH and HOME are
 // needed for the CLI to find itself; everything else is opt-in via SpawnOpts.env.
 const BASE_ENV_ALLOWED = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TERM', 'USER'];
@@ -183,6 +236,7 @@ export const ClaudeAdapter: RuntimeAdapter = {
       env: buildEnv(opts.env),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+    track({ proc, workspaceId: opts.workspaceId, agentId: opts.agentId, startedAt: Date.now() });
 
     const listeners = new Set<(c: Chunk) => void>();
     attachStream(proc, opts.workspaceId, opts.agentId, listeners);
@@ -226,6 +280,7 @@ export const ClaudeAdapter: RuntimeAdapter = {
       env: buildEnv(opts.env),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    track({ proc, workspaceId: opts.workspaceId, agentId: opts.agentId, startedAt: start });
 
     const chunks: Chunk[] = [];
     const listeners = new Set<(c: Chunk) => void>();

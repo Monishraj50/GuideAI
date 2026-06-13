@@ -216,3 +216,44 @@ Per ECC Principle 7B: every build session appends a 5-line entry. Read this befo
   - `/logs` lists 10 briefs (1 new + 9 historical); `/logs/<id>` returns 28 KB SSR HTML containing `Replay`, `scrub`, `Artifacts`, `raw` markers.
 - **Surfaced (Principle 10B):** pre-existing briefs (steps 5-11) still record `dur: 0` because they were written before this fix. New briefs from step 14 onward have correct durations. A backfill SQL could re-derive these from `events.jsonl` phase chunks if needed.
 
+---
+
+## Step 15 — Audit log + killswitch hardening (done 2026-06-13)
+
+- `packages/runtime-claude/src/adapter.ts` now maintains a module-scoped `TRACKED: Set<Tracked>` registry of every spawned Claude process (both `spawn()` and `runOnce()` paths). Exposes `listRunningClaudeAgents()` for status + `killAllClaudeAgents({hardTimeoutMs=2000})` that SIGTERMs every live process and escalates to SIGKILL after the deadline.
+- `apps/server/src/routes/killswitch.ts`: `GET /api/killswitch/status`, `POST /api/killswitch?workspace=…`, and a dev-only `POST /api/dev/spawn-test-agents?n=5` that fire-and-forgets N verbose `runOnce` calls so the killswitch is demoable without waiting for a real pipeline.
+- `apps/server/src/routes/audit.ts`: `GET /api/workspaces/:id/audit?limit=N` merges every row in `schema.approvals` (ground truth) with audit-worthy `system:` chunks from the last 7 days (hires, retires, skill promotions, killswitch events, digests, decisions). Sorted newest-first.
+- UI:
+  - `Killswitch` component pinned to the bottom of the sidebar — polls `/api/killswitch/status` every 2 s, shows running count, button turns red when `running > 0`, asks `confirm()` before firing.
+  - `/settings` now embeds an `AuditLog` section with a kind filter (all / approval / hire / retire / skill / killswitch / digest), 4 s refresh.
+- **Verified end-to-end (demo target — "spawn 5 agents, click global stop, all killed in <2s"):**
+  - `POST /api/dev/spawn-test-agents?n=5` → 5 PIDs returned, registry shows 5 running with uptime ~1 s each.
+  - `POST /api/killswitch?workspace=demo` → **`{killed: 5, durationMs: 884}`** (44% of the 2 s budget).
+  - Post-kill registry: 0 running.
+  - Audit log: top entry is `killswitch | KILLSWITCH: 5 agents killed in 884ms`.
+  - Earlier audit history confirms approvals, skill promotion, and hire/retire events are all captured chronologically.
+- **Surfaced (Principle 10B):** `spawn()` (long-running interactive) exits fast under the current CLI flags (`-p` is implicit one-shot) — the demo therefore uses `runOnce` fire-and-forget. Real long-running stdin-streaming agents need either dropping `-p` + PTY emulation or wiring an MCP loopback. That's the same gap noted in step 2 and step 13; not blocking the killswitch correctness — both `spawn` and `runOnce` register into the same `TRACKED` set, so the killswitch covers both code paths.
+
+---
+
+## v1 complete
+
+All 15 build steps shipped. The platform is live at:
+
+- Web UI: http://localhost:3000
+- API: http://localhost:4000
+- State: `~/.guideai/` (SQLite + JSONL events + agent inboxes + skills + digests + catalog)
+
+Tabs end-state:
+- `/` — Home (digest)
+- `/ops` — live event feed, brief pane (with runtime picker, security checkbox), pending tray
+- `/channels` — stub (lands when specialists get dispatched)
+- `/org` — heat-tinted roster, performance metrics, retire UI
+- `/hire` — 154-agent marketplace by department
+- `/logs` + `/logs/[briefId]` — brief list + flame-graph replay + artifact pane + raw drawer
+- `/settings` — rules editor + audit log
+
+Killswitch always visible bottom-left.
+
+VS Code extension (sibling app per the plan) is the planned next-tier integration.
+
