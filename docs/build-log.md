@@ -165,3 +165,19 @@ Per ECC Principle 7B: every build session appends a 5-line entry. Read this befo
   - `review.md` header: `_model: opus · pass@3 · verdict: pass (3/3) · tokens: 9744 in / 24 out_`. Three `### attempt N (pass)` sections present.
 - **Surfaced (Principle 10B):** the "pass" predicate is *length-based*, not semantic — three coherent reviews and three near-empty reviews would both produce `verdict: pass`. A judge-panel pattern (one extra agent voting on agreement) is the next-tier upgrade; this v1 implementation catches "agent silently gave up" but not "three plausible disagreements".
 
+---
+
+## Step 12 — Daily standup digest cron (done 2026-06-13)
+
+- `packages/orchestrator/src/digest.ts` ships `generateDigest({workspaceId, windowMs?})` and `readLatestDigest(workspaceId)`. Aggregates the last 24h of `events.jsonl` into counters (briefs, phases-completed, hired/retired, approved/denied, skills-promoted, tokens), invokes Haiku for the narrative paragraph, falls back to deterministic copy if Claude is unreachable. Writes `~/.guideai/workspaces/{id}/digests/{yyyy-mm-dd}.md` and emits a `system: digest generated for {date}` chunk.
+- `apps/server/src/routes/digest.ts`: `GET /api/workspaces/:id/digest` (latest), `POST /api/workspaces/:id/digest?window=ms` (run now). Also registers a `node-cron` schedule `'0 9 * * *'` that iterates every DB-known workspace at 09:00 local.
+- `apps/web/app/page.tsx` becomes a real **Home** page (replaces the redirect to /ops) with the latest digest rendered, a "run now" button, and quick links to the other tabs.
+- Sidebar gets a Home tab.
+- **Verified end-to-end (demo target — "trigger manually, digest renders on Home"):**
+  - `POST /api/workspaces/demo/digest` → 4s round-trip; returns `{date: '2026-06-13', filePath, text, summary, generatedAt}`.
+  - Summary counters extracted from the live `events.jsonl`: briefs 1, phases completed 5, approvals 0 approved / 1 denied, skills promoted 1, tokens 9800 ↓ / 48 ↑.
+  - Markdown file present at `~/.guideai/workspaces/demo/digests/2026-06-13.md` (397 bytes).
+  - `GET /api/workspaces/demo/digest` returns the same JSON.
+  - SSR HTML on `/` includes "Daily standup digest" / "run now" / quick-links — Home page renders.
+- **Surfaced (Principle 10B):** Haiku paragraph quality is the weak link — sample output read "Hi! I see your workspace activity snapshot…" (not a real digest). Better prompt + few-shot examples land later. Cron behaviour itself is fully validated via the `?run=now` trigger path — at 09:00 the same code path runs.
+

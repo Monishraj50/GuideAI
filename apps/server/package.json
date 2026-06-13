@@ -15,6 +15,10 @@
     "@guideai/orchestrator": "workspace:*",
     "@guideai/policies": "workspace:*",
     "@guideai/shared": "workspace:*",
-    "fastify": "^5.2.0"
+    "fastify": "^5.2.0",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "@types/node-cron": "^3.0.11"
   }
 }

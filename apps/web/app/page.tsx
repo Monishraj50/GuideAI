@@ -1,5 +1,5 @@
-import { redirect } from 'next/navigation';
+import { Home } from './HomeClient';
 
-export default function Home() {
-  redirect('/ops');
+export default function HomePage() {
+  return <Home workspaceId="demo" />;
 }

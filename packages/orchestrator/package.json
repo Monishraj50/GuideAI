@@ -9,7 +9,8 @@
     ".": "./src/index.ts",
     "./cos": "./src/cos.ts",
     "./approvals": "./src/approvals.ts",
-    "./hiring": "./src/hiring.ts"
+    "./hiring": "./src/hiring.ts",
+    "./digest": "./src/digest.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
