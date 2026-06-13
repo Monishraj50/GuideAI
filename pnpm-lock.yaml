@@ -82,6 +82,12 @@ importers:
         specifier: workspace:*
         version: link:../shared
 
+  packages/evals:
+    dependencies:
+      '@guideai/shared':
+        specifier: workspace:*
+        version: link:../shared
+
   packages/messaging:
     dependencies:
       '@guideai/shared':
@@ -105,6 +111,9 @@ importers:
       '@guideai/agents-catalog':
         specifier: workspace:*
         version: link:../agents-catalog
+      '@guideai/evals':
+        specifier: workspace:*
+        version: link:../evals
       '@guideai/messaging':
         specifier: workspace:*
         version: link:../messaging

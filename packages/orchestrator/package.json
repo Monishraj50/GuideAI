@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@guideai/agents-catalog": "workspace:*",
+    "@guideai/evals": "workspace:*",
     "@guideai/messaging": "workspace:*",
     "@guideai/policies": "workspace:*",
     "@guideai/runtime-claude": "workspace:*",

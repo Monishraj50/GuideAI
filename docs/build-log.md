@@ -148,3 +148,20 @@ Per ECC Principle 7B: every build session appends a 5-line entry. Read this befo
   - Re-hired backend-developer (post-retire) appears as a separate row with its own id.
 - **Surfaced (Principle 10B):** specialists in the roster don't get tasks yet because the orchestrator still routes everything through CoS. Wiring dispatch-to-specialist lands in a later step; their cards intentionally read "0" until then.
 
+---
+
+## Step 11 — pass@k eval checkpoints (done 2026-06-13)
+
+- `packages/evals/src/index.ts` ships `runPassK<T>({ k, requireAgreement, attempt, predicate?, parallel? })`. Runs N independent attempts (parallel by default), applies a "passed" predicate (default: text ≥ 30 chars), returns `{ attempts, passes, verdict, canonical, passthroughs }`. Canonical = longest passing (fallback: longest overall).
+- `packages/orchestrator/src/phases.ts` consults `CAPS.evals[phase]` per phase. Default `implement` and `review` = `k:1, require:1` (single-call fast path). When the brief is `securityTagged`, the **review** phase uses `CAPS.evals.security = { k: 3, requireAgreement: 3 }`.
+- `cos.ts` detects security tagging from either an explicit `securityTagged: true` in the POST or a `[security]` / `[sec]` prefix in the brief body.
+- UI: `BriefPane` got a `security review (review phase runs pass@3)` checkbox.
+- Each pass@k phase emits 2 system chunks (`running pass@k (security-tagged)` and `pass@k verdict: X · Y/k attempts passed`), forwards every attempt's raw chunks to the feed, and writes a multi-section `review.md` with frontmatter (`pass@3 · verdict: pass (3/3)`), the canonical answer, then each attempt verbatim with its own pass/fail header.
+- **Verified end-to-end (demo target — "security-tagged task runs review pass@3"):**
+  - Brief: `[security] Outline a basic CSRF check for a public API endpoint.` with `securityTagged: true`.
+  - Pipeline took 75s end-to-end.
+  - Feed shows `phase review running pass@3 (security-tagged)` and `pass@3 verdict: pass · 3/3 attempts passed (req 3)`.
+  - 6 opus AI chunks total (3 attempts × 2 chunks per stream) — matches pass@3 expected count.
+  - `review.md` header: `_model: opus · pass@3 · verdict: pass (3/3) · tokens: 9744 in / 24 out_`. Three `### attempt N (pass)` sections present.
+- **Surfaced (Principle 10B):** the "pass" predicate is *length-based*, not semantic — three coherent reviews and three near-empty reviews would both produce `verdict: pass`. A judge-panel pattern (one extra agent voting on agreement) is the next-tier upgrade; this v1 implementation catches "agent silently gave up" but not "three plausible disagreements".
+

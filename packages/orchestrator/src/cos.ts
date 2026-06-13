@@ -54,6 +54,7 @@ export interface SubmitBriefResult {
   briefId: string;
   agentId: string;
   phases: string[];
+  securityTagged: boolean;
   pipeline: 'started';
 }
 
@@ -66,8 +67,12 @@ export interface SubmitBriefResult {
 export async function submitBrief(args: {
   workspaceId: string;
   body: string;
+  securityTagged?: boolean;
 }): Promise<SubmitBriefResult> {
   const { workspaceId, body } = args;
+  // A brief is security-tagged if the caller asks for it OR the body contains
+  // a [security] / [sec] tag near the start.
+  const securityTagged = !!args.securityTagged || /^\s*\[(security|sec)\]/i.test(body);
   await ensureWorkspace(workspaceId);
   const agentId = await ensureCosAgent(workspaceId);
 
@@ -88,7 +93,7 @@ export async function submitBrief(args: {
   void (async () => {
     try {
       const pipelineResult = await runPipeline({
-        workspaceId, agentId, briefId, brief: body, cwd,
+        workspaceId, agentId, briefId, brief: body, cwd, securityTagged,
       });
 
       for (const r of pipelineResult.phaseResults) {
@@ -222,6 +227,7 @@ export async function submitBrief(args: {
     briefId,
     agentId,
     phases: PHASE_ORDER as unknown as string[],
+    securityTagged,
     pipeline: 'started',
   };
 }

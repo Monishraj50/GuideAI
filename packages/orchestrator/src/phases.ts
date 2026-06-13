@@ -5,9 +5,10 @@ import { ClaudeAdapter } from '@guideai/runtime-claude';
 import { appendEvent } from '@guideai/messaging/events';
 import { paths } from '@guideai/shared/paths';
 import { routeModel } from '@guideai/policies/router';
-import type { Phase } from '@guideai/policies/caps';
+import { CAPS, type Phase } from '@guideai/policies/caps';
 import { loadSkills, skillsForPhase, renderSkillsAsContext } from '@guideai/skills';
-import type { AIChunk, PhaseChunk, SystemChunk } from '@guideai/shared/chunks';
+import { runPassK } from '@guideai/evals';
+import type { AIChunk, Chunk, PhaseChunk, SystemChunk } from '@guideai/shared/chunks';
 
 export const PHASE_ORDER: Phase[] = ['research', 'plan', 'implement', 'review', 'verify'];
 
@@ -61,6 +62,8 @@ export interface RunPipelineArgs {
   briefId: string;
   brief: string;
   cwd: string;
+  /** When true, security-tagged phases (review) run pass@3. */
+  securityTagged?: boolean;
 }
 
 export interface PhaseResult {
@@ -71,6 +74,9 @@ export interface PhaseResult {
   durationMs: number;
   tokensIn: number;
   tokensOut: number;
+  k?: number;            // > 1 only when pass@k was run
+  passes?: number;
+  verdict?: 'pass' | 'fail';
 }
 
 export interface PipelineResult {
@@ -87,7 +93,7 @@ export interface PipelineResult {
  * context and writes a markdown file to the brief's artifact directory.
  */
 export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult> {
-  const { workspaceId, agentId, briefId, brief, cwd } = args;
+  const { workspaceId, agentId, briefId, brief, cwd, securityTagged } = args;
   ensureBriefDir(workspaceId, briefId);
 
   const skills = loadSkills();
@@ -121,6 +127,66 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
     const skillsContext = renderSkillsAsContext(skillsForPhase(skills, phase));
     const systemPrompt = [PHASE_PROMPT[phase], skillsContext].filter(Boolean).join('\n\n');
 
+    // pass@k for security-tagged review. Default elsewhere is k=1 which we
+    // run as a single direct call (avoids spinning up the runner for nothing).
+    const evalCfg = securityTagged && phase === 'review' ? CAPS.evals.security : CAPS.evals[phase as 'implement' | 'review'] ?? { k: 1, requireAgreement: 1 };
+    const k = evalCfg.k;
+
+    if (k > 1) {
+      appendEvent(workspaceId, {
+        id: randomUUID(), ts: Date.now(), workspaceId, agentId,
+        kind: 'system', level: 'info',
+        text: `phase ${phase} running pass@${k} (security-tagged)`,
+      });
+      const passK = await runPassK<Chunk[]>({
+        k, requireAgreement: evalCfg.requireAgreement,
+        attempt: async () => {
+          const res = await ClaudeAdapter.runOnce({
+            agentId, workspaceId, cwd, systemPrompt,
+            allowedTools: READ_ONLY_TOOLS, model: routing.tier,
+          }, context);
+          const text = res.chunks.filter((c): c is AIChunk => c.kind === 'ai').map((c) => c.text).join('\n');
+          const tIn = res.chunks.filter((c): c is AIChunk => c.kind === 'ai').reduce((s, c) => s + (c.tokensIn ?? 0), 0);
+          const tOut = res.chunks.filter((c): c is AIChunk => c.kind === 'ai').reduce((s, c) => s + (c.tokensOut ?? 0), 0);
+          return { text, tokensIn: tIn, tokensOut: tOut, durationMs: res.durationMs, passthrough: res.chunks };
+        },
+        parallel: true,
+      });
+
+      // Forward chunks from ALL attempts so the feed shows everything.
+      for (const chunks of passK.passthroughs) for (const c of chunks) appendEvent(workspaceId, c);
+
+      const tokensIn = passK.attempts.reduce((s, a) => s + a.tokensIn, 0);
+      const tokensOut = passK.attempts.reduce((s, a) => s + a.tokensOut, 0);
+      totalIn += tokensIn; totalOut += tokensOut;
+
+      appendEvent(workspaceId, {
+        id: randomUUID(), ts: Date.now(), workspaceId, agentId,
+        kind: 'system', level: passK.verdict === 'pass' ? 'info' : 'warn',
+        text: `pass@${k} verdict: ${passK.verdict} · ${passK.passes}/${k} attempts passed (req ${evalCfg.requireAgreement})`,
+      });
+
+      const artifact = artifactPath(workspaceId, briefId, phase);
+      const attemptsBlock = passK.attempts.map((a, i) =>
+        `### attempt ${i + 1} (${a.passed ? 'pass' : 'fail'}) · ${a.tokensIn}↓/${a.tokensOut}↑\n\n${a.text.trim() || '(empty)'}`).join('\n\n---\n\n');
+      const md = `# ${phase} — brief ${briefId}\n\n` +
+        `_model: ${routing.tier} · pass@${k} · verdict: ${passK.verdict} (${passK.passes}/${k}) · tokens: ${tokensIn} in / ${tokensOut} out_\n\n` +
+        `## canonical (longest passing)\n\n${passK.canonical.text.trim() || '(empty)'}\n\n---\n\n${attemptsBlock}\n`;
+      fs.writeFileSync(artifact, md);
+
+      artifacts[phase] = passK.canonical.text;
+      phaseResults.push({
+        phase, tier: routing.tier, artifactPath: artifact,
+        text: passK.canonical.text,
+        durationMs: passK.attempts.reduce((s, a) => s + a.durationMs, 0),
+        tokensIn, tokensOut,
+        k, passes: passK.passes, verdict: passK.verdict,
+      });
+      appendEvent(workspaceId, makePhaseChunk(workspaceId, agentId, briefId, phase, 'completed', artifact));
+      continue;
+    }
+
+    // k=1: original single-call path.
     let result;
     try {
       result = await ClaudeAdapter.runOnce(

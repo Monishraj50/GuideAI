@@ -4,6 +4,7 @@ import { useState } from 'react';
 
 export function BriefPane({ workspaceId }: { workspaceId: string }) {
   const [text, setText] = useState('');
+  const [securityTagged, setSecurityTagged] = useState(false);
   const [busy, setBusy] = useState(false);
   const [last, setLast] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -15,11 +16,12 @@ export function BriefPane({ workspaceId }: { workspaceId: string }) {
       const res = await fetch(`/api/workspaces/${workspaceId}/briefs`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ body: text }),
+        body: JSON.stringify({ body: text, securityTagged }),
       });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error ?? `http ${res.status}`);
-      setLast(`brief ${j.briefId} dispatched · pipeline running (watch the feed for 5 phases)`);
+      const securityNote = j.securityTagged ? ' · review runs pass@3' : '';
+      setLast(`brief ${j.briefId} dispatched · pipeline running${securityNote}`);
       setText('');
     } catch (e: any) {
       setErr(e?.message ?? String(e));
@@ -41,6 +43,15 @@ export function BriefPane({ workspaceId }: { workspaceId: string }) {
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); }
         }}
       />
+      <label className="flex items-center gap-2 text-xs text-dim cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={securityTagged}
+          onChange={(e) => setSecurityTagged(e.target.checked)}
+          className="accent-accent"
+        />
+        <span>security review (review phase runs pass@3)</span>
+      </label>
       <div className="flex items-center justify-between">
         <div className="text-dim text-xs">⌘↵ to send</div>
         <button
