@@ -1,8 +1,13 @@
+import { OrgChart } from './OrgChart';
+
 export default function OrgPage() {
   return (
-    <div className="p-6 text-dim text-sm">
-      <div className="text-ink font-medium mb-2">Org Chart</div>
-      <p>Lands in step 10 alongside Performance Reviews.</p>
+    <div className="flex flex-col h-full">
+      <header className="border-b border-line px-4 py-2">
+        <div className="text-ink font-medium">Org Chart</div>
+        <div className="text-dim text-xs">your roster · heat-tinted by win-rate · workspace <span className="text-ink">demo</span></div>
+      </header>
+      <OrgChart workspaceId="demo" />
     </div>
   );
 }

@@ -11,6 +11,7 @@
   "dependencies": {
     "@guideai/agents-catalog": "workspace:*",
     "@guideai/messaging": "workspace:*",
+    "@guideai/metrics": "workspace:*",
     "@guideai/orchestrator": "workspace:*",
     "@guideai/policies": "workspace:*",
     "@guideai/shared": "workspace:*",

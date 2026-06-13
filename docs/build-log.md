@@ -132,3 +132,19 @@ Per ECC Principle 7B: every build session appends a 5-line entry. Read this befo
   - Every hire/retire emits a `system: hired … into workspace` / `system: retired …` chunk; SSE confirms 5 such events across the test.
 - **Surfaced (Principle 10B):** `prettyName()` title-cases naively → "qa-expert" renders as "Qa Expert" instead of "QA Expert". Cosmetic, easy fix in step 10 when Org Chart polishes the display names; agent identity is by `role`, not by display name, so no functional impact.
 
+---
+
+## Step 10 — Org Chart + Performance Reviews (done 2026-06-13)
+
+- `packages/metrics/src/index.ts` ships `computeRosterStats(workspaceId)`. For each agent it derives: tasks completed / failed, win rate, avg phase ms, rework count (same `(briefId, phase)` repeated), tokens in/out, USD spend (Anthropic-tier pricing approximated by model alias), and last activity. Pure SQL-backed compute — no LLM calls, no extra writes.
+- `GET /api/workspaces/:id/metrics` exposes the snapshot.
+- `/org`: grid of agent cards heat-tinted by win-rate (≥85% accent / ≥60% warn / <60% err / no tasks = neutral). Top bar shows aggregate active/retired counts + workspace spend + token total. Clicking a card opens a right-rail detail panel with 8 stat tiles and a retire button. Refreshes every 4 s.
+- `apps/web/app/org/OrgChart.tsx` patches the naive title-case from step 9 with an ACRONYMS map (`QA, API, AI, LLM, ML, CI, CD, AWS, SQL, CSS, …`).
+- **Verified end-to-end:**
+  - `GET /api/workspaces/demo/metrics` returned 5 agents (CoS + 3 active hires + 1 retired).
+  - **Chief of Staff:** 35 tasks completed (matches 7 prior briefs × 5 phases), winRate 100% (green tint), tokens 34 813 ↓ / 460 ↑, **$0.11** spend.
+  - **3 fresh hires:** 0 tasks → neutral tint (intentional — pipeline still goes through CoS until step 11+ wires dispatch to specialists).
+  - **Retired backend-developer:** filtered out of the active grid, listed in the "Retired" footer.
+  - Re-hired backend-developer (post-retire) appears as a separate row with its own id.
+- **Surfaced (Principle 10B):** specialists in the roster don't get tasks yet because the orchestrator still routes everything through CoS. Wiring dispatch-to-specialist lands in a later step; their cards intentionally read "0" until then.
+

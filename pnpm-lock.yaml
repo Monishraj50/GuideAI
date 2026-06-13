@@ -29,6 +29,9 @@ importers:
       '@guideai/messaging':
         specifier: workspace:*
         version: link:../../packages/messaging
+      '@guideai/metrics':
+        specifier: workspace:*
+        version: link:../../packages/metrics
       '@guideai/orchestrator':
         specifier: workspace:*
         version: link:../../packages/orchestrator
@@ -87,6 +90,15 @@ importers:
       chokidar:
         specifier: ^4.0.1
         version: 4.0.3
+
+  packages/metrics:
+    dependencies:
+      '@guideai/shared':
+        specifier: workspace:*
+        version: link:../shared
+      drizzle-orm:
+        specifier: ^0.36.4
+        version: 0.36.4(@types/better-sqlite3@7.6.13)(@types/react@19.2.17)(better-sqlite3@11.10.0)(react@19.2.7)
 
   packages/orchestrator:
     dependencies:
