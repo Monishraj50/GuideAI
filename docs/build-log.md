@@ -73,3 +73,18 @@ Per ECC Principle 7B: every build session appends a 5-line entry. Read this befo
 - **Bug noted:** `tsx watch` killed the server during build when a route imported `@guideai/orchestrator` before the workspace `pnpm install` had been run. Workflow lesson: install new workspace packages BEFORE saving routes that import them, or restart dev after install.
 - **Skipped (Principle 10B):** real tool interception via MCP permission-prompt-tool (step 8); brief is sent through one-shot `runOnce` rather than long-running `spawn` (step 6+ when phases need stdin replies).
 
+---
+
+## Step 6 — phase pipeline + model router + skill loader (done 2026-06-13)
+
+- `packages/skills` ships `loadSkills()` (reads `~/.guideai/skills/*.md`, frontmatter-parsed), `skillsForPhase()`, `renderSkillsAsContext()`. Skills with `appliesTo: research, plan, …` are injected only into matching phases' system prompts.
+- `packages/orchestrator/src/phases.ts` runs the ECC sequential pipeline `research → plan → implement → review → verify`. Each phase consumes prior artifacts as context, writes its own markdown artifact to `~/.guideai/workspaces/{id}/briefs/{briefId}/{phase}.md`, and emits `phase: started` / `phase: completed` chunks.
+- `packages/policies/src/router.ts` updated to use CLI-friendly model aliases (`haiku`, `sonnet`, `opus`) instead of dated IDs — portable across CLI versions and subscriptions.
+- `cos.ts.submitBrief()` rewritten as async: returns `{briefId, agentId, phases, pipeline:'started'}` in ~17ms; the full pipeline runs in the background and surfaces every phase via SSE.
+- **Verified (pass@2):**
+  - **Run 1** — brief "Sketch a 3-line health check endpoint" → 5 artifacts written in 56s; 10 phase events (5 started + 5 completed); models hit: `claude-haiku-4-5-20251001`, `claude-sonnet-4-6`, `claude-opus-4-8`; total 4927↓ / 23↑ tokens.
+  - **Run 2** — brief "Decide whether to bundle our two utility packages" → 5 artifacts in 65s; 10 phase events; same three model families hit; total 4964↓ / 41↑ tokens.
+  - Model tier per artifact frontmatter matches router decision: research=haiku, plan=sonnet, implement=sonnet, review=opus, verify=haiku.
+- **Bug squashed during build (Principle 10B):** initial sync `submitBrief` held the HTTP request open for the entire 5-phase pipeline (~30-60s) → Next.js dev-proxy timeout (`ECONNRESET`). Refactored to fire-and-forget.
+- **Surfaced (Principle 10B):** the agent occasionally produces a clarifying question instead of a phase artifact (e.g. "What framework is your API using?"). That's a prompt-engineering miss in the phase prompts — fix in step 7 (Stop hooks promote successful trace patterns into reusable skills).
+

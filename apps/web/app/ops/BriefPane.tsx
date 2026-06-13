@@ -19,7 +19,7 @@ export function BriefPane({ workspaceId }: { workspaceId: string }) {
       });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error ?? `http ${res.status}`);
-      setLast(`brief ${j.briefId} dispatched · ${j.chunkCount} chunks · approval ${j.approvalId}`);
+      setLast(`brief ${j.briefId} dispatched · pipeline running (watch the feed for 5 phases)`);
       setText('');
     } catch (e: any) {
       setErr(e?.message ?? String(e));

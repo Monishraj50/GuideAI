@@ -19,6 +19,7 @@
     "@guideai/runtime-claude": "workspace:*",
     "@guideai/runtime-core": "workspace:*",
     "@guideai/shared": "workspace:*",
+    "@guideai/skills": "workspace:*",
     "drizzle-orm": "^0.36.4"
   }
 }

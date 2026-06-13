@@ -4,11 +4,12 @@ import type { Phase } from './caps.js';
 
 export type ModelTier = 'haiku' | 'sonnet' | 'opus';
 
-// Maps Anthropic model IDs as of 2026-01.
+// CLI accepts short aliases (e.g. `claude --model sonnet`). Aliases are more
+// portable than dated IDs across CLI versions and user subscriptions.
 export const MODEL_IDS: Record<ModelTier, string> = {
-  haiku:  'claude-haiku-4-5-20251001',
-  sonnet: 'claude-sonnet-4-6',
-  opus:   'claude-opus-4-8',
+  haiku:  'haiku',
+  sonnet: 'sonnet',
+  opus:   'opus',
 };
 
 const DEFAULT_TIER: Record<Phase, ModelTier> = {

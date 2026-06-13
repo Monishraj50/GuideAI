@@ -1,18 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { ClaudeAdapter } from '@guideai/runtime-claude';
 import { appendEvent } from '@guideai/messaging/events';
 import { paths } from '@guideai/shared/paths';
 import { getDb, schema } from '@guideai/shared/db';
-import type { Chunk, UserChunk, SystemChunk, ToolChunk, PhaseChunk, AIChunk } from '@guideai/shared/chunks';
-
-// Default Chief-of-Staff. For step 5 we keep it minimal: one brief → one agent.
-// Real decomposition (research → plan → implement → review → verify) lands in step 6.
+import type { UserChunk, ToolChunk, SystemChunk } from '@guideai/shared/chunks';
+import { runPipeline, PHASE_ORDER } from './phases.js';
+import { eq } from 'drizzle-orm';
 
 const COS_AGENT_ROLE = 'chief-of-staff';
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 
 function now() { return Date.now(); }
-
 function base(workspaceId: string, agentId?: string) {
   return { id: randomUUID(), ts: now(), workspaceId, ...(agentId ? { agentId } : {}) };
 }
@@ -42,10 +39,7 @@ async function ensureCosAgent(workspaceId: string): Promise<string> {
     displayName: 'Chief of Staff',
     runtime: 'claude',
     model: null,
-    systemPrompt:
-      'You are the Chief of Staff for a small autonomous team. ' +
-      'Take a brief from the boss, restate the goal, then list 2-4 concrete next steps. ' +
-      'Keep responses under 80 words.',
+    systemPrompt: 'Chief of Staff for an autonomous team.',
     toolWhitelist: JSON.stringify(READ_ONLY_TOOLS),
     status: 'idle',
     createdAt: now(),
@@ -56,15 +50,15 @@ async function ensureCosAgent(workspaceId: string): Promise<string> {
 export interface SubmitBriefResult {
   briefId: string;
   agentId: string;
-  chunkCount: number;
-  approvalId: string;   // synthetic approval emitted at end for step 5 demo
+  phases: string[];
+  pipeline: 'started';
 }
 
 /**
- * Submit a brief: create DB rows, spawn the CoS agent, stream chunks into the
- * workspace event log, then emit a synthetic Bash tool request that the policy
- * engine treats as "needs approval." This proves the brief → agent → events →
- * approval flow end-to-end before real MCP-based tool interception in step 8.
+ * Submit a brief, then kick off the full pipeline in the background. Returns
+ * immediately so the UI can light up via SSE without holding an HTTP request
+ * open for the duration. Phase events + the synthetic approval are appended to
+ * the workspace event stream as the pipeline progresses.
  */
 export async function submitBrief(args: {
   workspaceId: string;
@@ -77,93 +71,88 @@ export async function submitBrief(args: {
   const db = getDb();
   const briefId = `brief-${randomUUID().slice(0, 8)}`;
   db.insert(schema.briefs).values({
-    id: briefId,
-    workspaceId,
-    body,
-    status: 'active',
-    createdAt: now(),
+    id: briefId, workspaceId, body, status: 'active', createdAt: now(),
   }).run();
 
-  // 1) Boss's brief shows up in the feed.
   const userChunk: UserChunk = { ...base(workspaceId), kind: 'user', text: body };
   appendEvent(workspaceId, userChunk);
 
-  // 2) Phase start.
-  const phaseStart: PhaseChunk = {
-    ...base(workspaceId, agentId),
-    kind: 'phase',
-    taskId: briefId,
-    phase: 'research',
-    status: 'started',
-  };
-  appendEvent(workspaceId, phaseStart);
-
-  // 3) Spawn the Claude CLI in a sandboxed cwd. Stream all chunks live.
   const cwd = paths.agentCwd(workspaceId, agentId);
-  let chunkCount = 0;
-  const result = await ClaudeAdapter.runOnce(
-    {
-      agentId,
-      workspaceId,
-      cwd,
-      systemPrompt:
-        'You are the Chief of Staff for a small autonomous team. ' +
-        'Restate the boss\'s goal and list 2-4 concrete next steps. ' +
-        'Keep your answer under 80 words.',
-      allowedTools: READ_ONLY_TOOLS,
-    },
-    body,
-  );
 
-  for (const c of result.chunks) {
-    appendEvent(workspaceId, c);
-    chunkCount++;
-  }
+  // Fire-and-forget the pipeline. Any failure is surfaced in the event stream
+  // via runPipeline()'s internal error chunk; we also log it here for the
+  // server console.
+  void (async () => {
+    try {
+      const pipelineResult = await runPipeline({
+        workspaceId, agentId, briefId, brief: body, cwd,
+      });
 
-  // 4) Phase complete.
-  const phaseDone: PhaseChunk = {
-    ...base(workspaceId, agentId),
-    kind: 'phase',
-    taskId: briefId,
-    phase: 'research',
-    status: 'completed',
-  };
-  appendEvent(workspaceId, phaseDone);
+      for (const r of pipelineResult.phaseResults) {
+        db.insert(schema.tasks).values({
+          id: `${briefId}-${r.phase}`,
+          briefId,
+          agentId,
+          phase: r.phase,
+          status: 'completed',
+          artifactPath: r.artifactPath,
+          tokensIn: r.tokensIn,
+          tokensOut: r.tokensOut,
+          startedAt: now(),
+          endedAt: now(),
+        }).run();
+      }
 
-  // 5) Synthetic tool request demonstrating the approval flow. In step 8 this
-  //    will be replaced by a real MCP permission-prompt callback.
-  const toolChunk: ToolChunk = {
-    ...base(workspaceId, agentId),
-    kind: 'tool',
+      db.update(schema.briefs).set({ status: 'done' })
+        .where(eq(schema.briefs.id, briefId)).run();
+
+      const toolChunk: ToolChunk = {
+        ...base(workspaceId, agentId),
+        kind: 'tool', agentId, tool: 'Bash', args: { cmd: 'ls -la' }, status: 'pending',
+      };
+      appendEvent(workspaceId, toolChunk);
+
+      const approvalId = `appr-${randomUUID().slice(0, 8)}`;
+      db.insert(schema.approvals).values({
+        id: approvalId,
+        taskId: null as unknown as string,
+        tool: 'Bash',
+        argsJson: JSON.stringify({ cmd: 'ls -la' }),
+        decision: 'pending',
+        ruleId: null,
+        decidedBy: 'pending',
+        decidedAt: now(),
+      } as any).run();
+
+      const pendingNote: SystemChunk = {
+        ...base(workspaceId, agentId),
+        kind: 'system', level: 'warn',
+        text: `pending approval ${approvalId}: Bash(ls -la) — open the brief pane to approve`,
+      };
+      appendEvent(workspaceId, pendingNote);
+
+      const doneNote: SystemChunk = {
+        ...base(workspaceId, agentId),
+        kind: 'system', level: 'info',
+        text: `brief ${briefId} pipeline complete · ${pipelineResult.totalTokensIn}↓/${pipelineResult.totalTokensOut}↑ tokens · ${pipelineResult.totalDurationMs}ms`,
+      };
+      appendEvent(workspaceId, doneNote);
+    } catch (err: any) {
+      const fail: SystemChunk = {
+        ...base(workspaceId, agentId),
+        kind: 'system', level: 'error',
+        text: `pipeline failed for ${briefId}: ${err?.message ?? err}`,
+      };
+      appendEvent(workspaceId, fail);
+      db.update(schema.briefs).set({ status: 'failed' })
+        .where(eq(schema.briefs.id, briefId)).run();
+    }
+  })();
+
+  return {
+    briefId,
     agentId,
-    tool: 'Bash',
-    args: { cmd: 'ls -la' },
-    status: 'pending',
+    phases: PHASE_ORDER as unknown as string[],
+    pipeline: 'started',
   };
-  appendEvent(workspaceId, toolChunk);
-
-  const approvalId = `appr-${randomUUID().slice(0, 8)}`;
-  db.insert(schema.approvals).values({
-    id: approvalId,
-    taskId: null as unknown as string,  // null is acceptable; column nullable
-    tool: 'Bash',
-    argsJson: JSON.stringify({ cmd: 'ls -la' }),
-    decision: 'pending',
-    ruleId: null,
-    decidedBy: 'pending',
-    decidedAt: now(),
-    // We stash the chunk id in args so the UI can correlate. Cheap for v1.
-  } as any).run();
-
-  // We surface the pending approval via a SystemChunk that carries enough info
-  // for the UI to render an action button without a separate REST poll.
-  const pendingNote: SystemChunk = {
-    ...base(workspaceId, agentId),
-    kind: 'system',
-    level: 'warn',
-    text: `pending approval ${approvalId}: Bash(ls -la) — open the brief pane to approve`,
-  };
-  appendEvent(workspaceId, pendingNote);
-
-  return { briefId, agentId, chunkCount, approvalId };
 }
