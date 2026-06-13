@@ -1,12 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Search, ChevronDown, Activity, Zap, DollarSign, Skull } from 'lucide-react';
+import { Search, Activity, Zap, DollarSign, Skull } from 'lucide-react';
+import { useWorkspaceId } from './WorkspaceProvider';
+import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { cn } from '../lib/cn';
 
-interface CapsResp {
-  caps: { concurrency: { maxAgentsPerWorkspace: number } };
-}
 interface KillswitchStatus { running: { agentId: string; pid: number }[] }
 interface AgentStats {
   id: string;
@@ -24,6 +23,7 @@ function fmtUsd(n: number) {
 }
 
 export function TopBar() {
+  const workspaceId = useWorkspaceId();
   const [running, setRunning] = useState(0);
   const [tokens, setTokens] = useState(0);
   const [usd, setUsd] = useState(0);
@@ -34,7 +34,7 @@ export function TopBar() {
       try {
         const [ks, metrics] = await Promise.all([
           fetch('/api/killswitch/status').then((r) => r.json() as Promise<KillswitchStatus>).catch(() => ({ running: [] as KillswitchStatus['running'] })),
-          fetch('/api/workspaces/demo/metrics').then((r) => r.json()).catch(() => ({ agents: [] })),
+          fetch(`/api/workspaces/${workspaceId}/metrics`).then((r) => r.json()).catch(() => ({ agents: [] })),
         ]);
         setRunning(ks.running?.length ?? 0);
         const agents = (metrics.agents ?? []) as AgentStats[];
@@ -47,7 +47,7 @@ export function TopBar() {
     refresh();
     const t = setInterval(refresh, 3000);
     return () => clearInterval(t);
-  }, []);
+  }, [workspaceId]);
 
   function openPalette() {
     window.dispatchEvent(new CustomEvent('guideai:open-palette'));
@@ -55,13 +55,10 @@ export function TopBar() {
 
   return (
     <header className="h-12 border-b border-line/70 flex items-center px-4 gap-4 glass shadow-soft">
-      {/* workspace */}
+      {/* workspace switcher */}
       <div className="flex items-center gap-2 text-xs text-dim">
-        <span className="uppercase tracking-wider text-dim2">Workspace</span>
-        <button className="flex items-center gap-1 px-2 py-1 rounded-md bg-line/40 hover:bg-line text-ink transition-colors">
-          <span className="font-mono">demo</span>
-          <ChevronDown size={12} />
-        </button>
+        <span className="uppercase tracking-wider text-dim2">Project</span>
+        <WorkspaceSwitcher />
       </div>
 
       {/* HUD meters */}

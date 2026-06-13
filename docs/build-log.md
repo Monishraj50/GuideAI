@@ -290,3 +290,35 @@ Inspiration: agent-teams-ai aesthetic — dense, professional dark theme; live H
 
 **Verified:** all 6 routes (`/`, `/ops`, `/org`, `/hire`, `/logs`, `/settings`) return HTTP 200; SSR HTML contains the new components (TopBar meters, Sidebar nav, gradient title, glass panels). Tailwind compiled with the new palette. Fonts loaded via Next.js Font.
 
+---
+
+## Project layer — multi-workspace navigation (done 2026-06-13)
+
+The system now treats every workspace as a first-class **project** that you can browse, plan against, and switch between.
+
+**Server API:**
+- `GET  /api/workspaces` — full list with summaries (agents, briefs, pending approvals, tokens, $ spend, last activity, digest date).
+- `POST /api/workspaces` — create with slug-derived id (`"Acme Docs Site"` → `acme-docs-site`); 409 on collision.
+- `DELETE /api/workspaces/:id` — soft archive (sets `autonomyMode: 'archived'`; data on disk preserved).
+- `GET  /api/workspaces/:id/plan` — per-project planning surface: workspace metadata + agent counters + pending approvals + latest digest + recent briefs (last 10) + last 30 events.
+
+**Web:**
+- `components/WorkspaceProvider.tsx` — React context + `useWorkspace()` / `useWorkspaceId()` hooks. Persists active workspace to `localStorage`, refreshes the list on demand, exposes `create()` and `archive()`.
+- `components/WorkspaceSwitcher.tsx` — popover from the TopBar showing every project with its agent / brief / pending counts, "New project" inline input, archive-on-hover, "open all projects" link.
+- `app/projects/page.tsx` + `ProjectsIndex.tsx` — index of all projects as cards: name, status pill (pending count if any), last brief preview, 4-stat row (agents / briefs / tokens / spend), digest date, last activity. Aggregate strip at the top totals every project.
+- `app/projects/[id]/page.tsx` + `ProjectPlan.tsx` — per-project planning view: hero with name + 4 stat tiles; "Needs your approval" section with inline approve/deny; "Standup digest" with one-click regenerate; "Recent briefs" each linking to its replay; "Project surfaces" jump grid (Ops/Hire/Org/Logs).
+- All other tabs (Ops / Org / Hire / Logs / Settings / Home / Killswitch / TopBar HUD / Command Palette) now use `useWorkspaceId()` instead of the hard-coded `"demo"` — switching the workspace via the switcher (or visiting `/projects/<id>`) updates every surface.
+- Command Palette gained per-workspace switch actions (e.g. `Switch to "Acme Docs Site"`) on top of the navigation/utility actions.
+- Sidebar gained a `Projects` tab + FolderTree icon.
+
+**Verified end-to-end:**
+- `GET /api/workspaces` → 1 project initially (`demo` with 4 agents, 11 briefs, $0.157 spend).
+- `POST /api/workspaces` body `{name:"Acme Docs Site"}` → `{id:"acme-docs-site", name:"Acme Docs Site"}`.
+- Re-list shows both projects.
+- `GET /api/workspaces/demo/plan` returns workspace metadata, agents `{active:4, total:5}`, 0 pending approvals, digest `2026-06-13`, 11 briefs (2 active), 3 recent briefs.
+- `/projects` HTTP 200 with `Projects`, `New project`, `pending` markers in SSR HTML.
+- `/projects/demo` and `/projects/acme-docs-site` both render the project-plan view (HTTP 200, ~32KB each).
+- TopBar HUD label changed from `Workspace` to `Project`, switcher button shows the active project name + FolderTree icon.
+
+**Surfaced (Principle 10B):** workspace switching reloads per-page state via the `useEffect` keyed on `workspaceId` — feeds, metrics, audit, digest, brief lists all refresh. The `useEffect` swap is intentional (avoids needing URL params for shareable state for v1); a follow-up could add `?ws=<id>` deep-links.
+

@@ -4,8 +4,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Search, HomeIcon, RadioTower, Hash, Network, Store, ScrollText,
-  Settings as SettingsIcon, Skull, Sparkles, ArrowRight,
+  Settings as SettingsIcon, Skull, Sparkles, ArrowRight, FolderTree,
 } from 'lucide-react';
+import { useWorkspace, useWorkspaceId } from './WorkspaceProvider';
 
 interface PaletteAction {
   id: string;
@@ -17,22 +18,37 @@ interface PaletteAction {
 
 export function CommandPalette() {
   const router = useRouter();
+  const workspaceId = useWorkspaceId();
+  const { workspaces, setActive } = useWorkspace();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const actions: PaletteAction[] = useMemo(() => [
-    { id: 'go-home',     label: 'Go to Home',     hint: 'digest',     icon: HomeIcon,      perform: () => router.push('/') },
-    { id: 'go-ops',      label: 'Go to Ops',      hint: 'live feed',  icon: RadioTower,    perform: () => router.push('/ops') },
-    { id: 'go-channels', label: 'Go to Channels', hint: 'team rooms', icon: Hash,          perform: () => router.push('/channels') },
-    { id: 'go-org',      label: 'Go to Org',      hint: 'roster',     icon: Network,       perform: () => router.push('/org') },
-    { id: 'go-hire',     label: 'Go to Hire',     hint: 'catalog',    icon: Store,         perform: () => router.push('/hire') },
-    { id: 'go-logs',     label: 'Go to Logs',     hint: 'replay',     icon: ScrollText,    perform: () => router.push('/logs') },
-    { id: 'go-settings', label: 'Go to Settings', hint: 'rules',      icon: SettingsIcon,  perform: () => router.push('/settings') },
-    { id: 'run-digest',  label: 'Run digest now', hint: 'standup',    icon: Sparkles,      perform: () => fetch('/api/workspaces/demo/digest', { method: 'POST' }) },
-    { id: 'killswitch',  label: 'STOP ALL agents', hint: 'killswitch', icon: Skull,        perform: () => fetch('/api/killswitch?workspace=demo', { method: 'POST' }) },
-  ], [router]);
+  const actions: PaletteAction[] = useMemo(() => {
+    const base: PaletteAction[] = [
+      { id: 'go-home',     label: 'Go to Home',      hint: 'digest',     icon: HomeIcon,     perform: () => router.push('/') },
+      { id: 'go-projects', label: 'Go to Projects',  hint: 'all',        icon: FolderTree,   perform: () => router.push('/projects') },
+      { id: 'go-ops',      label: 'Go to Ops',       hint: 'live feed',  icon: RadioTower,   perform: () => router.push('/ops') },
+      { id: 'go-channels', label: 'Go to Channels',  hint: 'team rooms', icon: Hash,         perform: () => router.push('/channels') },
+      { id: 'go-org',      label: 'Go to Org',       hint: 'roster',     icon: Network,      perform: () => router.push('/org') },
+      { id: 'go-hire',     label: 'Go to Hire',      hint: 'catalog',    icon: Store,        perform: () => router.push('/hire') },
+      { id: 'go-logs',     label: 'Go to Logs',      hint: 'replay',     icon: ScrollText,   perform: () => router.push('/logs') },
+      { id: 'go-settings', label: 'Go to Settings',  hint: 'rules',      icon: SettingsIcon, perform: () => router.push('/settings') },
+      { id: 'run-digest',  label: 'Run digest now',  hint: workspaceId,  icon: Sparkles,     perform: () => fetch(`/api/workspaces/${workspaceId}/digest`, { method: 'POST' }) },
+      { id: 'killswitch',  label: 'STOP ALL agents', hint: 'killswitch', icon: Skull,        perform: () => fetch(`/api/killswitch?workspace=${workspaceId}`, { method: 'POST' }) },
+    ];
+    const projectSwitches = workspaces
+      .filter((w) => w.id !== workspaceId)
+      .map<PaletteAction>((w) => ({
+        id: `switch-${w.id}`,
+        label: `Switch to "${w.name}"`,
+        hint: 'project',
+        icon: FolderTree,
+        perform: () => { setActive(w.id); router.push('/projects/' + w.id); },
+      }));
+    return [...base, ...projectSwitches];
+  }, [router, workspaceId, workspaces, setActive]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();

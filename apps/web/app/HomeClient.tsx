@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Sparkles, Play, RadioTower, Store, Network, Settings as SettingsIcon, ArrowRight } from 'lucide-react';
+import { Sparkles, Play, RadioTower, Store, Network, Settings as SettingsIcon, ArrowRight, FolderTree } from 'lucide-react';
+import { useWorkspaceId, useWorkspace } from '../components/WorkspaceProvider';
 import { toast } from '../components/Toast';
 import { cn } from '../lib/cn';
 
@@ -12,7 +13,10 @@ interface Digest {
   generatedAt?: number;
 }
 
-export function Home({ workspaceId }: { workspaceId: string }) {
+export function Home() {
+  const workspaceId = useWorkspaceId();
+  const { workspaces } = useWorkspace();
+  const active = workspaces.find((w) => w.id === workspaceId);
   const [digest, setDigest] = useState<Digest | null>(null);
   const [busy, setBusy] = useState(false);
   const [greeting, setGreeting] = useState('Hello');
@@ -33,15 +37,19 @@ export function Home({ workspaceId }: { workspaceId: string }) {
   }
   useEffect(() => {
     setGreeting(`Good ${timeOfDay()}`);
-    refresh();
   }, []);
+  useEffect(() => { refresh(); }, [workspaceId]);
 
   return (
     <div className="overflow-y-auto">
       <div className="p-8 max-w-4xl">
         {/* Hero */}
         <div className="mb-8">
-          <div className="text-dim2 text-[10px] uppercase tracking-[0.18em] mb-2">workspace · <span className="text-dim">{workspaceId}</span></div>
+          <div className="text-dim2 text-[10px] uppercase tracking-[0.18em] mb-2 flex items-center gap-2">
+            <FolderTree size={11} className="text-accent" />
+            <span>project · <span className="text-ink">{active?.name ?? workspaceId}</span></span>
+            <a href="/projects" className="text-accent text-[10px] hover:underline ml-2">switch</a>
+          </div>
           <h1 className="text-3xl font-semibold tracking-tight bg-gradient-to-r from-ink via-ink to-dim bg-clip-text text-transparent">
             {greeting}, boss.
           </h1>
@@ -86,10 +94,11 @@ export function Home({ workspaceId }: { workspaceId: string }) {
         {/* Quick links */}
         <section>
           <div className="text-dim2 text-[10px] uppercase tracking-wider mb-3">Quick links</div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            <QuickCard href="/ops" icon={RadioTower} label="Ops" hint="live feed · brief · approvals" />
-            <QuickCard href="/hire" icon={Store} label="Hire" hint="154-agent marketplace" />
-            <QuickCard href="/org" icon={Network} label="Org" hint="roster · metrics" />
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+            <QuickCard href="/projects" icon={FolderTree} label="Projects" hint="all workspaces" />
+            <QuickCard href="/ops" icon={RadioTower} label="Ops" hint="live feed · brief" />
+            <QuickCard href="/hire" icon={Store} label="Hire" hint="catalog" />
+            <QuickCard href="/org" icon={Network} label="Org" hint="roster" />
             <QuickCard href="/settings" icon={SettingsIcon} label="Settings" hint="rules · audit" />
           </div>
         </section>

@@ -4,13 +4,15 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   HomeIcon, RadioTower, Hash, Network, Store, ScrollText,
-  Settings as SettingsIcon, Sparkles,
+  Settings as SettingsIcon, Sparkles, FolderTree,
 } from 'lucide-react';
 import { Killswitch } from './Killswitch';
+import { useWorkspaceId } from './WorkspaceProvider';
 import { cn } from '../lib/cn';
 
 const TABS = [
   { href: '/',         label: 'Home',     hint: 'digest',      icon: HomeIcon },
+  { href: '/projects', label: 'Projects', hint: 'all',         icon: FolderTree },
   { href: '/ops',      label: 'Ops',      hint: 'live feed',   icon: RadioTower },
   { href: '/channels', label: 'Channels', hint: 'team rooms',  icon: Hash },
   { href: '/org',      label: 'Org',      hint: 'roster',      icon: Network },
@@ -21,6 +23,7 @@ const TABS = [
 
 export function Sidebar() {
   const pathname = usePathname() ?? '/';
+  const workspaceId = useWorkspaceId();
   const isActive = (href: string) =>
     href === '/' ? pathname === '/' : pathname.startsWith(href);
 
@@ -66,7 +69,7 @@ export function Sidebar() {
         })}
       </nav>
       <div className="mt-auto px-2 pb-2">
-        <Killswitch workspaceId="demo" />
+        <Killswitch workspaceId={workspaceId} />
       </div>
     </aside>
   );
