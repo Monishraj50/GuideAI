@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { ClaudeAdapter } from '@guideai/runtime-claude';
+import { resolveActiveAdapter } from '@guideai/runtime-claude';
 import { appendEvent } from '@guideai/messaging/events';
 import { paths } from '@guideai/shared/paths';
 import { routeModel } from '@guideai/policies/router';
@@ -144,7 +144,7 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
       const passK = await runPassK<Chunk[]>({
         k, requireAgreement: evalCfg.requireAgreement,
         attempt: async () => {
-          const res = await ClaudeAdapter.runOnce({
+          const res = await resolveActiveAdapter().runOnce({
             agentId, workspaceId, cwd, systemPrompt,
             allowedTools: READ_ONLY_TOOLS, model: routing.tier,
           }, context);
@@ -195,7 +195,7 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
     // k=1: original single-call path.
     let result;
     try {
-      result = await ClaudeAdapter.runOnce(
+      result = await resolveActiveAdapter().runOnce(
         {
           agentId,
           workspaceId,

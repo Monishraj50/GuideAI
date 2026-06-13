@@ -322,3 +322,37 @@ The system now treats every workspace as a first-class **project** that you can 
 
 **Surfaced (Principle 10B):** workspace switching reloads per-page state via the `useEffect` keyed on `workspaceId` — feeds, metrics, audit, digest, brief lists all refresh. The `useEffect` swap is intentional (avoids needing URL params for shareable state for v1); a follow-up could add `?ws=<id>` deep-links.
 
+---
+
+## Claude sign-in flow (done 2026-06-13)
+
+The app now gates on Claude authentication before letting the user in.
+
+**Server (`apps/server/src/routes/auth.ts`):**
+- `GET /api/auth/status` — probes `claude --version`, merges with `~/.guideai/auth.json`, returns `{userName, apiKeySet, apiKeyHint, connectedAt, cliDetected, cliVersion, connected}`. The API key itself is never echoed back; only the last 4 chars (`apiKeyHint`).
+- `POST /api/auth/connect {userName, apiKey?}` — requires either a CLI session or an API key. Writes `~/.guideai/auth.json` chmod 600.
+- `POST /api/auth/disconnect` — wipes the auth file.
+- `DELETE /api/auth/apikey` — clears just the API key (CLI session preserved).
+
+**Runtime adapter:**
+- `packages/runtime-claude/src/adapter.ts` reads the stored API key from `~/.guideai/auth.json` on each spawn and injects it as `ANTHROPIC_API_KEY` env var into the Claude CLI subprocess. Still deny-by-default for every other env var (Principle 8) — the key is only forwarded if the user explicitly stored one.
+
+**Web:**
+- `AuthProvider` — React context + `useAuth()` hook. Holds `state`, `loading`, `refresh`, `connect`, `disconnect`, `clearApiKey`.
+- `AuthGate` — wraps the app shell. While `loading`, renders a "connecting…" stub. If not `connected`, redirects to `/signin`. If `connected` and currently on `/signin`, redirects to `/`.
+- `AppShell` — renders `Sidebar` + `TopBar` around `children`, **except on `/signin`** which gets a clean full-bleed layout.
+- `/signin` — 2-column page: branded left rail (gradient blob art, feature bullets); right rail form with name input, optional API key input, CLI-detection banner (green if detected, warn if not + instructions to run `claude /login`).
+- `/settings` gained an `AuthSection` at the top: status rows (CLI version, API key hint with last 4 chars), identity edit (change name), API key management (save / clear), and a final "Disconnect" button.
+- `Sidebar` got an **identity card** at the bottom (avatar with first initial, name, `cli · key set` status line) that links to `/settings`.
+
+**Verified:**
+- `GET /api/auth/status` (no auth) → `{cliDetected: true, cliVersion: "2.1.177 (Claude Code)", connected: false}`.
+- `POST /api/auth/connect {userName: "Monish"}` → `connected: true`. File written to `~/.guideai/auth.json` (chmod 600).
+- `POST /api/auth/connect {userName: "Monish", apiKey: "sk-ant-test-1234"}` → `apiKeySet: true`, `apiKeyHint: "…1234"`.
+- `DELETE /api/auth/apikey` → `apiKeySet: false`, `connected: true` (CLI still satisfies it).
+- `POST /api/auth/disconnect` → file wiped, `connected: false`.
+- `/signin` renders 200 in a bare layout (no Sidebar / TopBar in the HTML).
+- `/settings` includes the AuthSection rendered above RulesEditor + AuditLog.
+
+**Surfaced (Principle 10B):** SSR pre-hydration shows "connecting…" because `useAuth()` hasn't fetched `/api/auth/status` yet. First paint flashes the stub briefly before the form (or the app shell) appears. Acceptable for a local dev tool; a follow-up could read auth state via a cookie/middleware to skip the flash.
+

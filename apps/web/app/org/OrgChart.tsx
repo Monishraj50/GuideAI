@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Users, X, Trophy, Coins } from 'lucide-react';
+import { Users, X, Trophy, Coins, Pencil, Plus } from 'lucide-react';
 import { toast } from '../../components/Toast';
 import { Sparkline } from '../../components/Sparkline';
+import { AgentEditor, type AgentEditorAgent } from '../../components/AgentEditor';
 import { cn } from '../../lib/cn';
 
 interface AgentStats {
@@ -59,6 +60,7 @@ export function OrgChart({ workspaceId }: { workspaceId: string }) {
   const [stats, setStats] = useState<AgentStats[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [selected, setSelected] = useState<AgentStats | null>(null);
+  const [editorMode, setEditorMode] = useState<null | { kind: 'create' } | { kind: 'edit'; agent: AgentEditorAgent }>(null);
 
   async function refresh() {
     const r = await fetch(`/api/workspaces/${workspaceId}/metrics`);
@@ -71,6 +73,13 @@ export function OrgChart({ workspaceId }: { workspaceId: string }) {
     }
   }
   useEffect(() => { refresh(); const t = setInterval(refresh, 4000); return () => clearInterval(t); }, [workspaceId]);
+
+  async function openEditor(id: string) {
+    const r = await fetch(`/api/workspaces/${workspaceId}/agents/${id}`);
+    if (!r.ok) { toast({ title: 'Could not load agent', variant: 'error' }); return; }
+    const a = await r.json();
+    setEditorMode({ kind: 'edit', agent: a });
+  }
 
   async function retire(id: string, name: string) {
     setBusy(id);
@@ -90,11 +99,18 @@ export function OrgChart({ workspaceId }: { workspaceId: string }) {
   return (
     <div className="flex-1 min-h-0 flex">
       <main className="flex-1 min-w-0 overflow-y-auto p-5">
-        <div className="mb-5 flex items-center gap-4 text-xs">
+        <div className="mb-5 flex items-center gap-3 text-xs flex-wrap">
           <Stat icon={<Users size={12} />} label="active" value={active.length.toString()} />
           <Stat icon={<X size={12} />} label="retired" value={retired.length.toString()} subtle />
           <Stat icon={<Coins size={12} />} label="spend" value={fmtUsd(totalUsd)} />
           <Stat icon={<Trophy size={12} />} label="tokens" value={totalTokens.toLocaleString()} subtle />
+          <div className="ml-auto" />
+          <button
+            onClick={() => setEditorMode({ kind: 'create' })}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-accent text-bg text-xs font-medium shadow-glow hover:brightness-110"
+          >
+            <Plus size={12} /> Create custom agent
+          </button>
         </div>
         {active.length === 0 && (
           <div className="border border-dashed border-line/70 rounded-lg p-8 text-center">
@@ -109,27 +125,41 @@ export function OrgChart({ workspaceId }: { workspaceId: string }) {
             const isSelected = selected?.id === a.id;
             const seed = a.id.split('').reduce((s, c) => s + c.charCodeAt(0), 0);
             return (
-              <button
+              <div
                 key={a.id}
-                onClick={() => setSelected(a)}
                 className={cn(
-                  'text-left border rounded-lg p-3 transition-all duration-150 group relative overflow-hidden',
+                  'text-left border rounded-lg p-3 transition-all duration-150 group relative overflow-hidden cursor-pointer',
                   tint.border, tint.bg,
                   isSelected ? 'ring-1 ring-accent shadow-glow' : 'hover:border-line2',
                 )}
+                onClick={() => setSelected(a)}
               >
                 <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <div className="text-ink font-medium truncate">{prettyDisplay(a.displayName)}</div>
+                    <div className="text-ink font-medium truncate flex items-center gap-1.5">
+                      {prettyDisplay(a.displayName)}
+                      {a.role.startsWith('custom-') && (
+                        <span className="text-[9px] uppercase tracking-wider px-1 py-px rounded bg-sonnet/15 text-sonnet border border-sonnet/30">custom</span>
+                      )}
+                    </div>
                     <div className="text-dim text-[11px] truncate font-mono">{a.role}</div>
                   </div>
-                  <div className="flex items-center gap-1 text-[10px] font-mono">
-                    <span className={cn(
-                      'inline-block w-1.5 h-1.5 rounded-full',
-                      a.status === 'working' ? 'bg-accent pulse-dot' : a.status === 'paused' ? 'bg-warn' : 'bg-dim2',
-                    )} />
-                    <span className="text-dim2 uppercase tracking-wider">{a.status}</span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); openEditor(a.id); }}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded text-dim2 hover:text-accent"
+                      title="edit agent"
+                    >
+                      <Pencil size={11} />
+                    </button>
+                    <div className="flex items-center gap-1 text-[10px] font-mono">
+                      <span className={cn(
+                        'inline-block w-1.5 h-1.5 rounded-full',
+                        a.status === 'working' ? 'bg-accent pulse-dot' : a.status === 'paused' ? 'bg-warn' : 'bg-dim2',
+                      )} />
+                      <span className="text-dim2 uppercase tracking-wider">{a.status}</span>
+                    </div>
                   </div>
                 </div>
                 <div className="mt-3 flex items-end gap-3">
@@ -140,7 +170,7 @@ export function OrgChart({ workspaceId }: { workspaceId: string }) {
                   </div>
                   <Sparkline data={fakeSparkData(seed)} stroke={tint.stroke} className="opacity-90" />
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>
@@ -157,7 +187,12 @@ export function OrgChart({ workspaceId }: { workspaceId: string }) {
         <aside className="w-80 border-l border-line/70 p-4 overflow-y-auto glass animate-slideUp">
           <div className="flex items-start justify-between">
             <div>
-              <div className="text-ink font-medium">{prettyDisplay(selected.displayName)}</div>
+              <div className="text-ink font-medium flex items-center gap-1.5">
+                {prettyDisplay(selected.displayName)}
+                {selected.role.startsWith('custom-') && (
+                  <span className="text-[9px] uppercase tracking-wider px-1 py-px rounded bg-sonnet/15 text-sonnet border border-sonnet/30">custom</span>
+                )}
+              </div>
               <div className="text-dim text-xs font-mono">{selected.role}</div>
             </div>
             <button onClick={() => setSelected(null)} className="text-dim hover:text-ink"><X size={14} /></button>
@@ -172,14 +207,27 @@ export function OrgChart({ workspaceId }: { workspaceId: string }) {
             <Detail label="Cost" value={fmtUsd(selected.usd)} />
             <Detail label="Last active" value={selected.lastActivity ? new Date(selected.lastActivity).toLocaleTimeString() : '—'} />
           </div>
-          <button
-            disabled={busy === selected.id}
-            onClick={() => retire(selected.id, selected.displayName)}
-            className="mt-6 w-full px-3 py-2 rounded-md border border-err/40 text-err text-sm disabled:opacity-40 hover:bg-err/10 transition-colors"
-          >
-            retire agent
-          </button>
+          <div className="mt-6 grid grid-cols-2 gap-2">
+            <button
+              onClick={() => openEditor(selected.id)}
+              className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-md border border-accent/40 text-accent text-sm hover:bg-accent/10 transition-colors"
+            >
+              <Pencil size={12} /> edit
+            </button>
+            <button
+              disabled={busy === selected.id}
+              onClick={() => retire(selected.id, selected.displayName)}
+              className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-md border border-err/40 text-err text-sm disabled:opacity-40 hover:bg-err/10 transition-colors"
+            >
+              <X size={12} /> retire
+            </button>
+          </div>
         </aside>
+      )}
+      {editorMode && (
+        editorMode.kind === 'create'
+          ? <AgentEditor mode="create" workspaceId={workspaceId} onClose={() => setEditorMode(null)} onSaved={() => { setEditorMode(null); refresh(); }} />
+          : <AgentEditor mode="edit" agent={editorMode.agent} workspaceId={workspaceId} onClose={() => setEditorMode(null)} onSaved={() => { setEditorMode(null); refresh(); }} />
       )}
     </div>
   );

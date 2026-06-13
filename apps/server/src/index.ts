@@ -13,6 +13,8 @@ import { registerReplayRoutes } from './routes/replay.js';
 import { registerKillswitchRoutes } from './routes/killswitch.js';
 import { registerAuditRoutes } from './routes/audit.js';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
+import { registerAuthRoutes } from './routes/auth.js';
+import { registerIntegrationRoutes } from './routes/integrations.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
 const app = Fastify({ logger: true });
@@ -37,6 +39,8 @@ registerReplayRoutes(app);
 registerKillswitchRoutes(app);
 registerAuditRoutes(app);
 registerWorkspaceRoutes(app);
+registerAuthRoutes(app);
+registerIntegrationRoutes(app);
 
 app.listen({ port: PORT, host: '0.0.0.0' })
   .then(() => app.log.info(`GuideAI server up on :${PORT} (state: ${paths.home})`))

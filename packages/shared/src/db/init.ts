@@ -80,6 +80,17 @@ CREATE TABLE IF NOT EXISTS metric_snapshots (
   usd_spent REAL NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  salt TEXT NOT NULL,
+  display_name TEXT,
+  created_at INTEGER NOT NULL,
+  last_login_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+
 CREATE INDEX IF NOT EXISTS idx_agents_workspace ON agents(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_briefs_workspace ON briefs(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_brief ON tasks(brief_id);

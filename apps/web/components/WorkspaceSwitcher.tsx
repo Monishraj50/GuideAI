@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, Plus, Check, FolderTree, Archive } from 'lucide-react';
 import { useWorkspace } from './WorkspaceProvider';
@@ -13,14 +14,38 @@ export function WorkspaceSwitcher() {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [coords, setCoords] = useState<{ left: number; top: number } | null>(null);
+  const [mounted, setMounted] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
+
+  useEffect(() => { setMounted(true); }, []);
+
+  // Recompute popover position whenever it opens or on resize/scroll.
+  useLayoutEffect(() => {
+    if (!open) return;
+    function place() {
+      const r = triggerRef.current?.getBoundingClientRect();
+      if (!r) return;
+      setCoords({ left: r.left, top: r.bottom + 4 });
+    }
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open]);
 
   useEffect(() => {
     function onClick(e: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
-        setOpen(false); setCreating(false);
-      }
+      const t = e.target as Node;
+      if (wrapRef.current?.contains(t)) return;
+      if (popoverRef.current?.contains(t)) return;
+      setOpen(false); setCreating(false);
     }
     window.addEventListener('mousedown', onClick);
     return () => window.removeEventListener('mousedown', onClick);
@@ -50,18 +75,12 @@ export function WorkspaceSwitcher() {
     toast({ title: `Archived "${name}"`, variant: 'warn' });
   }
 
-  return (
-    <div className="relative" ref={wrapRef}>
-      <button
-        onClick={() => { setOpen((o) => !o); refresh(); }}
-        className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-line/40 hover:bg-line text-ink transition-colors text-xs"
-      >
-        <FolderTree size={12} className="text-accent" />
-        <span className="font-mono">{active?.name ?? activeId}</span>
-        <ChevronDown size={12} className={cn('transition-transform', open && 'rotate-180')} />
-      </button>
-      {open && (
-        <div className="absolute left-0 top-full mt-1 w-72 rounded-lg border border-line2 bg-surface2 shadow-soft overflow-hidden z-30 animate-slideUp">
+  const popover = open && coords && (
+    <div
+      ref={popoverRef}
+      style={{ position: 'fixed', left: coords.left, top: coords.top, zIndex: 60 }}
+      className="w-72 rounded-lg border border-line2 bg-surface2 shadow-soft overflow-hidden animate-slideUp"
+    >
           <div className="px-3 py-2 border-b border-line/70 flex items-center justify-between">
             <span className="text-dim2 text-[10px] uppercase tracking-wider">Projects</span>
             <span className="text-dim2 text-[10px] font-mono">{workspaces.length}</span>
@@ -139,8 +158,21 @@ export function WorkspaceSwitcher() {
               <span className="text-accent">→</span>
             </button>
           </div>
-        </div>
-      )}
+    </div>
+  );
+
+  return (
+    <div className="relative" ref={wrapRef}>
+      <button
+        ref={triggerRef}
+        onClick={() => { setOpen((o) => !o); refresh(); }}
+        className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-line/40 hover:bg-line text-ink transition-colors text-xs"
+      >
+        <FolderTree size={12} className="text-accent" />
+        <span className="font-mono">{active?.name ?? activeId}</span>
+        <ChevronDown size={12} className={cn('transition-transform', open && 'rotate-180')} />
+      </button>
+      {mounted && popover && createPortal(popover, document.body)}
     </div>
   );
 }

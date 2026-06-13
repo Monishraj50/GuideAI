@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Search, Check, Plus, Trash2, Wrench, Cpu } from 'lucide-react';
+import { Search, Check, Plus, Trash2, Wrench, Cpu, Sparkles, Pencil } from 'lucide-react';
 import { toast } from '../../components/Toast';
+import { AgentEditor, type AgentEditorAgent } from '../../components/AgentEditor';
 import { cn } from '../../lib/cn';
 
 interface Department { slug: string; label: string; count: number }
@@ -28,6 +29,7 @@ export function HireMarketplace({ workspaceId }: { workspaceId: string }) {
   const [hovered, setHovered] = useState<AgentDetail | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editorMode, setEditorMode] = useState<null | { kind: 'create' } | { kind: 'edit'; agent: AgentEditorAgent }>(null);
 
   async function loadCatalog() {
     setError(null);
@@ -76,6 +78,12 @@ export function HireMarketplace({ workspaceId }: { workspaceId: string }) {
     const r = await fetch(`/api/catalog/agents/${role}`);
     if (r.ok) setHovered(await r.json());
   }
+  async function openEditor(id: string) {
+    const r = await fetch(`/api/workspaces/${workspaceId}/agents/${id}`);
+    if (!r.ok) { toast({ title: 'Could not load agent', variant: 'error' }); return; }
+    const a = await r.json();
+    setEditorMode({ kind: 'edit', agent: a });
+  }
 
   const hiredRoles = useMemo(() => new Set(roster.map((r) => r.role)), [roster]);
 
@@ -117,17 +125,36 @@ export function HireMarketplace({ workspaceId }: { workspaceId: string }) {
           </button>
         ))}
         <div className="border-t border-line/70 my-4" />
+        <button
+          onClick={() => setEditorMode({ kind: 'create' })}
+          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md bg-accent/10 border border-accent/30 text-accent text-xs font-medium hover:bg-accent/20 transition-colors mb-3"
+        >
+          <Sparkles size={12} /> Create custom agent
+        </button>
         <div className="text-dim2 text-[10px] uppercase tracking-wider mb-2 px-2">Roster ({roster.length})</div>
         {roster.length === 0 && <div className="text-dim2 text-xs italic px-2">No agents hired yet.</div>}
         {roster.map((r) => (
           <div key={r.id} className="px-2 py-1 flex items-center justify-between text-xs group hover:bg-line/30 rounded">
-            <span className="text-ink2 truncate">{pretty(r.displayName)}</span>
+            <span className="text-ink2 truncate flex-1 flex items-center gap-1">
+              {pretty(r.displayName)}
+              {r.role.startsWith('custom-') && (
+                <span className="text-[8px] uppercase tracking-wider text-sonnet">·custom</span>
+              )}
+            </span>
+            <button
+              onClick={() => openEditor(r.id)}
+              className="text-dim group-hover:text-accent opacity-0 group-hover:opacity-100 transition-opacity ml-1"
+              title="edit"
+            >
+              <Pencil size={11} />
+            </button>
             <button
               onClick={() => retire(r.id, r.displayName)}
               disabled={busy === r.id}
-              className="text-dim group-hover:text-err opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-40"
+              className="text-dim group-hover:text-err opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-40 ml-1"
+              title="retire"
             >
-              <Trash2 size={12} />
+              <Trash2 size={11} />
             </button>
           </div>
         ))}
@@ -183,6 +210,11 @@ export function HireMarketplace({ workspaceId }: { workspaceId: string }) {
         </ol>
       </main>
 
+      {editorMode && (
+        editorMode.kind === 'create'
+          ? <AgentEditor mode="create" workspaceId={workspaceId} onClose={() => setEditorMode(null)} onSaved={() => { setEditorMode(null); loadRoster(); }} />
+          : <AgentEditor mode="edit" agent={editorMode.agent} workspaceId={workspaceId} onClose={() => setEditorMode(null)} onSaved={() => { setEditorMode(null); loadRoster(); }} />
+      )}
       <aside className="w-96 border-l border-line/70 p-4 overflow-y-auto hidden xl:block glass">
         <div className="text-dim2 text-[10px] uppercase tracking-wider mb-2">Preview</div>
         {!hovered && <div className="text-dim2 text-xs italic">Hover an agent to preview its system prompt.</div>}

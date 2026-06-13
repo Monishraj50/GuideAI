@@ -2,6 +2,8 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 import readline from 'node:readline';
 import type {
   AgentHandle,
@@ -70,12 +72,29 @@ export async function killAllClaudeAgents(opts: { hardTimeoutMs?: number } = {})
 // needed for the CLI to find itself; everything else is opt-in via SpawnOpts.env.
 const BASE_ENV_ALLOWED = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TERM', 'USER'];
 
+function readStoredClaudeKey(): string | undefined {
+  try {
+    const home = process.env.GUIDEAI_HOME ?? path.join(os.homedir(), '.guideai');
+    const sess = JSON.parse(fs.readFileSync(path.join(home, 'session.json'), 'utf8'));
+    const username = typeof sess?.username === 'string' ? sess.username : null;
+    if (!username) return undefined;
+    const integ = JSON.parse(fs.readFileSync(path.join(home, 'integrations', 'claude.json'), 'utf8'));
+    const u = integ?.users?.[username];
+    if (typeof u?.apiKey === 'string' && u.apiKey.length > 0) return u.apiKey;
+  } catch {}
+  return undefined;
+}
+
 function buildEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const k of BASE_ENV_ALLOWED) {
     const v = process.env[k];
     if (v !== undefined) out[k] = v;
   }
+  // API key precedence: process env → integrations/claude.json. Deny-by-default
+  // for any other secret env var.
+  const apiKey = process.env.ANTHROPIC_API_KEY ?? readStoredClaudeKey();
+  if (apiKey) out.ANTHROPIC_API_KEY = apiKey;
   if (extra) Object.assign(out, extra);
   return out;
 }

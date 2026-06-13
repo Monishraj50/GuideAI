@@ -54,7 +54,7 @@ export function TopBar() {
   }
 
   return (
-    <header className="h-12 border-b border-line/70 flex items-center px-4 gap-4 glass shadow-soft">
+    <header className="relative z-30 h-12 border-b border-line/70 flex items-center px-4 gap-4 glass shadow-soft">
       {/* workspace switcher */}
       <div className="flex items-center gap-2 text-xs text-dim">
         <span className="uppercase tracking-wider text-dim2">Project</span>
