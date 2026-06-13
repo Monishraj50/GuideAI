@@ -41,6 +41,21 @@ importers:
         specifier: workspace:*
         version: link:../shared
 
+  packages/runtime-claude:
+    dependencies:
+      '@guideai/runtime-core':
+        specifier: workspace:*
+        version: link:../runtime-core
+      '@guideai/shared':
+        specifier: workspace:*
+        version: link:../shared
+
+  packages/runtime-core:
+    dependencies:
+      '@guideai/shared':
+        specifier: workspace:*
+        version: link:../shared
+
   packages/shared:
     dependencies:
       better-sqlite3:
