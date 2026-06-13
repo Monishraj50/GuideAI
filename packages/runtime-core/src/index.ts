@@ -27,8 +27,16 @@ export interface AgentHandle {
   kill(signal?: NodeJS.Signals): Promise<void>;
 }
 
+export type RuntimeAvailability = 'ready' | 'coming-soon';
+
 export interface RuntimeAdapter {
   readonly id: RuntimeId;
+  readonly displayName: string;
+  readonly availability: RuntimeAvailability;
+  /** Short tagline for the picker. */
+  readonly description: string;
+  /** Either the CLI binary name or a hosted endpoint URL — only set when ready. */
+  readonly endpoint?: string;
   readonly capabilities: {
     streaming: boolean;
     interactive: boolean;
@@ -41,4 +49,34 @@ export interface RuntimeAdapter {
 
   /** One-shot: send a single prompt, return all chunks emitted until exit. */
   runOnce(opts: SpawnOpts, prompt: string): Promise<RunOnceResult>;
+}
+
+/** A stub adapter that throws on use; lets the UI show non-ready runtimes
+ *  in the picker without making them silently mis-route. */
+export function makeStubAdapter(spec: {
+  id: RuntimeId;
+  displayName: string;
+  description: string;
+  capabilities?: Partial<RuntimeAdapter['capabilities']>;
+}): RuntimeAdapter {
+  const cannotUse = () => {
+    throw new Error(
+      `runtime '${spec.id}' is not yet implemented in this GuideAI build. ` +
+      `Use 'claude' for now.`,
+    );
+  };
+  return {
+    id: spec.id,
+    displayName: spec.displayName,
+    availability: 'coming-soon',
+    description: spec.description,
+    capabilities: {
+      streaming: spec.capabilities?.streaming ?? false,
+      interactive: spec.capabilities?.interactive ?? false,
+      tools: spec.capabilities?.tools ?? [],
+      models: spec.capabilities?.models ?? [],
+    },
+    spawn: cannotUse,
+    runOnce: cannotUse,
+  };
 }

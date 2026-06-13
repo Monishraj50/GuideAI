@@ -181,3 +181,18 @@ Per ECC Principle 7B: every build session appends a 5-line entry. Read this befo
   - SSR HTML on `/` includes "Daily standup digest" / "run now" / quick-links — Home page renders.
 - **Surfaced (Principle 10B):** Haiku paragraph quality is the weak link — sample output read "Hi! I see your workspace activity snapshot…" (not a real digest). Better prompt + few-shot examples land later. Cron behaviour itself is fully validated via the `?run=now` trigger path — at 09:00 the same code path runs.
 
+---
+
+## Step 13 — Cross-runtime adapter scaffold (done 2026-06-13)
+
+- `packages/runtime-core/src/index.ts` extended `RuntimeAdapter` with `displayName`, `availability: 'ready' | 'coming-soon'`, and `description`. New `makeStubAdapter()` factory returns an adapter that throws on `spawn`/`runOnce` — UI can show non-ready runtimes without silent mis-route.
+- `packages/runtime-core/src/registry.ts` ships `STUB_ADAPTERS` for `codex`, `copilot`, `gemini` and `listRuntimes(claudeAdapter)` to build the public listing.
+- `packages/runtime-claude/src/adapter.ts` now sets `availability: 'ready'`, declares `displayName: 'Claude Code'`, and exposes the CLI path.
+- `apps/server/src/routes/runtimes.ts`: `GET /api/runtimes` returns all 4 runtimes.
+- UI: BriefPane has a runtime `<select>` that loads from `/api/runtimes`. Non-ready entries render with the "(soon)" suffix and the HTML `disabled` attribute — visible but unselectable.
+- **Verified end-to-end (demo target — "picker visible, only Claude selectable"):**
+  - `GET /api/runtimes` returns 4 entries: claude (ready), codex / copilot / gemini (coming-soon), each with capabilities + description.
+  - SSR HTML for `/ops` contains `runtime` label + `select` with all 4 `<option>` rows; non-Claude options carry the `disabled` flag.
+  - submitBrief still routes through ClaudeAdapter — no behavioural regression on the live path.
+- **Surfaced (Principle 10B):** the runtime id is **not yet threaded through `submitBrief()` / `runPipeline()` / `cos.ts`**. The UI picker stores the choice locally but the request body doesn't include it (since only Claude is ready). When the second adapter ships, the API will gain `runtime: 'codex'` and the orchestrator's adapter lookup will swap from a direct `ClaudeAdapter` import to a registry resolve.
+

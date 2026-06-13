@@ -159,6 +159,10 @@ function attachStream(
 
 export const ClaudeAdapter: RuntimeAdapter = {
   id: 'claude',
+  displayName: 'Claude Code',
+  availability: 'ready',
+  description: "Anthropic's Claude CLI — streaming, sandboxed, MCP-ready.",
+  endpoint: CLAUDE_BIN,
   capabilities: {
     streaming: true,
     interactive: true,

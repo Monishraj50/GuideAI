@@ -14,6 +14,8 @@
     "@guideai/metrics": "workspace:*",
     "@guideai/orchestrator": "workspace:*",
     "@guideai/policies": "workspace:*",
+    "@guideai/runtime-claude": "workspace:*",
+    "@guideai/runtime-core": "workspace:*",
     "@guideai/shared": "workspace:*",
     "fastify": "^5.2.0",
     "node-cron": "^3.0.3"

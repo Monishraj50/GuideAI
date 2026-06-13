@@ -1,13 +1,26 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+
+interface RuntimeListing {
+  id: 'claude' | 'codex' | 'copilot' | 'gemini';
+  displayName: string;
+  availability: 'ready' | 'coming-soon';
+  description: string;
+}
 
 export function BriefPane({ workspaceId }: { workspaceId: string }) {
   const [text, setText] = useState('');
   const [securityTagged, setSecurityTagged] = useState(false);
+  const [runtime, setRuntime] = useState<RuntimeListing['id']>('claude');
+  const [runtimes, setRuntimes] = useState<RuntimeListing[]>([]);
   const [busy, setBusy] = useState(false);
   const [last, setLast] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/api/runtimes').then((r) => r.json()).then((j) => setRuntimes(j.runtimes ?? []));
+  }, []);
 
   async function submit() {
     if (!text.trim() || busy) return;
@@ -52,15 +65,32 @@ export function BriefPane({ workspaceId }: { workspaceId: string }) {
         />
         <span>security review (review phase runs pass@3)</span>
       </label>
-      <div className="flex items-center justify-between">
-        <div className="text-dim text-xs">⌘↵ to send</div>
-        <button
-          onClick={submit}
-          disabled={busy || !text.trim()}
-          className="px-3 py-1 text-sm rounded bg-accent text-bg font-medium disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110"
-        >
-          {busy ? 'briefing…' : 'send'}
-        </button>
+      <div className="flex items-center justify-between gap-3">
+        <label className="flex items-center gap-2 text-xs text-dim">
+          <span>runtime</span>
+          <select
+            value={runtime}
+            onChange={(e) => setRuntime(e.target.value as RuntimeListing['id'])}
+            className="bg-bg border border-line rounded px-2 py-1 text-ink text-xs font-mono"
+          >
+            {runtimes.map((rt) => (
+              <option key={rt.id} value={rt.id} disabled={rt.availability !== 'ready'}>
+                {rt.displayName}{rt.availability === 'coming-soon' ? ' (soon)' : ''}
+              </option>
+            ))}
+            {runtimes.length === 0 && <option value="claude">Claude Code</option>}
+          </select>
+        </label>
+        <div className="flex items-center gap-2 ml-auto">
+          <div className="text-dim text-xs">⌘↵</div>
+          <button
+            onClick={submit}
+            disabled={busy || !text.trim()}
+            className="px-3 py-1 text-sm rounded bg-accent text-bg font-medium disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110"
+          >
+            {busy ? 'briefing…' : 'send'}
+          </button>
+        </div>
       </div>
       {last && <div className="text-dim text-xs">{last}</div>}
       {err && <div className="text-err text-xs">{err}</div>}

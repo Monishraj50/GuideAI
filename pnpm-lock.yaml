@@ -38,6 +38,12 @@ importers:
       '@guideai/policies':
         specifier: workspace:*
         version: link:../../packages/policies
+      '@guideai/runtime-claude':
+        specifier: workspace:*
+        version: link:../../packages/runtime-claude
+      '@guideai/runtime-core':
+        specifier: workspace:*
+        version: link:../../packages/runtime-core
       '@guideai/shared':
         specifier: workspace:*
         version: link:../../packages/shared
