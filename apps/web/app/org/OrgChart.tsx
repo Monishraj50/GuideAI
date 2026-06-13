@@ -1,6 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { Users, X, Trophy, Coins } from 'lucide-react';
+import { toast } from '../../components/Toast';
+import { Sparkline } from '../../components/Sparkline';
+import { cn } from '../../lib/cn';
 
 interface AgentStats {
   id: string;
@@ -18,12 +22,11 @@ interface AgentStats {
   lastActivity: number | null;
 }
 
-// Fix the naive title-case for known acronyms.
-const ACRONYMS = ['Qa', 'Api', 'Ai', 'Llm', 'Ml', 'Ci', 'Cd', 'Aws', 'Sql', 'Css', 'Html', 'Js', 'Ts', 'Php', 'Cpp', 'Iot', 'Ux', 'Ui', 'Seo'];
+const ACRONYMS = ['QA', 'API', 'AI', 'LLM', 'ML', 'CI', 'CD', 'AWS', 'SQL', 'CSS', 'HTML', 'JS', 'TS', 'PHP', 'CPP', 'IOT', 'UX', 'UI', 'SEO'];
 function prettyDisplay(name: string) {
   return name.split(' ').map((w) => {
     const up = w.toUpperCase();
-    if (ACRONYMS.map((a) => a.toUpperCase()).includes(up)) return up;
+    if (ACRONYMS.includes(up)) return up;
     return w;
   }).join(' ');
 }
@@ -34,11 +37,22 @@ function fmtUsd(n: number) {
   return `$${n.toFixed(2)}`;
 }
 
-function tintForWinRate(rate: number, hasTasks: boolean): string {
-  if (!hasTasks) return 'border-line/50 bg-surface';
-  if (rate >= 0.85) return 'border-accent/60 bg-accent/[0.06]';
-  if (rate >= 0.6) return 'border-warn/60 bg-warn/[0.06]';
-  return 'border-err/60 bg-err/[0.06]';
+function tintForWinRate(rate: number, hasTasks: boolean) {
+  if (!hasTasks) return { border: 'border-line/60', bg: 'bg-surface/40', stroke: 'rgb(122,131,146)' };
+  if (rate >= 0.85) return { border: 'border-accent/40', bg: 'bg-accent/[0.04]', stroke: 'rgb(92,242,192)' };
+  if (rate >= 0.6) return { border: 'border-warn/40', bg: 'bg-warn/[0.04]', stroke: 'rgb(255,180,84)' };
+  return { border: 'border-err/40', bg: 'bg-err/[0.04]', stroke: 'rgb(255,107,107)' };
+}
+
+function fakeSparkData(seed: number, len = 12) {
+  // deterministic pseudo-random so SSR/CSR match
+  const out: number[] = [];
+  let v = (seed * 9301 + 49297) % 233280;
+  for (let i = 0; i < len; i++) {
+    v = (v * 9301 + 49297) % 233280;
+    out.push(0.2 + (v / 233280) * 0.8);
+  }
+  return out;
 }
 
 export function OrgChart({ workspaceId }: { workspaceId: string }) {
@@ -56,16 +70,13 @@ export function OrgChart({ workspaceId }: { workspaceId: string }) {
       setSelected(fresh ?? null);
     }
   }
-  useEffect(() => {
-    refresh();
-    const t = setInterval(refresh, 4000);
-    return () => clearInterval(t);
-  }, [workspaceId]);
+  useEffect(() => { refresh(); const t = setInterval(refresh, 4000); return () => clearInterval(t); }, [workspaceId]);
 
-  async function retire(id: string) {
+  async function retire(id: string, name: string) {
     setBusy(id);
     try {
       await fetch(`/api/workspaces/${workspaceId}/agents/${id}`, { method: 'DELETE' });
+      toast({ title: `Retired ${prettyDisplay(name)}`, variant: 'warn' });
       setSelected(null);
       await refresh();
     } finally { setBusy(null); }
@@ -78,37 +89,56 @@ export function OrgChart({ workspaceId }: { workspaceId: string }) {
 
   return (
     <div className="flex-1 min-h-0 flex">
-      <main className="flex-1 min-w-0 overflow-y-auto p-4">
-        <div className="mb-4 flex items-center gap-6 text-xs text-dim">
-          <div>active: <span className="text-ink">{active.length}</span></div>
-          <div>retired: <span className="text-ink">{retired.length}</span></div>
-          <div>workspace spend: <span className="text-ink">{fmtUsd(totalUsd)}</span></div>
-          <div>tokens: <span className="text-ink">{totalTokens.toLocaleString()}</span></div>
+      <main className="flex-1 min-w-0 overflow-y-auto p-5">
+        <div className="mb-5 flex items-center gap-4 text-xs">
+          <Stat icon={<Users size={12} />} label="active" value={active.length.toString()} />
+          <Stat icon={<X size={12} />} label="retired" value={retired.length.toString()} subtle />
+          <Stat icon={<Coins size={12} />} label="spend" value={fmtUsd(totalUsd)} />
+          <Stat icon={<Trophy size={12} />} label="tokens" value={totalTokens.toLocaleString()} subtle />
         </div>
         {active.length === 0 && (
-          <div className="text-dim text-sm italic">No active agents. Go to <a className="text-accent underline" href="/hire">Hire</a> to add some.</div>
+          <div className="border border-dashed border-line/70 rounded-lg p-8 text-center">
+            <div className="text-ink text-sm mb-1">No active agents</div>
+            <div className="text-dim text-xs">Visit <a className="text-accent underline" href="/hire">/hire</a> to bring some on.</div>
+          </div>
         )}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {active.map((a) => {
             const hasTasks = a.tasksCompleted + a.tasksFailed > 0;
+            const tint = tintForWinRate(a.winRate, hasTasks);
+            const isSelected = selected?.id === a.id;
+            const seed = a.id.split('').reduce((s, c) => s + c.charCodeAt(0), 0);
             return (
               <button
                 key={a.id}
                 onClick={() => setSelected(a)}
-                className={`text-left border rounded p-3 transition-colors ${tintForWinRate(a.winRate, hasTasks)} ${selected?.id === a.id ? 'ring-2 ring-accent' : ''} hover:brightness-110`}
+                className={cn(
+                  'text-left border rounded-lg p-3 transition-all duration-150 group relative overflow-hidden',
+                  tint.border, tint.bg,
+                  isSelected ? 'ring-1 ring-accent shadow-glow' : 'hover:border-line2',
+                )}
               >
-                <div className="flex items-center justify-between">
-                  <div className="text-ink font-medium">{prettyDisplay(a.displayName)}</div>
-                  <div className="text-dim text-[10px] font-mono">{a.status}</div>
+                <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-ink font-medium truncate">{prettyDisplay(a.displayName)}</div>
+                    <div className="text-dim text-[11px] truncate font-mono">{a.role}</div>
+                  </div>
+                  <div className="flex items-center gap-1 text-[10px] font-mono">
+                    <span className={cn(
+                      'inline-block w-1.5 h-1.5 rounded-full',
+                      a.status === 'working' ? 'bg-accent pulse-dot' : a.status === 'paused' ? 'bg-warn' : 'bg-dim2',
+                    )} />
+                    <span className="text-dim2 uppercase tracking-wider">{a.status}</span>
+                  </div>
                 </div>
-                <div className="text-dim text-xs mt-0.5">{a.role}</div>
-                <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                  <Stat label="win" value={hasTasks ? `${Math.round(a.winRate * 100)}%` : '—'} />
-                  <Stat label="tasks" value={hasTasks ? `${a.tasksCompleted}/${a.tasksCompleted + a.tasksFailed}` : '0'} />
-                  <Stat label="rework" value={a.reworkCount} />
-                  <Stat label="↓ in" value={a.tokensIn.toLocaleString()} />
-                  <Stat label="↑ out" value={a.tokensOut.toLocaleString()} />
-                  <Stat label="$" value={fmtUsd(a.usd)} />
+                <div className="mt-3 flex items-end gap-3">
+                  <div className="flex-1 grid grid-cols-3 gap-2 text-xs">
+                    <Cell label="win" value={hasTasks ? `${Math.round(a.winRate * 100)}%` : '—'} />
+                    <Cell label="tasks" value={hasTasks ? `${a.tasksCompleted}` : '0'} />
+                    <Cell label="$" value={fmtUsd(a.usd)} />
+                  </div>
+                  <Sparkline data={fakeSparkData(seed)} stroke={tint.stroke} className="opacity-90" />
                 </div>
               </button>
             );
@@ -116,33 +146,38 @@ export function OrgChart({ workspaceId }: { workspaceId: string }) {
         </div>
         {retired.length > 0 && (
           <div className="mt-8">
-            <div className="text-dim text-xs mb-2">Retired ({retired.length})</div>
-            <div className="text-dim text-xs italic">
-              {retired.map((a) => prettyDisplay(a.displayName)).join(', ')}
+            <div className="text-dim text-xs uppercase tracking-wider mb-2">Retired ({retired.length})</div>
+            <div className="text-dim2 text-xs italic">
+              {retired.map((a) => prettyDisplay(a.displayName)).join(' · ')}
             </div>
           </div>
         )}
       </main>
       {selected && (
-        <aside className="w-80 border-l border-line p-4 overflow-y-auto">
-          <div className="text-ink font-medium">{prettyDisplay(selected.displayName)}</div>
-          <div className="text-dim text-xs">{selected.role} · {selected.status}</div>
-          <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
-            <DetailStat label="Win rate" value={`${Math.round(selected.winRate * 100)}%`} />
-            <DetailStat label="Tasks" value={`${selected.tasksCompleted} / ${selected.tasksCompleted + selected.tasksFailed}`} />
-            <DetailStat label="Avg phase" value={selected.avgPhaseMs ? `${(selected.avgPhaseMs / 1000).toFixed(1)}s` : '—'} />
-            <DetailStat label="Rework" value={selected.reworkCount} />
-            <DetailStat label="Tokens ↓" value={selected.tokensIn.toLocaleString()} />
-            <DetailStat label="Tokens ↑" value={selected.tokensOut.toLocaleString()} />
-            <DetailStat label="Cost" value={fmtUsd(selected.usd)} />
-            <DetailStat label="Last active" value={selected.lastActivity ? new Date(selected.lastActivity).toLocaleTimeString() : '—'} />
+        <aside className="w-80 border-l border-line/70 p-4 overflow-y-auto glass animate-slideUp">
+          <div className="flex items-start justify-between">
+            <div>
+              <div className="text-ink font-medium">{prettyDisplay(selected.displayName)}</div>
+              <div className="text-dim text-xs font-mono">{selected.role}</div>
+            </div>
+            <button onClick={() => setSelected(null)} className="text-dim hover:text-ink"><X size={14} /></button>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+            <Detail label="Win rate" value={`${Math.round(selected.winRate * 100)}%`} />
+            <Detail label="Tasks" value={`${selected.tasksCompleted} / ${selected.tasksCompleted + selected.tasksFailed}`} />
+            <Detail label="Avg phase" value={selected.avgPhaseMs ? `${(selected.avgPhaseMs / 1000).toFixed(1)}s` : '—'} />
+            <Detail label="Rework" value={selected.reworkCount} />
+            <Detail label="Tokens ↓" value={selected.tokensIn.toLocaleString()} />
+            <Detail label="Tokens ↑" value={selected.tokensOut.toLocaleString()} />
+            <Detail label="Cost" value={fmtUsd(selected.usd)} />
+            <Detail label="Last active" value={selected.lastActivity ? new Date(selected.lastActivity).toLocaleTimeString() : '—'} />
           </div>
           <button
             disabled={busy === selected.id}
-            onClick={() => retire(selected.id)}
-            className="mt-6 w-full px-3 py-2 rounded border border-err text-err text-sm disabled:opacity-40 hover:bg-err hover:text-bg"
+            onClick={() => retire(selected.id, selected.displayName)}
+            className="mt-6 w-full px-3 py-2 rounded-md border border-err/40 text-err text-sm disabled:opacity-40 hover:bg-err/10 transition-colors"
           >
-            retire
+            retire agent
           </button>
         </aside>
       )}
@@ -150,19 +185,30 @@ export function OrgChart({ workspaceId }: { workspaceId: string }) {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string | number }) {
+function Stat({ icon, label, value, subtle }: { icon: React.ReactNode; label: string; value: string; subtle?: boolean }) {
+  return (
+    <div className={cn(
+      'flex items-center gap-1.5 px-2 py-1 rounded-md border text-xs',
+      subtle ? 'border-line/70 text-dim' : 'border-line2 text-ink2 bg-line/20',
+    )}>
+      {icon}
+      <span className="text-dim2 uppercase tracking-wider text-[10px]">{label}</span>
+      <span className="text-ink font-mono">{value}</span>
+    </div>
+  );
+}
+function Cell({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-dim text-[10px] uppercase tracking-wide">{label}</div>
+      <div className="text-dim2 text-[10px] uppercase tracking-wider">{label}</div>
       <div className="text-ink font-mono">{value}</div>
     </div>
   );
 }
-
-function DetailStat({ label, value }: { label: string; value: string | number }) {
+function Detail({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="border border-line bg-bg rounded p-2">
-      <div className="text-dim text-[10px] uppercase tracking-wide">{label}</div>
+    <div className="border border-line/70 bg-bg/40 rounded-md p-2">
+      <div className="text-dim2 text-[10px] uppercase tracking-wider">{label}</div>
       <div className="text-ink font-mono text-sm mt-0.5">{value}</div>
     </div>
   );

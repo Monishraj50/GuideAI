@@ -2,9 +2,58 @@
 @tailwind components;
 @tailwind utilities;
 
-html, body { background: #0b0d10; color: #e6eaf0; }
-body { font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
+:root {
+  --font-inter: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
 
-.scroll-fade {
-  mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 calc(100% - 24px), transparent);
+html, body {
+  background:
+    radial-gradient(1200px 600px at 80% -10%, rgba(92,242,192,0.06), transparent 60%),
+    radial-gradient(900px 500px at -10% 100%, rgba(169,140,242,0.05), transparent 55%),
+    #07090c;
+  color: #e6eaf0;
+  background-attachment: fixed;
+  font-feature-settings: 'cv11', 'ss01', 'tnum';
+}
+
+body { font-family: var(--font-inter); }
+
+/* Scrollbar — minimal */
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.12); }
+
+/* Selection */
+::selection { background: rgba(92,242,192,0.25); color: #e6eaf0; }
+
+/* Loading shimmer */
+.shimmer {
+  background-image: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.04) 50%, rgba(255,255,255,0) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+/* Soft separators */
+.hairline { border-color: rgba(255,255,255,0.06); }
+
+/* Pulsing dot */
+.pulse-dot { position: relative; }
+.pulse-dot::before {
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: 9999px;
+  background: currentColor;
+  opacity: 0.4;
+  animation: pulse 1.8s cubic-bezier(0.4,0,0.6,1) infinite;
+}
+
+/* Focus rings */
+:focus-visible { outline: none; box-shadow: 0 0 0 2px #5cf2c0 inset; }
+
+/* Subtle glass panels */
+.glass {
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0)) , #0f1318;
+  backdrop-filter: blur(8px);
 }

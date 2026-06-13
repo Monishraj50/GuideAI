@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { SkipBack, ChevronLeft, ChevronRight, SkipForward, Code2, ChevronDown, ChevronRight as ChevronR } from 'lucide-react';
+import { cn } from '../../../lib/cn';
 
 interface TaskRow {
   id: string;
@@ -52,7 +54,6 @@ function fmtMs(n: number) {
   if (n < 1000) return `${n}ms`;
   return `${(n / 1000).toFixed(1)}s`;
 }
-
 function shortPreview(c: Chunk): string {
   if (c.text) return c.text;
   if (c.kind === 'tool') return `${c.tool}(${JSON.stringify(c.args ?? {}).slice(0, 60)})`;
@@ -95,7 +96,9 @@ export function Replay({ workspaceId, briefId }: { workspaceId: string; briefId:
     return { totalDuration: total, phaseBars: bars };
   }, [trace]);
 
-  if (!trace) return <div className="p-6 text-dim text-sm">loading…</div>;
+  if (!trace) {
+    return <div className="p-6 space-y-2"><div className="h-4 w-40 shimmer bg-line/30 rounded" /><div className="h-3 w-80 shimmer bg-line/20 rounded" /></div>;
+  }
 
   const current = trace.chunks[cursor];
   const visible = trace.chunks.slice(0, cursor + 1);
@@ -103,18 +106,21 @@ export function Replay({ workspaceId, briefId }: { workspaceId: string; briefId:
   return (
     <div className="flex-1 min-h-0 flex flex-col">
       {/* Top: brief + flame graph */}
-      <section className="border-b border-line p-4">
+      <section className="border-b border-line/70 p-5">
         <div className="text-ink text-sm">{trace.brief.body}</div>
-        <div className="text-dim text-xs mt-1">
-          {new Date(trace.brief.createdAt).toLocaleString()} · {trace.brief.status} · total {fmtMs(totalDuration)}
+        <div className="text-dim2 text-[11px] mt-1">
+          {new Date(trace.brief.createdAt).toLocaleString()} · {trace.brief.status} · total <span className="text-ink font-mono">{fmtMs(totalDuration)}</span>
         </div>
-        <div className="relative mt-4 h-7 bg-bg border border-line rounded overflow-hidden">
+        <div className="relative mt-4 h-8 bg-bg/70 border border-line/70 rounded-md overflow-hidden">
           {phaseBars.map((b, i) => (
             <div
               key={i}
               title={`${b.phase} · ${fmtMs(b.durationMs)} · ${b.tokensIn}↓/${b.tokensOut}↑`}
               style={{ left: `${b.offset}%`, width: `${b.width}%` }}
-              className={`absolute top-0 bottom-0 ${PHASE_COLOR[b.phase] ?? 'bg-line'} border-r border-bg/40 flex items-center justify-center text-[10px] text-bg font-mono`}
+              className={cn(
+                'absolute top-0 bottom-0 border-r border-bg/60 flex items-center justify-center text-[10px] text-bg font-mono font-medium transition-opacity hover:opacity-90',
+                PHASE_COLOR[b.phase] ?? 'bg-line',
+              )}
             >
               {b.width > 6 ? b.phase : ''}
             </div>
@@ -123,16 +129,10 @@ export function Replay({ workspaceId, briefId }: { workspaceId: string; briefId:
       </section>
 
       {/* Scrubber */}
-      <section className="border-b border-line p-4">
-        <div className="flex items-center gap-3 text-xs">
-          <button
-            onClick={() => setCursor(0)}
-            className="px-2 py-0.5 rounded border border-line text-dim hover:text-ink"
-          >⏮</button>
-          <button
-            onClick={() => setCursor((c) => Math.max(0, c - 1))}
-            className="px-2 py-0.5 rounded border border-line text-dim hover:text-ink"
-          >←</button>
+      <section className="border-b border-line/70 p-4">
+        <div className="flex items-center gap-2 text-xs">
+          <button onClick={() => setCursor(0)} className="p-1 rounded border border-line/70 text-dim hover:text-ink hover:border-line2"><SkipBack size={12} /></button>
+          <button onClick={() => setCursor((c) => Math.max(0, c - 1))} className="p-1 rounded border border-line/70 text-dim hover:text-ink hover:border-line2"><ChevronLeft size={12} /></button>
           <input
             type="range"
             min={0}
@@ -141,74 +141,84 @@ export function Replay({ workspaceId, briefId }: { workspaceId: string; briefId:
             onChange={(e) => setCursor(Number(e.target.value))}
             className="flex-1 accent-accent"
           />
-          <button
-            onClick={() => setCursor((c) => Math.min(trace.chunks.length - 1, c + 1))}
-            className="px-2 py-0.5 rounded border border-line text-dim hover:text-ink"
-          >→</button>
-          <button
-            onClick={() => setCursor(trace.chunks.length - 1)}
-            className="px-2 py-0.5 rounded border border-line text-dim hover:text-ink"
-          >⏭</button>
-          <span className="text-dim font-mono w-20 text-right">{cursor + 1} / {trace.chunks.length}</span>
+          <button onClick={() => setCursor((c) => Math.min(trace.chunks.length - 1, c + 1))} className="p-1 rounded border border-line/70 text-dim hover:text-ink hover:border-line2"><ChevronRight size={12} /></button>
+          <button onClick={() => setCursor(trace.chunks.length - 1)} className="p-1 rounded border border-line/70 text-dim hover:text-ink hover:border-line2"><SkipForward size={12} /></button>
+          <span className="text-dim2 font-mono w-20 text-right">{cursor + 1} / {trace.chunks.length}</span>
           <button
             onClick={() => setShowRaw((v) => !v)}
-            className={`px-2 py-0.5 rounded text-xs ${showRaw ? 'bg-accent text-bg' : 'border border-line text-dim hover:text-ink'}`}
-          >raw</button>
+            className={cn(
+              'flex items-center gap-1 px-2 py-1 rounded-md text-xs',
+              showRaw ? 'bg-accent text-bg' : 'border border-line/70 text-dim hover:text-ink',
+            )}
+          >
+            <Code2 size={12} /> raw
+          </button>
         </div>
         {current && (
-          <div className="mt-2 text-xs">
-            <span className="text-dim font-mono mr-2">{new Date(current.ts).toLocaleTimeString()}</span>
-            <span className={`uppercase mr-2 ${current.kind === 'system' && current.level === 'error' ? 'text-err' : current.kind === 'ai' ? 'text-accent' : current.kind === 'approval' ? 'text-warn' : 'text-dim'}`}>
-              {current.kind}
-            </span>
-            <span className="text-dim mr-2">{current.agentId ?? '—'}</span>
-            <span className="text-ink">{shortPreview(current)}</span>
+          <div className="mt-2 text-xs flex items-center gap-2">
+            <span className="text-dim2 font-mono">{new Date(current.ts).toLocaleTimeString()}</span>
+            <span className={cn(
+              'uppercase font-mono text-[10px] px-1.5 py-0.5 rounded-full border',
+              current.kind === 'ai' && 'border-accent/40 text-accent bg-accent/10',
+              current.kind === 'tool' && 'border-warn/40 text-warn bg-warn/10',
+              current.kind === 'approval' && 'border-accent/40 text-accent bg-accent/10',
+              current.kind === 'phase' && 'border-sonnet/40 text-sonnet bg-sonnet/10',
+              current.kind === 'system' && 'border-line/70 text-dim',
+              current.kind === 'user' && 'border-info/40 text-info bg-info/10',
+            )}>{current.kind}</span>
+            <span className="text-dim2">{current.agentId ?? '—'}</span>
+            <span className="text-ink truncate">{shortPreview(current)}</span>
           </div>
         )}
       </section>
 
-      {/* Body: feed (left) + artifacts (right) + raw drawer */}
+      {/* Body */}
       <div className="flex-1 min-h-0 flex">
         <ol className="flex-1 min-w-0 overflow-y-auto font-mono text-[12px]">
           {visible.map((c, i) => (
             <li
               key={c.id}
               onClick={() => setCursor(i)}
-              className={`px-4 py-1 cursor-pointer hover:bg-line ${i === cursor ? 'bg-line' : ''}`}
+              className={cn(
+                'px-5 py-1 cursor-pointer transition-colors',
+                i === cursor ? 'bg-accent/[0.08] border-l-2 border-accent' : 'hover:bg-line/20 border-l-2 border-transparent',
+              )}
             >
-              <span className="text-dim mr-2">{new Date(c.ts).toLocaleTimeString()}</span>
-              <span className="text-dim mr-2 w-12 inline-block">{c.kind}</span>
-              <span className="text-ink">{shortPreview(c).slice(0, 120)}</span>
+              <span className="text-dim2 mr-2">{new Date(c.ts).toLocaleTimeString()}</span>
+              <span className="text-dim2 mr-2 w-14 inline-block uppercase text-[10px]">{c.kind}</span>
+              <span className="text-ink2">{shortPreview(c).slice(0, 120)}</span>
             </li>
           ))}
         </ol>
 
-        <aside className="w-80 border-l border-line overflow-y-auto">
-          <div className="p-3 border-b border-line text-ink font-medium text-sm">Artifacts</div>
+        <aside className="w-80 border-l border-line/70 overflow-y-auto glass">
+          <div className="px-3 py-2 border-b border-line/70 text-dim2 text-[10px] uppercase tracking-wider">Artifacts</div>
           {Object.values(trace.artifacts).length === 0 && (
-            <div className="p-3 text-dim text-xs italic">No artifacts written.</div>
+            <div className="p-3 text-dim2 text-xs italic">No artifacts written.</div>
           )}
-          {Object.entries(trace.artifacts).map(([phase, art]) => (
-            <div key={phase} className="border-b border-line">
-              <button
-                onClick={() => setOpenArtifact((v) => v === phase ? null : phase)}
-                className="w-full text-left p-3 text-sm text-ink hover:bg-line flex items-center justify-between"
-              >
-                <span className="font-mono">{phase}.md</span>
-                <span className="text-dim text-xs">{openArtifact === phase ? '−' : '+'}</span>
-              </button>
-              {openArtifact === phase && (
-                <pre className="p-3 text-[11px] text-dim whitespace-pre-wrap font-mono bg-bg max-h-96 overflow-y-auto">{art.body.slice(0, 4000)}{art.body.length > 4000 ? '\n…' : ''}</pre>
-              )}
-            </div>
-          ))}
+          {Object.entries(trace.artifacts).map(([phase, art]) => {
+            const open = openArtifact === phase;
+            return (
+              <div key={phase} className="border-b border-line/40">
+                <button
+                  onClick={() => setOpenArtifact((v) => v === phase ? null : phase)}
+                  className="w-full text-left p-3 text-sm text-ink2 hover:bg-line/20 flex items-center justify-between transition-colors"
+                >
+                  <span className="font-mono">{phase}.md</span>
+                  {open ? <ChevronDown size={12} className="text-dim" /> : <ChevronR size={12} className="text-dim" />}
+                </button>
+                {open && (
+                  <pre className="px-3 pb-3 text-[11px] text-dim2 whitespace-pre-wrap font-mono bg-bg/60 max-h-96 overflow-y-auto animate-fadeIn">{art.body.slice(0, 4000)}{art.body.length > 4000 ? '\n…' : ''}</pre>
+                )}
+              </div>
+            );
+          })}
         </aside>
       </div>
 
-      {/* Raw JSONL drawer */}
       {showRaw && (
-        <div className="border-t border-line bg-bg max-h-72 overflow-y-auto p-3">
-          <pre className="text-[10px] text-dim font-mono whitespace-pre-wrap">
+        <div className="border-t border-line/70 bg-bg/80 max-h-72 overflow-y-auto p-3 animate-slideUp">
+          <pre className="text-[10px] text-dim2 font-mono whitespace-pre-wrap">
             {visible.map((c) => JSON.stringify(c)).join('\n')}
           </pre>
         </div>

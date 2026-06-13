@@ -6,21 +6,27 @@ const WORKSPACE_ID = 'demo';
 
 export default function OpsPage() {
   return (
-    <div className="flex h-full">
+    <div className="flex h-full min-h-0">
       <div className="flex-1 min-w-0 flex flex-col">
-        <header className="border-b border-line px-4 py-2 flex items-center justify-between">
+        <header className="border-b border-line/70 px-5 py-3 flex items-center justify-between glass">
           <div>
-            <div className="text-ink font-medium">#ops</div>
-            <div className="text-dim text-xs">live event feed · workspace <span className="text-ink">{WORKSPACE_ID}</span></div>
+            <div className="flex items-center gap-2">
+              <span className="text-ink font-medium">#ops</span>
+              <span className="text-dim2 text-xs">·</span>
+              <span className="text-dim text-xs">live event feed</span>
+            </div>
+            <div className="text-dim text-[11px] mt-0.5">events streamed via SSE from <span className="text-ink2 font-mono">{WORKSPACE_ID}</span></div>
           </div>
-          <div className="text-dim text-xs">step 5 — brief → agent → approval</div>
         </header>
         <EventFeed workspaceId={WORKSPACE_ID} />
       </div>
-      <aside className="w-80 border-l border-line p-3 hidden lg:flex flex-col gap-6 overflow-y-auto">
-        <BriefPane workspaceId={WORKSPACE_ID} />
-        <div className="border-t border-line -mx-3" />
-        <PendingTray workspaceId={WORKSPACE_ID} />
+      <aside className="w-[360px] border-l border-line/70 flex flex-col glass">
+        <div className="p-4 border-b border-line/70">
+          <BriefPane workspaceId={WORKSPACE_ID} />
+        </div>
+        <div className="p-4 flex-1 min-h-0 overflow-y-auto">
+          <PendingTray workspaceId={WORKSPACE_ID} />
+        </div>
       </aside>
     </div>
   );

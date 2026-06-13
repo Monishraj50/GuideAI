@@ -10,10 +10,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@guideai/shared": "workspace:*",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.18.0",
     "next": "^15.1.4",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "@guideai/shared": "workspace:*"
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@types/react": "^19.0.2",

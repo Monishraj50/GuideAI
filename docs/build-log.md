@@ -257,3 +257,36 @@ Killswitch always visible bottom-left.
 
 VS Code extension (sibling app per the plan) is the planned next-tier integration.
 
+---
+
+## Polish pass — UI refresh (done 2026-06-13)
+
+Inspiration: agent-teams-ai aesthetic — dense, professional dark theme; live HUD meters; polished microinteractions. Took the energy without copying the Kanban metaphor.
+
+**Foundation:**
+- Inter (UI) + JetBrains Mono (code) via `next/font/google` with CSS variables.
+- Refined Tailwind palette — layered greys (`bg`/`surface`/`surface2`/`line`/`line2`), ink ladder (`ink`/`ink2`/`dim`/`dim2`), accent + gradient `accent → accent2`, tier colours retained (`haiku`/`sonnet`/`opus`).
+- Custom keyframes: `pulse`, `shimmer`, `slideUp`, `fadeIn`. Global `:focus-visible` ring + slim scrollbar. Radial-gradient body background gives the page subtle depth.
+- `lib/cn.ts` helper around `clsx` for variant composition.
+
+**New shared components:**
+- `TopBar` — workspace selector + live HUD meters (active agents, tokens, $ spend, running-process count with red pulse when armed) + ⌘K search shortcut.
+- `CommandPalette` (`⌘K`) — fuzzy command launcher: navigate, run digest, fire killswitch, with arrow-key navigation and modal backdrop blur.
+- `ToastHost` + `toast({title, description?, variant})` — bottom-right stack with `success`/`warn`/`error`/`info` colour-coded, auto-dismiss, slide-up entry. Wired into hire, retire, brief, approval, killswitch, rule-save flows.
+- `Sparkline` — pure-SVG 80×22px polyline with end-dot. Used on Org cards.
+
+**Refreshed surfaces:**
+- **Sidebar** — Lucide icons per tab, active row gets an accent left-bar + `bg-line2/60`, glass background, killswitch pinned at the bottom (red shadowed when armed).
+- **Ops feed** — icons per chunk kind, model-tier pills (haiku/sonnet/opus colour-coded) on AI rows, animated connection dot, sticky "jump to live" pill when scrolled away.
+- **BriefPane** — focus-accent textarea, security checkbox with `ShieldAlert` icon, runtime select with CPU icon, gradient send button with spinner state, `⌘↵` hint.
+- **PendingTray** — animated cards (slide-up), `Wrench` glyph, "don't ask again" follow-up card.
+- **Home** — gradient title with stable greeting ("Hello, boss" → "Good {tod}, boss" post-hydration), digest hero card, quick-link grid.
+- **Org Chart** — heat-tinted cards with sparkline trends, status-aware pulse dot, hover lift, detail aside slides in.
+- **Hire** — Lucide-icon hire/retire/preview buttons, hover-only retire (`opacity-0 group-hover:opacity-100`), animated department list, shimmer skeleton during catalog load.
+- **Logs** — status pill badges, replay flame graph with hover tooltips, scrubber with chevron buttons, artifact accordion, raw drawer slides up.
+- **Settings** — rule rows with action-coloured pills, hover-reveal delete, audit log filter dropdown, polished add-rule bar with focus-accent inputs.
+
+**Hydration-safety fix (Principle 10B):** `Home.timeOfDay()` was called inline → SSR computed it server-side, client hydrated with a potentially different value. Moved into `useState('Hello')` + `useEffect` → stable SSR placeholder, client overwrite on mount.
+
+**Verified:** all 6 routes (`/`, `/ops`, `/org`, `/hire`, `/logs`, `/settings`) return HTTP 200; SSR HTML contains the new components (TopBar meters, Sidebar nav, gradient title, glass panels). Tailwind compiled with the new palette. Fonts loaded via Next.js Font.
+
