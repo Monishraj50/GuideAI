@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import { paths } from '@guideai/shared/paths';
 import { CAPS } from '@guideai/policies/caps';
+import { registerEventRoutes } from './sse.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
 const app = Fastify({ logger: true });
@@ -12,6 +13,8 @@ app.get('/healthz', async () => ({
 }));
 
 app.get('/api/caps', async () => CAPS);
+
+registerEventRoutes(app);
 
 app.listen({ port: PORT, host: '0.0.0.0' })
   .then(() => app.log.info(`GuideAI server up on :${PORT} (state: ${paths.home})`))

@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@guideai/messaging": "workspace:*",
     "@guideai/policies": "workspace:*",
     "@guideai/shared": "workspace:*",
     "fastify": "^5.2.0"

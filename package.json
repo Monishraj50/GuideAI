@@ -9,7 +9,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "concurrently -n server,web -c blue,green --kill-others-on-fail \"tsx watch apps/server/src/index.ts\" \"node apps/web/dev-stub.cjs\"",
+    "dev": "concurrently -n server,web -c blue,green --kill-others-on-fail \"tsx watch apps/server/src/index.ts\" \"cd apps/web && ./node_modules/.bin/next dev -p 3000\"",
     "build": "echo 'build runs per-package later'",
     "init-db": "tsx packages/shared/src/db/init.ts",
     "lint": "echo 'lint added in later step'",
