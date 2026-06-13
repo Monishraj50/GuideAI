@@ -91,6 +91,17 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
   ensureBriefDir(workspaceId, briefId);
 
   const skills = loadSkills();
+  if (skills.length > 0) {
+    appendEvent(workspaceId, {
+      id: randomUUID(),
+      ts: Date.now(),
+      workspaceId,
+      agentId,
+      kind: 'system',
+      level: 'info',
+      text: `skills loaded: ${skills.length} (${skills.map((s) => s.name).join(', ')})`,
+    });
+  }
   const artifacts: Partial<Record<Phase, string>> = {};
   const phaseResults: PhaseResult[] = [];
   let totalIn = 0;

@@ -88,3 +88,31 @@ Per ECC Principle 7B: every build session appends a 5-line entry. Read this befo
 - **Bug squashed during build (Principle 10B):** initial sync `submitBrief` held the HTTP request open for the entire 5-phase pipeline (~30-60s) → Next.js dev-proxy timeout (`ECONNRESET`). Refactored to fire-and-forget.
 - **Surfaced (Principle 10B):** the agent occasionally produces a clarifying question instead of a phase artifact (e.g. "What framework is your API using?"). That's a prompt-engineering miss in the phase prompts — fix in step 7 (Stop hooks promote successful trace patterns into reusable skills).
 
+---
+
+## Step 7 — Stop hooks + skill promotion (done 2026-06-13)
+
+- `packages/skills/src/promote.ts` ships `promoteSkillFromTrace()`: heuristic-only (no extra LLM call), turns each phase's first non-empty line into one bullet under "Lessons from a prior similar brief." Slug derived from the brief via stopword-filtered tokens. Idempotent: collisions get a `-2`, `-3`, … suffix.
+- `cos.ts` calls promotion at the tail of every successful pipeline. Writes a `skill_id` row to `schema.skills` and emits a `system: skill promoted: …` chunk to the feed.
+- `phases.ts` emits `skills loaded: N (name1, name2)` at the start of every run — observability for "did the skill actually get loaded".
+- **Verified end-to-end (matching demo target):**
+  - **Run 1** — brief "Refactor our config loader to read from a single env file" → 5 artifacts → skill `auto-refactor-config-loader-read.md` written to `~/.guideai/skills/`.
+  - **Run 2** — brief "Switch our settings module to use a TOML file instead of JSON" → emitted `skills loaded: 2 (auto-refactor-config-loader-read, concise-bullets)` (the run-1 skill was picked up alongside the manual control skill); pipeline completed; another skill `auto-switch-settings-module-use.md` promoted.
+  - Skills folder ends with 2 auto-promoted + 1 manual = 3 files.
+- **Surfaced (Principle 10B):** heuristic promotion is intentionally non-LLM. A higher-quality LLM-distilled variant lands later as an opt-in setting; this stays Haiku-class cost (zero) by default.
+
+---
+
+## Step 8 — auto-approval rule engine + Settings UI (done 2026-06-13)
+
+- `packages/policies/src/engine.ts` ships the full rule engine: `loadPolicies()` / `savePolicies()` over `~/.guideai/policies.json`, `evaluateTool(p, tool, args)` returns `{action, ruleId, ruleDescription}`, `addRule()` / `removeRule()` mutators, `synthesizeRuleFromDecision()` proposes a rule that auto-{decides} an identical future call.
+- Default `policies.json` ships with 3 built-in auto-approves (Read/Glob/Grep) and `defaultAction: 'ask'`.
+- `apps/server/src/routes/policies.ts`: `GET /api/policies`, `PUT /api/policies`, `POST /api/policies/rules`, `DELETE /api/policies/rules/:id`, `POST /api/policies/rules/synthesize`.
+- `cos.ts` synthetic-Bash code path now consults `evaluateTool()` first. On rule match, emits a `ToolChunk(status: 'denied' | 'auto-approved')` + `ApprovalChunk(decision, ruleId)` + a `system: auto-<decision> … via <ruleId>` note — **no pending approval row is created**.
+- `apps/web/app/settings/RulesEditor.tsx`: list / add / remove rules with action color-coding (auto-approve = accent, always-ask = warn, deny = err).
+- `apps/web/app/ops/PendingTray.tsx`: after approve/deny, shows "don't ask me about this again" button that calls synthesize → save → drops back into the steady state.
+- **Verified end-to-end (demo target — "deny once, accept the auto-rule, never asked again"):**
+  - **Run 1:** brief "Tell us one thing to improve about our error handling" → synthetic `Bash(ls -la)` lands as pending → denied via API → synthesize call produced `rule-syn-bash-…` (`action: deny`, `argsPattern: ^\\{"cmd":"ls -la"\\}$`) → POST `/api/policies/rules` saved it at the top of the list.
+  - **Run 2:** brief "Pick one log line we should always emit at startup" → synthetic Bash emitted → policy engine matched the rule → `ToolChunk(status:'denied')` + `ApprovalChunk(decision:'denied', ruleId: rule-syn-bash-…)` + `system: auto-denied Bash(...) via rule-syn-bash-…` — **no new pending approval row created**.
+- **Surfaced (Principle 10B):** rules apply only to *new* decisions; stale pending approvals from before the rule existed stay queued until the user acts on them. That's intentional (avoids surprising retroactive auto-flips), worth a UI bulk-clear later.
+

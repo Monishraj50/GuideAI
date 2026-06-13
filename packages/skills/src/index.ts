@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { paths } from '@guideai/shared/paths';
 
+export { promoteSkillFromTrace, type PromoteArgs, type PromotedSkill } from './promote.js';
+
 export interface Skill {
   name: string;
   description: string;

@@ -4,7 +4,10 @@ import { paths } from '@guideai/shared/paths';
 import { getDb, schema } from '@guideai/shared/db';
 import type { UserChunk, ToolChunk, SystemChunk } from '@guideai/shared/chunks';
 import { runPipeline, PHASE_ORDER } from './phases.js';
+import { promoteSkillFromTrace } from '@guideai/skills';
+import { evaluateTool, loadPolicies } from '@guideai/policies/engine';
 import { eq } from 'drizzle-orm';
+import type { ApprovalChunk } from '@guideai/shared/chunks';
 
 const COS_AGENT_ROLE = 'chief-of-staff';
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
@@ -106,30 +109,96 @@ export async function submitBrief(args: {
       db.update(schema.briefs).set({ status: 'done' })
         .where(eq(schema.briefs.id, briefId)).run();
 
-      const toolChunk: ToolChunk = {
-        ...base(workspaceId, agentId),
-        kind: 'tool', agentId, tool: 'Bash', args: { cmd: 'ls -la' }, status: 'pending',
-      };
-      appendEvent(workspaceId, toolChunk);
+      // ECC Principle 6/7: Stop-hook → promote a draft skill from the trace.
+      try {
+        const artifactsByPhase: Record<string, string> = {};
+        for (const r of pipelineResult.phaseResults) artifactsByPhase[r.phase] = r.text;
+        const promoted = promoteSkillFromTrace({ briefBody: body, artifacts: artifactsByPhase });
+        const skillId = `skill-${randomUUID().slice(0, 8)}`;
+        db.insert(schema.skills).values({
+          id: skillId, name: promoted.name, body: '', sourceTaskId: briefId,
+          uses: 0, createdAt: now(),
+        }).run();
+        const promoteNote: SystemChunk = {
+          ...base(workspaceId, agentId),
+          kind: 'system', level: 'info',
+          text: `skill promoted: ${promoted.name} → ${promoted.filePath}`,
+        };
+        appendEvent(workspaceId, promoteNote);
+      } catch (err: any) {
+        const warn: SystemChunk = {
+          ...base(workspaceId, agentId),
+          kind: 'system', level: 'warn',
+          text: `skill promotion skipped: ${err?.message ?? err}`,
+        };
+        appendEvent(workspaceId, warn);
+      }
 
-      const approvalId = `appr-${randomUUID().slice(0, 8)}`;
-      db.insert(schema.approvals).values({
-        id: approvalId,
-        taskId: null as unknown as string,
-        tool: 'Bash',
-        argsJson: JSON.stringify({ cmd: 'ls -la' }),
-        decision: 'pending',
-        ruleId: null,
-        decidedBy: 'pending',
-        decidedAt: now(),
-      } as any).run();
+      const toolName = 'Bash';
+      const toolArgs = { cmd: 'ls -la' };
+      const policies = loadPolicies();
+      const decision = evaluateTool(policies, toolName, toolArgs);
 
-      const pendingNote: SystemChunk = {
-        ...base(workspaceId, agentId),
-        kind: 'system', level: 'warn',
-        text: `pending approval ${approvalId}: Bash(ls -la) — open the brief pane to approve`,
-      };
-      appendEvent(workspaceId, pendingNote);
+      if (decision.action === 'auto-approve' || decision.action === 'deny') {
+        // Rule matched → record the approval row already decided, then emit an
+        // approval chunk so the feed shows the auto-decision visibly.
+        const approvalId = `appr-${randomUUID().slice(0, 8)}`;
+        const finalDecision = decision.action === 'auto-approve' ? 'approved' : 'denied';
+        const toolChunk: ToolChunk = {
+          ...base(workspaceId, agentId),
+          kind: 'tool', agentId, tool: toolName, args: toolArgs,
+          status: decision.action === 'auto-approve' ? 'auto-approved' : 'denied',
+        };
+        appendEvent(workspaceId, toolChunk);
+        db.insert(schema.approvals).values({
+          id: approvalId,
+          taskId: null as unknown as string,
+          tool: toolName,
+          argsJson: JSON.stringify(toolArgs),
+          decision: finalDecision,
+          ruleId: decision.ruleId ?? null,
+          decidedBy: `rule:${decision.ruleId}`,
+          decidedAt: now(),
+        } as any).run();
+        const apprChunk: ApprovalChunk = {
+          ...base(workspaceId, agentId),
+          kind: 'approval',
+          toolChunkId: approvalId,
+          decision: decision.action === 'auto-approve' ? 'auto-approved' : 'denied',
+          ruleId: decision.ruleId,
+        };
+        appendEvent(workspaceId, apprChunk);
+        const note: SystemChunk = {
+          ...base(workspaceId, agentId),
+          kind: 'system', level: 'info',
+          text: `auto-${finalDecision} ${toolName}(${JSON.stringify(toolArgs)}) via ${decision.ruleId} (${decision.ruleDescription ?? ''})`,
+        };
+        appendEvent(workspaceId, note);
+      } else {
+        // No matching rule → pending approval, wait for user.
+        const toolChunk: ToolChunk = {
+          ...base(workspaceId, agentId),
+          kind: 'tool', agentId, tool: toolName, args: toolArgs, status: 'pending',
+        };
+        appendEvent(workspaceId, toolChunk);
+        const approvalId = `appr-${randomUUID().slice(0, 8)}`;
+        db.insert(schema.approvals).values({
+          id: approvalId,
+          taskId: null as unknown as string,
+          tool: toolName,
+          argsJson: JSON.stringify(toolArgs),
+          decision: 'pending',
+          ruleId: null,
+          decidedBy: 'pending',
+          decidedAt: now(),
+        } as any).run();
+        const pendingNote: SystemChunk = {
+          ...base(workspaceId, agentId),
+          kind: 'system', level: 'warn',
+          text: `pending approval ${approvalId}: ${toolName}(${JSON.stringify(toolArgs)}) — open the brief pane to approve`,
+        };
+        appendEvent(workspaceId, pendingNote);
+      }
 
       const doneNote: SystemChunk = {
         ...base(workspaceId, agentId),
