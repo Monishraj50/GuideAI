@@ -9,6 +9,7 @@ import { registerCatalogRoutes } from './routes/catalog.js';
 import { registerMetricRoutes } from './routes/metrics.js';
 import { registerDigestRoutes } from './routes/digest.js';
 import { registerRuntimeRoutes } from './routes/runtimes.js';
+import { registerReplayRoutes } from './routes/replay.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
 const app = Fastify({ logger: true });
@@ -29,6 +30,7 @@ registerCatalogRoutes(app);
 registerMetricRoutes(app);
 registerDigestRoutes(app);
 registerRuntimeRoutes(app);
+registerReplayRoutes(app);
 
 app.listen({ port: PORT, host: '0.0.0.0' })
   .then(() => app.log.info(`GuideAI server up on :${PORT} (state: ${paths.home})`))

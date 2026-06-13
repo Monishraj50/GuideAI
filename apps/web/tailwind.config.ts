@@ -13,6 +13,9 @@ const config: Config = {
         accent: '#7cf2c8',
         warn: '#ffb454',
         err: '#ff6b6b',
+        haiku:  '#5cc8a8',
+        sonnet: '#a98cf2',
+        opus:   '#f29ccb',
       },
       fontFamily: {
         mono: ['ui-monospace', 'SF Mono', 'Menlo', 'Consolas', 'monospace'],

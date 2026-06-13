@@ -71,6 +71,8 @@ export interface PhaseResult {
   tier: string;
   artifactPath: string;
   text: string;
+  startedAt: number;
+  endedAt: number;
   durationMs: number;
   tokensIn: number;
   tokensOut: number;
@@ -116,6 +118,7 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
 
   for (const phase of PHASE_ORDER) {
     const routing = routeModel({ phase });
+    const phaseStartedAt = Date.now();
     appendEvent(workspaceId, makePhaseChunk(workspaceId, agentId, briefId, phase, 'started'));
 
     const context = [
@@ -175,10 +178,13 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
       fs.writeFileSync(artifact, md);
 
       artifacts[phase] = passK.canonical.text;
+      const phaseEndedAt = Date.now();
       phaseResults.push({
         phase, tier: routing.tier, artifactPath: artifact,
         text: passK.canonical.text,
-        durationMs: passK.attempts.reduce((s, a) => s + a.durationMs, 0),
+        startedAt: phaseStartedAt,
+        endedAt: phaseEndedAt,
+        durationMs: phaseEndedAt - phaseStartedAt,
         tokensIn, tokensOut,
         k, passes: passK.passes, verdict: passK.verdict,
       });
@@ -233,12 +239,15 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
     fs.writeFileSync(artifact, md);
 
     artifacts[phase] = aiText;
+    const phaseEndedAt = Date.now();
     phaseResults.push({
       phase,
       tier: routing.tier,
       artifactPath: artifact,
       text: aiText,
-      durationMs: result.durationMs,
+      startedAt: phaseStartedAt,
+      endedAt: phaseEndedAt,
+      durationMs: phaseEndedAt - phaseStartedAt,
       tokensIn,
       tokensOut,
     });

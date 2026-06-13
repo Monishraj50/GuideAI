@@ -106,8 +106,8 @@ export async function submitBrief(args: {
           artifactPath: r.artifactPath,
           tokensIn: r.tokensIn,
           tokensOut: r.tokensOut,
-          startedAt: now(),
-          endedAt: now(),
+          startedAt: r.startedAt,
+          endedAt: r.endedAt,
         }).run();
       }
 

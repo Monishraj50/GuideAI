@@ -196,3 +196,23 @@ Per ECC Principle 7B: every build session appends a 5-line entry. Read this befo
   - submitBrief still routes through ClaudeAdapter — no behavioural regression on the live path.
 - **Surfaced (Principle 10B):** the runtime id is **not yet threaded through `submitBrief()` / `runPipeline()` / `cos.ts`**. The UI picker stores the choice locally but the request body doesn't include it (since only Claude is ready). When the second adapter ships, the API will gain `runtime: 'codex'` and the orchestrator's adapter lookup will swap from a direct `ClaudeAdapter` import to a registry resolve.
 
+---
+
+## Step 14 — Replay / trace view polish (done 2026-06-13)
+
+- `apps/server/src/routes/replay.ts`: `GET /api/workspaces/:id/briefs` (list briefs with phase counts + token totals) and `GET /api/workspaces/:id/briefs/:briefId` (full trace: brief row, task rows, filtered chunks within the brief's window, artifact bodies).
+- `apps/web/app/logs/page.tsx` lists briefs with status pill, body preview, timestamps, tokens.
+- `apps/web/app/logs/[briefId]/page.tsx` + `Replay.tsx` render the trace view:
+  - **Flame graph**: 5 colored bars (haiku/sonnet/opus palette) positioned by `startedAt`, sized by duration. Hover for tooltip with tokens + ms.
+  - **Scrubber**: range slider + ⏮ ← → ⏭ buttons. Cursor selects one chunk; rows above it stay visible, the rest hide. Current event banner shows ts + kind + agent + preview.
+  - **Artifacts pane**: collapsible list of `research.md`/`plan.md`/`implement.md`/`review.md`/`verify.md` with inline body preview (4 KB cap).
+  - **Raw drawer**: bottom panel toggleable via the `raw` button — shows JSONL of every visible chunk.
+- `tailwind.config.ts` got 3 model-tier colors (`haiku`, `sonnet`, `opus`) so the flame graph reads as model tiers at a glance.
+- **Bug fixed during build (Principle 10B):** `cos.ts` was writing `startedAt: now()` and `endedAt: now()` at the *end* of the pipeline → every task had `dur = 0` and the flame graph degenerated. Threaded real `phaseStartedAt`/`phaseEndedAt` into `PhaseResult` and persisted those to `schema.tasks` instead.
+- **Verified end-to-end (demo target — "scrub a completed task end-to-end"):**
+  - New brief "Pick a default page size for our list APIs." → 5 phases run in 56.8s.
+  - Trace API returns real durations: research 13.1 s (23%), plan 5.3 s (9%), implement 15.3 s (27%), review 16.3 s (29%), verify 6.8 s (12%).
+  - 103 chunks present in the window; all 5 artifact files loaded inline.
+  - `/logs` lists 10 briefs (1 new + 9 historical); `/logs/<id>` returns 28 KB SSR HTML containing `Replay`, `scrub`, `Artifacts`, `raw` markers.
+- **Surfaced (Principle 10B):** pre-existing briefs (steps 5-11) still record `dur: 0` because they were written before this fix. New briefs from step 14 onward have correct durations. A backfill SQL could re-derive these from `events.jsonl` phase chunks if needed.
+

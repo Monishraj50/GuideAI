@@ -1,8 +1,13 @@
+import { BriefList } from './BriefList';
+
 export default function LogsPage() {
   return (
-    <div className="p-6 text-dim text-sm">
-      <div className="text-ink font-medium mb-2">Logs / Replay</div>
-      <p>Lands in step 14 — flame-graph traces, raw JSONL drawer, diff scrubber.</p>
+    <div className="flex flex-col h-full">
+      <header className="border-b border-line px-4 py-2">
+        <div className="text-ink font-medium">Logs / Replay</div>
+        <div className="text-dim text-xs">pick a brief to scrub its trace · workspace <span className="text-ink">demo</span></div>
+      </header>
+      <BriefList workspaceId="demo" />
     </div>
   );
 }
