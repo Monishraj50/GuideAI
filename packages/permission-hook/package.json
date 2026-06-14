@@ -1,0 +1,9 @@
+{
+  "name": "@guideai/permission-hook",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PreToolUse hook executable that routes every tool call through GuideAI's approval flow.",
+  "bin": {
+    "guideai-perm-hook": "./bin/guideai-perm-hook.cjs"
+  }
+}

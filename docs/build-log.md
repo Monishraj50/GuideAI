@@ -391,3 +391,41 @@ Specialists in the roster now actually do work. Before this, every phase ran as 
 - Scoring is heuristic. A brief mentioning "frontend" can route an implement phase to frontend-developer even if the actual work is backend — only by token coincidence. A judge-pass routing layer (extra agent picks workers) is a natural follow-up.
 - Specialists still call the runtime with their own `toolWhitelist`, but step 8's MCP-based real tool interception is still pending — until then they can't actually `Bash`/`Write`. Wiring `--permission-prompt-tool` to GuideAI's approval flow is the next step that fully unblocks "ship real code through your team."
 
+---
+
+## Plan B — Real tool interception via PreToolUse hooks (done 2026-06-14)
+
+Every real tool call an agent attempts now routes through GuideAI's policy engine + approval flow. The synthetic post-brief Bash chunk is gone.
+
+**Approach**: Claude Code 2.1.x doesn't ship `--permission-prompt-tool` yet, but it does ship `PreToolUse` hooks via `settings.json`. We write a per-agent `<cwd>/.claude/settings.json` at spawn time pointing at a Node hook that calls back into the GuideAI server. Same end-state, fewer moving parts (no extra MCP process).
+
+**New: `packages/permission-hook/`**
+- `bin/guideai-perm-hook.cjs` — pure-Node, zero-deps, directly executable from `settings.json`. Reads stdin JSON (`{tool_name, tool_input}`), POSTs to `GUIDEAI_PERMISSIONS_URL`, writes Claude-shaped decision JSON to stdout. Reads `GUIDEAI_WORKSPACE_ID`, `GUIDEAI_AGENT_ID`, `GUIDEAI_BRIEF_ID`, `GUIDEAI_HOOK_WAIT_MS` from env. Denies on any error (safe default).
+- Output schema covers both modern (`hookSpecificOutput.permissionDecision`) and legacy (`continue` / `stopReason`) keys so multiple Claude versions parse it.
+
+**New: `apps/server/src/routes/permissions.ts`**
+- `POST /api/permissions/evaluate {workspaceId, agentId?, briefId?, tool, args, waitMs?}` — runs the policy engine.
+  - Auto-approve/deny matches: emit `ToolChunk` + `ApprovalChunk` + system note + DB row, return immediately.
+  - Ask: create pending approval, append to feed, **long-poll** up to 120s for a `notifyApprovalDecided()` from the existing approval API. Resolve as soon as the user clicks approve/deny in the PendingTray. Timeout → deny-by-default.
+- `GET /api/permissions/wait/:id` — non-blocking peek for any waiter.
+- `routes/approvals.ts` updated: every existing `POST /api/approvals/:id` decision now also calls `notifyApprovalDecided` to unblock any hook that's waiting on this approval.
+
+**Adapter wiring (`packages/runtime-claude/src/adapter.ts`):**
+- `writePermissionSettings(cwd, opts)` runs before every `spawn()` and `runOnce()`. Drops `.claude/settings.json` in the agent's sandboxed cwd with `hooks.PreToolUse[].matcher: '.*'` pointing at `node <abs path to hook>`.
+- `buildEnv` now injects `GUIDEAI_PERMISSIONS_URL`, `GUIDEAI_WORKSPACE_ID`, `GUIDEAI_AGENT_ID` so the hook knows where to call back and who it's running for.
+- Existing deny-by-default env allowlist is unchanged.
+
+**Removed in `cos.ts`:** the synthetic Bash chunk that step 8 used as a placeholder. No more fake `Bash(ls -la)` after every brief — approvals you see in the feed correspond to real tool requests.
+
+**Verified end-to-end:**
+- **Auto-approve path:** `echo '{"tool_name":"Read","tool_input":{"file_path":"/tmp/x"}}' | hook` → `{continue:true, permissionDecision:'allow', reason:'Read-only tools auto-approve.'}` (Read rule hit, no DB pending row).
+- **Deny-by-timeout path:** Bash with `GUIDEAI_HOOK_WAIT_MS=2000` → `{continue:false, permissionDecision:'deny', reason:'user decision'}` after 2 s (no user input).
+- **Human-in-the-loop path:** Bash hook started with 20 s wait → pending approval appears in `/api/workspaces/demo/approvals/pending` → API call decides `approved` → hook receives `{continue:true, permissionDecision:'allow', reason:'user decision'}` within milliseconds. `notifyApprovalDecided` unblocks the waiter as designed.
+
+**Surfaced (Principle 10B):**
+- Hook output format covers two known Claude versions but may need tweaking for future ones — Claude CLI is still evolving its hooks payload.
+- Long-poll uses an in-memory `Map` of waiters — restarting the server while a hook is mid-flight will leave the hook hanging until its own 60s deadline (then deny-by-timeout). Acceptable: any agent that was mid-spawn is killed alongside the server anyway.
+- Hook timeout default is 60 s. For interactive use, the user has 60 s to click approve before the safe default (deny) kicks in. Tunable via `GUIDEAI_HOOK_WAIT_MS` env var.
+
+**Now possible:** Specialists can actually `Bash`, `Edit`, `Write` — every call appears in your PendingTray; you approve or deny per call (or add an auto-approve rule). Real code can ship through the team.
+

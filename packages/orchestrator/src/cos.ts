@@ -2,13 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { appendEvent } from '@guideai/messaging/events';
 import { paths } from '@guideai/shared/paths';
 import { getDb, schema } from '@guideai/shared/db';
-import type { UserChunk, ToolChunk, SystemChunk } from '@guideai/shared/chunks';
+import type { UserChunk, SystemChunk } from '@guideai/shared/chunks';
 import { runPipeline, PHASE_ORDER } from './phases.js';
 import { routeRoster, type RoutableAgent } from './routing.js';
 import { promoteSkillFromTrace } from '@guideai/skills';
-import { evaluateTool, loadPolicies } from '@guideai/policies/engine';
 import { eq } from 'drizzle-orm';
-import type { ApprovalChunk } from '@guideai/shared/chunks';
 
 const COS_AGENT_ROLE = 'chief-of-staff';
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
@@ -60,6 +58,7 @@ export interface SubmitBriefResult {
   phases: string[];
   securityTagged: boolean;
   pipeline: 'started';
+  approvalId?: string;  // legacy field, kept for response shape compatibility
 }
 
 /**
@@ -169,71 +168,10 @@ export async function submitBrief(args: {
         appendEvent(workspaceId, warn);
       }
 
-      const toolName = 'Bash';
-      const toolArgs = { cmd: 'ls -la' };
-      const policies = loadPolicies();
-      const decision = evaluateTool(policies, toolName, toolArgs);
-
-      if (decision.action === 'auto-approve' || decision.action === 'deny') {
-        // Rule matched → record the approval row already decided, then emit an
-        // approval chunk so the feed shows the auto-decision visibly.
-        const approvalId = `appr-${randomUUID().slice(0, 8)}`;
-        const finalDecision = decision.action === 'auto-approve' ? 'approved' : 'denied';
-        const toolChunk: ToolChunk = {
-          ...base(workspaceId, agentId),
-          kind: 'tool', agentId, tool: toolName, args: toolArgs,
-          status: decision.action === 'auto-approve' ? 'auto-approved' : 'denied',
-        };
-        appendEvent(workspaceId, toolChunk);
-        db.insert(schema.approvals).values({
-          id: approvalId,
-          taskId: null as unknown as string,
-          tool: toolName,
-          argsJson: JSON.stringify(toolArgs),
-          decision: finalDecision,
-          ruleId: decision.ruleId ?? null,
-          decidedBy: `rule:${decision.ruleId}`,
-          decidedAt: now(),
-        } as any).run();
-        const apprChunk: ApprovalChunk = {
-          ...base(workspaceId, agentId),
-          kind: 'approval',
-          toolChunkId: approvalId,
-          decision: decision.action === 'auto-approve' ? 'auto-approved' : 'denied',
-          ruleId: decision.ruleId,
-        };
-        appendEvent(workspaceId, apprChunk);
-        const note: SystemChunk = {
-          ...base(workspaceId, agentId),
-          kind: 'system', level: 'info',
-          text: `auto-${finalDecision} ${toolName}(${JSON.stringify(toolArgs)}) via ${decision.ruleId} (${decision.ruleDescription ?? ''})`,
-        };
-        appendEvent(workspaceId, note);
-      } else {
-        // No matching rule → pending approval, wait for user.
-        const toolChunk: ToolChunk = {
-          ...base(workspaceId, agentId),
-          kind: 'tool', agentId, tool: toolName, args: toolArgs, status: 'pending',
-        };
-        appendEvent(workspaceId, toolChunk);
-        const approvalId = `appr-${randomUUID().slice(0, 8)}`;
-        db.insert(schema.approvals).values({
-          id: approvalId,
-          taskId: null as unknown as string,
-          tool: toolName,
-          argsJson: JSON.stringify(toolArgs),
-          decision: 'pending',
-          ruleId: null,
-          decidedBy: 'pending',
-          decidedAt: now(),
-        } as any).run();
-        const pendingNote: SystemChunk = {
-          ...base(workspaceId, agentId),
-          kind: 'system', level: 'warn',
-          text: `pending approval ${approvalId}: ${toolName}(${JSON.stringify(toolArgs)}) — open the brief pane to approve`,
-        };
-        appendEvent(workspaceId, pendingNote);
-      }
+      // Step 8's synthetic Bash chunk was removed in Plan B — real tool calls
+      // are now intercepted via the PreToolUse hook at every adapter spawn,
+      // routed through /api/permissions/evaluate. Any approvals you see in the
+      // feed correspond to actual tool requests the agent tried to make.
 
       const doneNote: SystemChunk = {
         ...base(workspaceId, agentId),

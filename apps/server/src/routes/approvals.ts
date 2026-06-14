@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { decideApproval, listPending } from '@guideai/orchestrator/approvals';
+import { notifyApprovalDecided } from './permissions.js';
 
 export function registerApprovalRoutes(app: FastifyInstance) {
   app.get<{ Params: { id: string } }>(
@@ -28,11 +29,14 @@ export function registerApprovalRoutes(app: FastifyInstance) {
           reply.code(400);
           return { error: 'missing ?workspace=... query' };
         }
-        return decideApproval({
+        const result = decideApproval({
           workspaceId,
           approvalId: req.params.id,
           decision,
         });
+        // Unblock any hook that's long-polling for this approval.
+        notifyApprovalDecided(req.params.id, decision);
+        return result;
       } catch (err: any) {
         req.log.error(err);
         reply.code(409);

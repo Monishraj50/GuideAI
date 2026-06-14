@@ -15,6 +15,43 @@ import type { Chunk, AIChunk, SystemChunk, ToolChunk } from '@guideai/shared/chu
 
 const CLAUDE_BIN = process.env.GUIDEAI_CLAUDE_BIN ?? 'claude';
 
+// Absolute path to our PreToolUse hook script. Resolved at module load so we
+// don't recompute it on every spawn.
+const HOOK_SCRIPT = (() => {
+  // Walk up from this file to find the workspace root, then point at the hook.
+  // adapter.ts lives at packages/runtime-claude/src/, so ../../permission-hook
+  // would point to packages/permission-hook.
+  try {
+    const here = __dirname || process.cwd();
+    return path.resolve(here, '..', '..', 'permission-hook', 'bin', 'guideai-perm-hook.cjs');
+  } catch { return ''; }
+})();
+
+const PERMISSIONS_URL = process.env.GUIDEAI_PERMISSIONS_URL ?? 'http://127.0.0.1:4000/api/permissions/evaluate';
+
+function writePermissionSettings(agentCwd: string, opts: SpawnOpts): string | null {
+  if (!HOOK_SCRIPT || !fs.existsSync(HOOK_SCRIPT)) return null;
+  const settingsDir = path.join(agentCwd, '.claude');
+  fs.mkdirSync(settingsDir, { recursive: true });
+  const settingsFile = path.join(settingsDir, 'settings.json');
+  // Match every tool — let GuideAI's policy engine decide which ones to gate.
+  const config = {
+    hooks: {
+      PreToolUse: [
+        {
+          matcher: '.*',
+          hooks: [{ type: 'command', command: `node ${HOOK_SCRIPT}` }],
+        },
+      ],
+    },
+    // Hint to the CLI: we're handling permission via hooks, no need for stdin
+    // prompts (which wouldn't work in -p mode anyway).
+    permissionMode: 'default',
+  };
+  fs.writeFileSync(settingsFile, JSON.stringify(config, null, 2));
+  return settingsFile;
+}
+
 // Module-scoped registry of every live Claude child process so the killswitch
 // can stop-the-world (Principle 8). Add/remove around every spawn.
 interface Tracked { proc: ChildProcess; workspaceId: string; agentId: string; startedAt: number; }
@@ -85,7 +122,7 @@ function readStoredClaudeKey(): string | undefined {
   return undefined;
 }
 
-function buildEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
+function buildEnv(extra?: Record<string, string>, opts?: SpawnOpts): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const k of BASE_ENV_ALLOWED) {
     const v = process.env[k];
@@ -95,6 +132,12 @@ function buildEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
   // for any other secret env var.
   const apiKey = process.env.ANTHROPIC_API_KEY ?? readStoredClaudeKey();
   if (apiKey) out.ANTHROPIC_API_KEY = apiKey;
+  // Tell the hook where to phone home + which workspace/agent it's running for.
+  out.GUIDEAI_PERMISSIONS_URL = PERMISSIONS_URL;
+  if (opts) {
+    out.GUIDEAI_WORKSPACE_ID = opts.workspaceId;
+    out.GUIDEAI_AGENT_ID = opts.agentId;
+  }
   if (extra) Object.assign(out, extra);
   return out;
 }
@@ -248,11 +291,12 @@ export const ClaudeAdapter: RuntimeAdapter = {
 
   async spawn(opts: SpawnOpts): Promise<AgentHandle> {
     ensureCwd(opts.cwd);
+    writePermissionSettings(opts.cwd, opts);
 
     const args = ['--input-format', 'stream-json', ...baseArgs(opts), '-p'];
     const proc = spawn(CLAUDE_BIN, args, {
       cwd: opts.cwd,
-      env: buildEnv(opts.env),
+      env: buildEnv(opts.env, opts),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     track({ proc, workspaceId: opts.workspaceId, agentId: opts.agentId, startedAt: Date.now() });
@@ -292,11 +336,12 @@ export const ClaudeAdapter: RuntimeAdapter = {
 
   async runOnce(opts: SpawnOpts, prompt: string): Promise<RunOnceResult> {
     ensureCwd(opts.cwd);
+    writePermissionSettings(opts.cwd, opts);
     const args = [...baseArgs(opts), '-p', prompt];
     const start = Date.now();
     const proc = spawn(CLAUDE_BIN, args, {
       cwd: opts.cwd,
-      env: buildEnv(opts.env),
+      env: buildEnv(opts.env, opts),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     track({ proc, workspaceId: opts.workspaceId, agentId: opts.agentId, startedAt: start });
