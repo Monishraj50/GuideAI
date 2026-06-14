@@ -183,6 +183,25 @@ CREATE INDEX IF NOT EXISTS idx_work_items_workspace ON work_items(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_work_items_brief ON work_items(brief_id);
 CREATE INDEX IF NOT EXISTS idx_work_items_status ON work_items(status);
 
+CREATE TABLE IF NOT EXISTS deliverables (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+  brief_id TEXT,
+  kind TEXT NOT NULL,                   -- artifact|slide-deck|explainer|link|file
+  title TEXT NOT NULL,
+  body TEXT,                            -- markdown for artifact/deck/explainer; null for link/file
+  uri TEXT,                             -- file path or URL
+  source TEXT NOT NULL DEFAULT 'auto',  -- auto|manual
+  phase TEXT,                           -- only set for kind=artifact
+  tokens_in INTEGER NOT NULL DEFAULT 0,
+  tokens_out INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_deliverables_workspace ON deliverables(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_deliverables_brief ON deliverables(brief_id);
+CREATE INDEX IF NOT EXISTS idx_deliverables_kind ON deliverables(kind);
+
 CREATE INDEX IF NOT EXISTS idx_agents_workspace ON agents(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_briefs_workspace ON briefs(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_brief ON tasks(brief_id);

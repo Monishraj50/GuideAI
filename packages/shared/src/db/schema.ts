@@ -133,6 +133,22 @@ export const plans = sqliteTable('plans', {
   dispatchedAt: integer('dispatched_at'),
 });
 
+export const deliverables = sqliteTable('deliverables', {
+  id: text('id').primaryKey(),
+  workspaceId: text('workspace_id').notNull().references(() => workspaces.id),
+  briefId: text('brief_id'),
+  kind: text('kind').notNull(),
+  title: text('title').notNull(),
+  body: text('body'),
+  uri: text('uri'),
+  source: text('source').notNull().default('auto'),
+  phase: text('phase'),
+  tokensIn: integer('tokens_in').notNull().default(0),
+  tokensOut: integer('tokens_out').notNull().default(0),
+  costUsd: real('cost_usd').notNull().default(0),
+  createdAt: integer('created_at').notNull(),
+});
+
 export const workItems = sqliteTable('work_items', {
   id: text('id').primaryKey(),
   workspaceId: text('workspace_id').notNull().references(() => workspaces.id),

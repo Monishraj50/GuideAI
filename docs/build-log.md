@@ -706,3 +706,62 @@ The dashboard is one section on the project page that turns the WBS into a Kanba
 - **`autoSeedFromPlan` is one-shot** — it skips if any auto items already exist for the brief. Re-running discovery on the same plan re-uses the seed; that's the right default. If the user wants a fresh seed they can delete the auto items first.
 - **Kanban drag is HTML5 drag/drop** — works on desktop, awkward on touch. A small touch-shim or library is the right follow-up if mobile becomes a real use case.
 - **`markPhaseComplete` matches by `(workspaceId, briefId, phase)`** — that's narrow on purpose. Manually-added items (no `briefId`) are never auto-ticked. So if the user adds "Wire up analytics" mid-flow, they explicitly mark it done. Good for trust.
+
+---
+
+## Phase 6 + 7 — Deliverables + learning/explainer space
+
+When a brief completes, GuideAI now produces three things automatically: copies of each phase artifact, a markdown slide deck synthesized from the run, and a plain-English explainer ("how it works") written by a cheap model. All three live in one section on the project page, alongside manually-added links/files. Both phases share one table; the `kind` column distinguishes them.
+
+**Schema (`packages/shared/src/db/init.ts` + `schema.ts`):**
+- `deliverables` table: `id`, `workspace_id`, `brief_id`, `kind` (`artifact|slide-deck|explainer|link|file`), `title`, `body` (markdown), `uri` (file path or URL), `source` (`auto|manual`), `phase` (set only for `kind=artifact`), `tokens_in/out` + `cost_usd` (for `explainer`), `created_at`. Indexed on workspace + brief + kind.
+
+**Module (`packages/orchestrator/src/deliverables.ts`):**
+- `harvestArtifacts({workspaceId, briefId})` — walks the brief's artifact directory on disk and creates one `kind=artifact` row per phase markdown (research/plan/implement/review/verify). Idempotent: wipes prior auto artifacts before reinserting, so re-running gives a clean slate.
+- `generateSlideDeck({workspaceId, briefId, synthesis?, briefBody?})` — **deterministic, no LLM call**. Composes a multi-slide markdown deck (separated by `---`):
+  1. Title (from synthesis summary or brief headline)
+  2. "The outcome" — summary + cost + benefits
+  3-7. One slide per phase, with bullets pulled from the artifact body (prefers existing `- ` lines; falls back to first sentences)
+  8. Success metrics
+  9. Risks
+  10. Team (recommended roles)
+- `generateExplainer({workspaceId, briefId, briefBody, synthesis?})` — **one cheap haiku call** with a structured 4-section prompt (`What we built / How it works / Why these choices / What's next`). Records token usage via `recordUsage` so the Phase 0 budget HUD reflects it.
+- `harvestBriefDeliverables({...})` — convenience wrapper that runs all three with individual `try/catch` so one failure can't cascade.
+
+**Mock adapter (`packages/runtime-claude/src/mockAdapter.ts`):**
+- Detects `[explainer]` marker in the prompt and returns a fixture matching the 4-section format. Guest mode demos this end-to-end with no Claude account.
+
+**Post-pipeline hook (`packages/orchestrator/src/cos.ts`):**
+- After `runPipeline` completes and tasks/skill-promotion have run, look up the plan that produced this brief (if any) to recover the synthesis, then call `harvestBriefDeliverables`. Wrapped in `try/catch` and emits a `warn` chunk on failure — the brief itself is never blocked.
+
+**Server (`apps/server/src/routes/deliverables.ts`):**
+- `GET /api/workspaces/:id/deliverables?briefId=&kind=` — list with optional filters.
+- `GET /api/deliverables/:id` — fetch one.
+- `POST /api/workspaces/:id/deliverables` — manual add (link or file, server forces source=manual).
+- `DELETE /api/deliverables/:id`.
+- `POST /api/workspaces/:id/briefs/:briefId/deliverables/regenerate` — re-runs the full harvest (useful after editing the plan synthesis post-dispatch).
+
+**UI (`apps/web/app/projects/[id]/Deliverables.tsx`):**
+- Lives below the dashboard on the project page; auto-refresh every 6s.
+- **Grouped grid** — one section per kind in this order: Slide decks · Explainers · Phase artifacts · Links · Files. Each section is hidden when empty so the page doesn't bloat.
+- **Card preview** — title, brief id, relative time, source tag, and a kind-specific snippet (slide count for decks, first 140 chars for explainers, phase name for artifacts, URI for links/files).
+- **Per-brief regenerate** — small chip row at the top lets the user trigger `POST .../regenerate` for any brief that has deliverables.
+- **Add link/file panel** — kind switcher + title + URI + optional brief ID.
+- **Full-screen viewer modal** (click "open" on any card):
+  - For slide decks: paged view with `← →` arrow navigation + footer prev/next buttons + esc to close. Splits on `\n---\n`.
+  - For everything else: rendered markdown (tiny in-house markdown renderer supporting h1/h2/h3, lists, `**bold**`, `_italic_`, `` `code` `` — added to avoid pulling in a markdown lib).
+
+**Verified end-to-end (`p6p7-test` workspace, auto+auto):**
+- Submitted intake, ran discovery → plan auto-dispatched → pipeline ran in background.
+- 6s later, `GET /deliverables` returned **7 items**: 5 phase artifacts + 1 slide deck (10 slides) + 1 explainer.
+- Explainer recorded `162↓/243↑ tokens · $0.0014` and produced the expected 4-section markdown.
+- Slide 1 (title) + slide 2 (outcome with benefits) rendered correctly.
+- Added a manual link (`Staging URL`, source=`manual`) — accepted, tied to the brief.
+- POST `/regenerate` reported `5 artifacts · new deck · new explainer` — idempotent (prior auto rows replaced).
+
+**Surfaced (Principle 10B):**
+- **Slide deck is plain markdown**, not a real presentation format. The viewer paginates by splitting on `\n---\n`. Trade-off: no animations / themes / speaker notes, but it's trivially editable as text and survives any future export-to-pptx pipeline.
+- **In-house markdown renderer is intentionally tiny** — h1/h2/h3, lists, inline `**`/`_`/`` ` ``. No tables, code blocks with fences, blockquotes, links inline, or images. If a deliverable needs those, swap in `react-markdown` later.
+- **Explainer always uses haiku** (no router consultation). One $0.001-ish call per brief. If you want opus quality, that's a route-table change — but the trade-off isn't worth it for what's essentially a wiki summary.
+- **`uri` for manual files is just a string** — we don't upload/copy/store the file. Adding it as a deliverable surfaces it in the UI but doesn't move bytes around. If you want true attachment storage, that's a follow-up.
+- **Synthesis fallback**: if a brief was submitted directly (not via a plan), `synthesis` is null and the deck/explainer degrade gracefully (deck uses brief headline; explainer reads phase artifacts only).

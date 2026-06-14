@@ -54,8 +54,25 @@ const PANEL_RESPONSES: Record<string, string> = {
     'SECURITY_TAG: recommended',
 };
 
+const EXPLAINER_FIXTURE = `## What we built
+A workspace where you brief AI agents like teammates and they ship work end-to-end. Every step — research, plan, code, review, verify — is visible in a live feed with cost and token meters.
+
+## How it works
+- Briefs flow through five gated phases routed to the cheapest model that fits the task.
+- A budget governor halts the run if rate-limit or dollar caps would be crossed.
+- Work items track real progress per phase; the dashboard shows burndown live.
+- A discovery round-table sizes the work before any code gets written.
+
+## Why these choices
+- Sequential phases beat parallel anarchy — every gate writes a structured artifact you can replay.
+- Cheap models do scaffolding, expensive ones do review; saves >50% on token spend without losing quality.
+
+## What's next
+The pipeline runs to "verify" but doesn't push to GitHub or ship to a runtime yet. The next phase wires real-PR integration so the human boss reviews a diff, not just a markdown file.`;
+
 function pickResponse(systemPrompt: string | undefined, prompt: string): string {
   const haystack = `${systemPrompt ?? ''}\n${prompt}`.toLowerCase();
+  if (haystack.includes('[explainer]') || haystack.includes("guideai's explainer")) return EXPLAINER_FIXTURE;
   const panel = haystack.match(/\[panel:([a-z0-9-]+)\]/);
   if (panel?.[1] && PANEL_RESPONSES[panel[1]]) return PANEL_RESPONSES[panel[1]]!;
   if (haystack.includes('research phase'))  return SAMPLE_RESPONSES.research![0]!;

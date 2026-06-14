@@ -13,7 +13,8 @@
     "./digest": "./src/digest.ts",
     "./discovery": "./src/discovery.ts",
     "./planReview": "./src/planReview.ts",
-    "./wbs": "./src/wbs.ts"
+    "./wbs": "./src/wbs.ts",
+    "./deliverables": "./src/deliverables.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

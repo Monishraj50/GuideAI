@@ -6,6 +6,7 @@ import type { UserChunk, SystemChunk } from '@guideai/shared/chunks';
 import { runPipeline, PHASE_ORDER } from './phases.js';
 import { routeRoster, type RoutableAgent } from './routing.js';
 import { promoteSkillFromTrace } from '@guideai/skills';
+import { harvestBriefDeliverables } from './deliverables.js';
 import { eq } from 'drizzle-orm';
 
 const COS_AGENT_ROLE = 'chief-of-staff';
@@ -172,6 +173,24 @@ export async function submitBrief(args: {
       // are now intercepted via the PreToolUse hook at every adapter spawn,
       // routed through /api/permissions/evaluate. Any approvals you see in the
       // feed correspond to actual tool requests the agent tried to make.
+
+      // Phase 6/7 — harvest deliverables (artifacts + slide deck + explainer).
+      // Try to find the synthesis from the plan that produced this brief.
+      try {
+        const plan = db.select().from(schema.plans).all()
+          .find((p) => p.briefId === briefId);
+        const synthesis = plan?.editedSynthesisJson
+          ? (JSON.parse(plan.editedSynthesisJson) as any) : null;
+        await harvestBriefDeliverables({
+          workspaceId, briefId, briefBody: body, synthesis,
+        });
+      } catch (err: any) {
+        appendEvent(workspaceId, {
+          ...base(workspaceId, agentId),
+          kind: 'system', level: 'warn',
+          text: `deliverables harvest skipped: ${err?.message ?? err}`,
+        } as SystemChunk);
+      }
 
       const doneNote: SystemChunk = {
         ...base(workspaceId, agentId),
