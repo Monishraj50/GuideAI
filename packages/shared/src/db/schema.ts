@@ -105,3 +105,28 @@ export const workspaceBudgets = sqliteTable('workspace_budgets', {
   behavior: text('behavior').notNull().default('downgrade'),
   updatedAt: integer('updated_at').notNull(),
 });
+
+export const projectIntakes = sqliteTable('project_intakes', {
+  workspaceId: text('workspace_id').primaryKey().references(() => workspaces.id),
+  goal: text('goal').notNull().default(''),
+  successCriteria: text('success_criteria').notNull().default('[]'),
+  constraints: text('constraints').notNull().default('[]'),
+  budgetHintUsd: real('budget_hint_usd'),
+  planningMode: text('planning_mode').notNull().default('assisted'),  // auto|assisted|manual
+  hireMode: text('hire_mode').notNull().default('manual'),            // auto|manual|hybrid
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
+export const discoveries = sqliteTable('discoveries', {
+  id: text('id').primaryKey(),
+  workspaceId: text('workspace_id').notNull().references(() => workspaces.id),
+  status: text('status').notNull().default('running'),
+  panelJson: text('panel_json').notNull().default('[]'),
+  synthesisJson: text('synthesis_json'),
+  tokensIn: integer('tokens_in').notNull().default(0),
+  tokensOut: integer('tokens_out').notNull().default(0),
+  costUsd: real('cost_usd').notNull().default(0),
+  startedAt: integer('started_at').notNull(),
+  endedAt: integer('ended_at'),
+});

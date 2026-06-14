@@ -516,3 +516,54 @@ Foundational layer for the project-lifecycle roadmap. Every phase, every adapter
 - Forecast heuristic (~4 chars/token + 1500 overhead + 800 response) tends to over-estimate, which biases toward safety. Real usage is recorded post-call so the running totals are accurate.
 - Per-workspace caps only — no global cap across projects. If you want a global cap, that's a follow-up (sum across workspaces in `summarizeUsage`).
 
+
+
+---
+
+## Phase 1 — Project intake + Discovery round-table (planning/hiring mode toggles)
+
+The intake layer that sits in front of every brief: a structured form (goal, success criteria, constraints, budget hint) and a 5-agent discovery round-table that produces a synthesized recommendation (recommended hires, ballpark cost, risks, success metrics). Mode toggles control how the round-table feeds the rest of the pipeline.
+
+**Schema (`packages/shared/src/db/init.ts` + `schema.ts`):**
+- `project_intakes` — one row per workspace. Fields: `goal`, `success_criteria` (JSON), `constraints` (JSON), `budget_hint_usd`, `planning_mode` (`auto|assisted|manual`), `hire_mode` (`auto|manual|hybrid`).
+- `discoveries` — append-only history of round-table runs. Stores `panel_json` (5 panelist entries with text/tokens/cost) and `synthesis_json` (recommended_roles, cost_estimate, verdict, risks, success_metrics, security_tag, summary).
+
+**Module (`packages/orchestrator/src/discovery.ts`):**
+- Fixed 5-agent panel: **Product Strategist** (haiku · value/scope/win), **Tech Lead** (sonnet · stack/roles/risks/effort), **Finance Analyst** (haiku · ballpark $/verdict), **UX Researcher** (haiku · audience/journey/metrics), **Risk Officer** (sonnet · top risk/mitigations/security_tag).
+- Each panelist gets a tight labelled-field prompt (`LABEL: value\n`) so synthesis can `regex` extract structured fields without a second LLM call (Principle 1B — keep token cost lean).
+- `runDiscovery()` runs all 5 panelists in **parallel** (Principle 3B — parallelism within a gate is fine, not across), each tracked via `recordUsage` so spend lands in the same `usage_log` as the pipeline.
+- Pre-flight budget gate (same `checkBudget` from Phase 0): if the sum forecast crosses caps with `behavior='pause'`, the round-table is aborted with an `error` event in the feed before any tokens are spent.
+- Synthesis (`synthesize()`): pulls labelled fields, dedupes, falls back to defaults (`backend-developer/frontend-developer/qa-engineer` if the Tech Lead doesn't return roles), composes a one-paragraph summary. Cost verdict honors the Finance Analyst's call first; otherwise compares ballpark to the user's budget hint.
+
+**Mock adapter (`packages/runtime-claude/src/mockAdapter.ts`):**
+- Detects a `[panel:<role>]` marker in the system prompt and returns role-appropriate fixture text. Lets guest mode (and Phase 0 tests) demo the round-table without a Claude account.
+
+**Server (`apps/server/src/routes/intake.ts`):**
+- `GET /api/workspaces/:id/intake` → `{intake, latestDiscovery}`
+- `PUT /api/workspaces/:id/intake` → upsert with field-level validation (mode enums, finite budget number)
+- `POST /api/workspaces/:id/discovery` → kicks `runDiscovery`, returns the persisted record
+- `GET /api/workspaces/:id/discovery` → latest
+- `GET /api/workspaces/:id/discoveries` → full history
+
+**UI (`apps/web/app/projects/[id]/IntakeSection.tsx`):**
+- Lives at the top of the project plan page (above approvals).
+- **Intake form:** goal textarea, success-criteria chips (Enter to add, X to remove), constraints chips, budget input, planning-mode 3-card radio (Auto/Assisted/Manual with descriptive cards), hiring-mode 3-card radio (Auto/Hybrid/Manual).
+- **Run discovery button:** disabled when planning mode is `manual` (tooltip explains); fires `POST .../discovery` and shows the result inline.
+- **Discovery view:**
+  - **Synthesis card** (top, accent-tinted): one-paragraph summary, 4 KPI stats (hires/ballpark $/risks/metrics) with cost verdict tinted green/amber/red, lists of recommended roles (info pills), risks (warn-dotted), and success metrics (accent-dotted), tokens/cost/security footer.
+  - **5 panelist cards** in a 1-2-3 column grid: initials avatar, name, lens line, raw labelled response, per-card tokens/cost/duration. Failed panelists shown with err-tinted border.
+
+**Verified end-to-end:**
+- Created `phase1-test` workspace, PUT intake (`goal`, criteria, constraints, $50 budget hint, `assisted+hybrid`), POSTed discovery.
+- All 5 panelists responded with structured `LABEL:` fields; synthesis parsed correctly:
+  - `recommendedRoles`: 4 (backend/frontend/qa/devops)
+  - `costEstimateUsd`: 18.5 · `costVerdict`: `within-budget` (vs $50 hint)
+  - `riskFlags`: 7 deduped across Tech Lead + Risk Officer
+  - `successMetrics`: 6 merging product WIN line + UX METRICS + user-supplied criteria
+  - `securityTag`: `recommended`
+- Usage rows landed in `usage_log` keyed by `phase='discovery'`, so the Phase 0 HUD pills reflect round-table spend.
+
+**Surfaced (Principle 10B):**
+- Round-table runs synchronously inside the POST handler today. That's fine while panelists are haiku/sonnet (~500ms each in parallel) but if a panelist hangs the HTTP request hangs with it. A fire-and-forget pattern (like `submitBrief`) is the natural next step — return the discovery id immediately, surface progress via the SSE feed, poll the GET endpoint.
+- The mode toggles are wired but not yet enforced in the pipeline. Wiring them up is Phase 2: `assisted` → pause at plan review; `auto` → synthesis becomes the brief, skip to implement; `hybrid` hire mode → prompt before non-default hires.
+- Panelists return free-text; if a real Claude run omits a labelled field, synthesis falls back to defaults instead of erroring. That's intentional (lean parsing, no fragile JSON contracts), but means a malformed model response degrades gracefully rather than failing loud.

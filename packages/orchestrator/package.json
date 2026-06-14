@@ -10,7 +10,8 @@
     "./cos": "./src/cos.ts",
     "./approvals": "./src/approvals.ts",
     "./hiring": "./src/hiring.ts",
-    "./digest": "./src/digest.ts"
+    "./digest": "./src/digest.ts",
+    "./discovery": "./src/discovery.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

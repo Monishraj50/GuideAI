@@ -26,8 +26,38 @@ const SAMPLE_RESPONSES: Record<string, string[]> = {
   ],
 };
 
+const PANEL_RESPONSES: Record<string, string> = {
+  'product-strategist':
+    'VALUE: Helps users ship faster by automating the boring middle steps.\n' +
+    'SCOPE: Single-tenant happy-path: one project, one brief, one shipped artifact.\n' +
+    'WIN: First brief reaches "done" with zero manual edits.\n' +
+    'BENEFITS: faster cycle time, less context-switching, lower coordination cost, transparent audit trail',
+  'tech-lead':
+    'STACK: TypeScript + Fastify backend + Next.js UI + SQLite for local state.\n' +
+    'ROLES: backend-developer, frontend-developer, qa-engineer, devops-engineer\n' +
+    'RISKS: cli-process supervision drift, token-cost overshoot on long briefs, sse back-pressure\n' +
+    'EFFORT: ~6-8 dev-days for the MVP slice',
+  'finance-analyst':
+    'BALLPARK_USD: 18.50\n' +
+    'TOKEN_HEAVY_PHASES: implement, review\n' +
+    'CUTS: drop pass@k on review until a real incident justifies it\n' +
+    'VERDICT: within-budget',
+  'ux-researcher':
+    'AUDIENCE: solo founders and small-team leads supervising AI workers.\n' +
+    'JOURNEY: brief submission → live feed → first approval → first shipped artifact.\n' +
+    'METRICS: time-to-first-output, approvals per brief, brief-to-ship completion rate\n' +
+    'PITFALLS: opaque agent reasoning, unclear approval prompts, no resume after pause',
+  'risk-officer':
+    'TOP_RISK: silent budget overrun if rate-limit window is mis-estimated.\n' +
+    'OTHER_RISKS: leaked api keys via env, untrusted tool calls bypass policy, partial pipeline crash\n' +
+    'MITIGATIONS: hard-cap forecast, per-tool whitelist, append-only event log\n' +
+    'SECURITY_TAG: recommended',
+};
+
 function pickResponse(systemPrompt: string | undefined, prompt: string): string {
   const haystack = `${systemPrompt ?? ''}\n${prompt}`.toLowerCase();
+  const panel = haystack.match(/\[panel:([a-z0-9-]+)\]/);
+  if (panel?.[1] && PANEL_RESPONSES[panel[1]]) return PANEL_RESPONSES[panel[1]]!;
   if (haystack.includes('research phase'))  return SAMPLE_RESPONSES.research![0]!;
   if (haystack.includes('plan phase'))      return SAMPLE_RESPONSES.plan![0]!;
   if (haystack.includes('implement phase')) return SAMPLE_RESPONSES.implement![0]!;

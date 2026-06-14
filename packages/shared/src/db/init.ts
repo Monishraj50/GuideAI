@@ -115,6 +115,32 @@ CREATE TABLE IF NOT EXISTS workspace_budgets (
   updated_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS project_intakes (
+  workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id),
+  goal TEXT NOT NULL DEFAULT '',
+  success_criteria TEXT NOT NULL DEFAULT '[]',  -- JSON string[]
+  constraints TEXT NOT NULL DEFAULT '[]',       -- JSON string[]
+  budget_hint_usd REAL,
+  planning_mode TEXT NOT NULL DEFAULT 'assisted',  -- auto|assisted|manual
+  hire_mode TEXT NOT NULL DEFAULT 'manual',        -- auto|manual|hybrid
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS discoveries (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+  status TEXT NOT NULL DEFAULT 'running',   -- running|done|failed
+  panel_json TEXT NOT NULL DEFAULT '[]',    -- per-panelist [{role,displayName,text,tokensIn,tokensOut}]
+  synthesis_json TEXT,                       -- {recommendedRoles[],riskFlags[],successMetrics[],costEstimateUsd,verdict}
+  tokens_in INTEGER NOT NULL DEFAULT 0,
+  tokens_out INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_discoveries_workspace ON discoveries(workspace_id);
+
 CREATE INDEX IF NOT EXISTS idx_agents_workspace ON agents(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_briefs_workspace ON briefs(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_brief ON tasks(brief_id);

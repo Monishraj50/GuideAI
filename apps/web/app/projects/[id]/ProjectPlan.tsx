@@ -7,6 +7,7 @@ import {
 import { useWorkspace } from '../../../components/WorkspaceProvider';
 import { toast } from '../../../components/Toast';
 import { cn } from '../../../lib/cn';
+import { IntakeSection } from './IntakeSection';
 
 interface PlanResp {
   workspace: { id: string; name: string; autonomyMode: string; createdAt: number };
@@ -88,6 +89,9 @@ export function ProjectPlan({ workspaceId }: { workspaceId: string }) {
           <HeroStat icon={<Activity size={12} />} label="tokens" value={plan.tokens.toLocaleString()} />
         </div>
       </div>
+
+      {/* Intake + discovery round-table */}
+      <IntakeSection workspaceId={workspaceId} />
 
       {/* Pending approvals — top of plan since they're blocking */}
       <Section
