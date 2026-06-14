@@ -8,6 +8,7 @@ import { useWorkspace } from '../../../components/WorkspaceProvider';
 import { toast } from '../../../components/Toast';
 import { cn } from '../../../lib/cn';
 import { IntakeSection } from './IntakeSection';
+import { PlanReview } from './PlanReview';
 
 interface PlanResp {
   workspace: { id: string; name: string; autonomyMode: string; createdAt: number };
@@ -92,6 +93,9 @@ export function ProjectPlan({ workspaceId }: { workspaceId: string }) {
 
       {/* Intake + discovery round-table */}
       <IntakeSection workspaceId={workspaceId} />
+
+      {/* Plan review + hire dispatch */}
+      <PlanReview workspaceId={workspaceId} />
 
       {/* Pending approvals — top of plan since they're blocking */}
       <Section

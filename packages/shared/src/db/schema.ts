@@ -118,6 +118,21 @@ export const projectIntakes = sqliteTable('project_intakes', {
   updatedAt: integer('updated_at').notNull(),
 });
 
+export const plans = sqliteTable('plans', {
+  id: text('id').primaryKey(),
+  workspaceId: text('workspace_id').notNull().references(() => workspaces.id),
+  discoveryId: text('discovery_id'),
+  status: text('status').notNull().default('draft'),  // draft|approved|dispatched|rejected
+  editedSynthesisJson: text('edited_synthesis_json').notNull(),
+  notes: text('notes'),
+  briefId: text('brief_id'),
+  hireSummaryJson: text('hire_summary_json'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+  approvedAt: integer('approved_at'),
+  dispatchedAt: integer('dispatched_at'),
+});
+
 export const discoveries = sqliteTable('discoveries', {
   id: text('id').primaryKey(),
   workspaceId: text('workspace_id').notNull().references(() => workspaces.id),

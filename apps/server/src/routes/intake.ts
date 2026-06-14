@@ -3,6 +3,7 @@ import {
   loadIntake, saveIntake, runDiscovery, latestDiscovery, listDiscoveries,
   type IntakeRecord, type PlanningMode, type HireMode,
 } from '@guideai/orchestrator/discovery';
+import { planFromDiscoveryByMode } from '@guideai/orchestrator/planReview';
 
 const PLANNING: PlanningMode[] = ['auto', 'assisted', 'manual'];
 const HIRING: HireMode[] = ['auto', 'manual', 'hybrid'];
@@ -80,7 +81,17 @@ export function registerIntakeRoutes(app: FastifyInstance) {
     }
     try {
       const rec = await runDiscovery({ workspaceId: req.params.id });
-      return { discovery: rec };
+      // Hand off to plan-review per the workspace's planning mode.
+      let plan = null;
+      if (rec.synthesis) {
+        plan = await planFromDiscoveryByMode({
+          workspaceId: req.params.id,
+          discoveryId: rec.id,
+          synthesis: rec.synthesis,
+          planningMode: intake.planningMode,
+        });
+      }
+      return { discovery: rec, plan };
     } catch (err: any) {
       req.log.error(err);
       reply.code(500); return { error: String(err?.message ?? err) };

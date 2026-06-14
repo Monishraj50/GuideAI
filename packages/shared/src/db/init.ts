@@ -141,6 +141,23 @@ CREATE TABLE IF NOT EXISTS discoveries (
 );
 CREATE INDEX IF NOT EXISTS idx_discoveries_workspace ON discoveries(workspace_id);
 
+CREATE TABLE IF NOT EXISTS plans (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+  discovery_id TEXT,
+  status TEXT NOT NULL DEFAULT 'draft',   -- draft|approved|dispatched|rejected
+  edited_synthesis_json TEXT NOT NULL,
+  notes TEXT,
+  brief_id TEXT,
+  hire_summary_json TEXT,                  -- {hired:[...], queued:[...], skipped:[...]}
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  approved_at INTEGER,
+  dispatched_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_plans_workspace ON plans(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_plans_discovery ON plans(discovery_id);
+
 CREATE INDEX IF NOT EXISTS idx_agents_workspace ON agents(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_briefs_workspace ON briefs(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_brief ON tasks(brief_id);

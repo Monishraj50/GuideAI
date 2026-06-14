@@ -567,3 +567,74 @@ The intake layer that sits in front of every brief: a structured form (goal, suc
 - Round-table runs synchronously inside the POST handler today. That's fine while panelists are haiku/sonnet (~500ms each in parallel) but if a panelist hangs the HTTP request hangs with it. A fire-and-forget pattern (like `submitBrief`) is the natural next step — return the discovery id immediately, surface progress via the SSE feed, poll the GET endpoint.
 - The mode toggles are wired but not yet enforced in the pipeline. Wiring them up is Phase 2: `assisted` → pause at plan review; `auto` → synthesis becomes the brief, skip to implement; `hybrid` hire mode → prompt before non-default hires.
 - Panelists return free-text; if a real Claude run omits a labelled field, synthesis falls back to defaults instead of erroring. That's intentional (lean parsing, no fragile JSON contracts), but means a malformed model response degrades gracefully rather than failing loud.
+
+
+---
+
+## Phase 2 — Plan review + planning/hire mode enforcement
+
+The plan-review layer. Phase 1 produced a discovery synthesis; Phase 2 turns it into an editable plan, dispatches hires per the workspace's hire mode, and submits the brief — with the planning-mode toggle deciding how much of that runs automatically vs. with the user in the loop.
+
+**Schema (`packages/shared/src/db/init.ts` + `schema.ts`):**
+- `plans` table: `id`, `workspace_id`, `discovery_id`, `status` (`draft|approved|dispatched|rejected`), `edited_synthesis_json` (mutable copy of the synthesis), `notes`, `brief_id` (set when dispatched), `hire_summary_json` (post-approval result), timestamps. Indexed on workspace + discovery.
+
+**Module (`packages/orchestrator/src/planReview.ts`):**
+- `previewHires({workspaceId, roles, hireMode})` → `{hired, queued, skipped, errors}`. Pure function over (current roster, catalog, mode):
+  - **auto** — every recommended role tagged `hire`.
+  - **manual** — every role tagged `queue`.
+  - **hybrid** — roles in `SAFE_DEFAULT_ROLES` (backend/frontend/fullstack/technical-writer/qa-expert/test-automator) tagged `hire`; others `queue`.
+- `executeHires(...)` — runs `hireAgent` for each `hire` entry; errors degrade to `skip`.
+- **Role alias table** (`ROLE_ALIASES`): translates panelist shorthand → catalog-real role IDs (`qa-engineer → qa-expert`, `full-stack-developer → fullstack-developer`, `architect → solution-architect`, …). Falls back to fuzzy substring match before giving up. Means the panelists don't have to memorise all 154 catalog IDs.
+- `createPlanFromDiscovery({workspaceId, discoveryId?, synthesis?})` — drafts a plan from a discovery's synthesis. Re-uses an existing `draft` plan for the same discovery instead of accumulating duplicates.
+- `savePlanEdits({planId, synthesis?, notes?})` — only allowed while `status='draft'`.
+- `composeBriefBody(synthesis, intakeGoal)` — builds a markdown brief body from the (possibly edited) synthesis (goal headline + summary + benefits + success metrics + roster + risks + ballpark cost line).
+- `approvePlan({planId, forceDispatch?})` — runs `previewHires` + `executeHires`, then:
+  - If no hires are queued (or `forceDispatch=true`) → composes brief body → calls `submitBrief` → marks `dispatched`.
+  - Otherwise → marks `approved`, waits for the user to clear queued hires (then they re-call approve, or click "force dispatch").
+- `rejectPlan(planId)` — soft-rejects; UI can redraft from latest discovery.
+- `planFromDiscoveryByMode({...planningMode})` — convenience helper called by the discovery POST handler:
+  - **manual** — does nothing (user writes brief themselves in Ops).
+  - **assisted** — drafts a plan, leaves it `draft` for user review.
+  - **auto** — drafts + approves in one shot (so the whole flow runs hands-off if hire-mode also allows it).
+
+**Server (`apps/server/src/routes/plans.ts` + `intake.ts` change):**
+- Discovery POST now returns `{discovery, plan}` — the plan is populated for `auto`/`assisted` mode, `null` for `manual`.
+- `GET /api/workspaces/:id/plan-reviews` — list history.
+- `GET /api/workspaces/:id/plan-review` — latest.
+- `POST /api/workspaces/:id/plan-review` — draft from latest discovery (idempotent).
+- `GET /api/workspaces/:id/plan-review/hire-preview` — live preview without dispatching (UI uses this so the user can see what auto/hybrid/manual will do before approving).
+- `PUT /api/plans/:id` — merge-edit synthesis + notes (only while draft).
+- `POST /api/plans/:id/approve` — body `{forceDispatch?}`.
+- `POST /api/plans/:id/reject`.
+- `GET /api/plans/:id` — fetch one.
+- Path note: avoided `/api/workspaces/:id/plan` because that's already the workspace-summary route; used `plan-review` instead.
+
+**UI (`apps/web/app/projects/[id]/PlanReview.tsx`):**
+- Sits between the intake section and the approvals tray on the project page.
+- **Editable summary card** — textarea for the synthesis summary plus per-list chip editors for recommended_roles, success_metrics, riskFlags, benefits. Toggle edit/save/cancel; edits only allowed in `draft`.
+- **Hire dispatch preview** (3-column grid: will-hire / queued / skipped) updates every 4 seconds and reflects the current hire-mode. The catalog-resolved displayName is shown so the user sees what they're getting, not just the raw role slug.
+- **Hire dispatch result** appears after approval with the same 3-column layout — the actual outcome.
+- **Status pill** (draft / approved / dispatched / rejected) with tint.
+- **Actions:**
+  - draft → "approve & dispatch" or "reject"
+  - approved-with-queued-hires → "force dispatch anyway" (warn-tinted, so it's clear this skips approvals)
+  - dispatched → link to `/logs/<briefId>` for the trace
+  - rejected → "redraft from latest discovery"
+
+**Verified end-to-end (4 scenarios):**
+
+| Workspace | planning | hire | Result |
+|---|---|---|---|
+| `phase2-auto`     | `auto`     | `auto`   | discovery → plan auto-drafted → 4 hires (backend/frontend/qa-expert/devops) → brief dispatched. status=`dispatched`. |
+| `phase2-hybrid`   | `auto`     | `hybrid` | 3 safe-defaults hired (backend/frontend/qa-expert), devops queued. status=`approved` (waiting on queue). |
+| `phase2-assisted` | `assisted` | `manual` | plan drafted but NOT auto-approved. PUT edits accepted (dropped devops, added technical-writer). approve → all 3 queued (manual). force-dispatch → brief dispatched anyway. |
+| `phase2-manual`   | `manual`   | `manual` | discovery still runs, but plan is NOT created. User writes brief themselves in Ops. |
+
+Role alias resolution verified: the panelist's `qa-engineer` (not in catalog) resolves to `qa-expert` (in catalog) at hire time. Stored synthesis keeps the human-friendly alias; only `executeHires` translates.
+
+**Surfaced (Principle 10B):**
+- Approval handler runs `submitBrief` synchronously inside the POST request. `submitBrief` itself is fire-and-forget (the pipeline runs in the background), so the HTTP request returns quickly — but if `executeHires` ever grew slower (e.g. cross-workspace catalog lookup), this would block. Acceptable for now.
+- `hireMode=manual` queues every hire today, but doesn't actually create approval rows in the `approvals` table — the queue is a list returned for the UI to render. Wiring those into the real /hire approval flow is the natural next step (Phase 3 — auto-hire + GitHub bootstrap).
+- `SAFE_DEFAULT_ROLES` is a hard-coded set. A reasonable upgrade: make it editable from Settings so each workspace can define its own.
+- Plan history (`/api/workspaces/:id/plan-reviews`) is exposed but no UI surfaces it yet — currently we only show the latest. A "plan history" drawer is a small follow-up.
+- When the user changes hire-mode in the intake form, the live preview updates within 4s (auto-refresh) but the stored synthesis doesn't change — only the dispatch decision. That's intentional; the panel's recommendation is independent of *how* you hire.
