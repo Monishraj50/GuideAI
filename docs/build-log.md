@@ -429,3 +429,37 @@ Every real tool call an agent attempts now routes through GuideAI's policy engin
 
 **Now possible:** Specialists can actually `Bash`, `Edit`, `Write` — every call appears in your PendingTray; you approve or deny per call (or add an auto-approve rule). Real code can ship through the team.
 
+---
+
+## Plan C — Inter-agent channels (done 2026-06-14)
+
+The `/channels` tab is real. Built-in topic streams + per-agent + per-brief views over the workspace event log.
+
+**`apps/server/src/routes/channels.ts`:**
+- `GET /api/workspaces/:id/channels` — returns built-in channels (`#general`, `#routing`, `#approvals`, `#briefs`, `#errors`), per-agent channels (`@Backend Developer`, `@Qa Expert`, …), and per-brief channels (`#brief-<id>` for the 10 newest briefs).
+- `GET /api/workspaces/:id/channels/:channelId/events` — chronological events filtered to that channel. Filter logic per channel kind: `routing` catches phase chunks + system notes starting with `routing plan:` / `dispatch:` / `handoff:` / `skills loaded:`; `approvals` catches `tool` + `approval` chunks + auto-decision system notes; `briefs` catches `user` + `ai` chunks; `errors` catches system level=error; `agent` channels match `agentId`; `brief` channels match phase `taskId` or text references.
+
+**`packages/orchestrator/src/phases.ts`:**
+- Tracks the previous phase's worker; on transition emits a system note `handoff: Backend Developer → Qa Expert (review)`. Verified end-to-end with two briefs:
+  - "Plan and verify our backend health endpoint" → 1 handoff (implement BE → review QA)
+  - "Frontend redesign of the dashboard with QA tester verification" → 1 handoff (implement FE → review QA)
+
+**`apps/web/app/channels/`:**
+- 2-column layout (sidebar + main pane) replacing the stub. Sidebar groups channels: built-ins on top, then `Direct agents` group, then `Briefs` group.
+- Lucide icons per kind (`Hash, GitBranch, ShieldAlert, FileText, AlertTriangle, AtSign`).
+- Header shows the channel name + description + live count.
+- Live updates: subscribed to the workspace SSE; any new event triggers a re-fetch of the filtered channel.
+- Keyboard nav: `j` / `k` cycles through channels.
+
+**Verified end-to-end:**
+- Channel list returns 18 channels (5 built-in + 5 active agents + 8 of the 10 newest briefs).
+- `#routing` returns 18 events: 1 routing plan + 5 dispatch lines + 1 handoff + 10 phase chunks (5 started, 5 completed) + skills-loaded note.
+- `#approvals` returns 0 events here (guest mode mock adapter doesn't call real tools — Plan B's real path would populate this).
+- `#brief-<id>` returns 11 events scoped to one brief (5 phase started + 5 completed + the user brief).
+- `/channels` page renders HTTP 200 with sidebar + main pane markup.
+
+**Surfaced (Principle 10B):**
+- Channels are derived (read-time filtering) — no per-channel storage. Trade-off: zero index cost, but every channel switch re-scans the workspace events file. Fine until events.jsonl crosses ~10 MB.
+- Live update uses SSE + refetch; with many events this could thrash. Move to a delta-based filter in a follow-up if it becomes noisy.
+- Agent inboxes (`packages/messaging/inbox.ts`) still exist from step 3 but aren't wired into channels yet — that's the foundation for truly autonomous agent-to-agent messaging (an agent emitting `send to: code-reviewer` mid-pipeline). Phase handoffs are the v1 stand-in; autonomous messaging is the natural next step alongside multi-agent collaboration mid-phase.
+

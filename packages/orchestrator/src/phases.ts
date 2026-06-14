@@ -130,9 +130,22 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
     id: agentId, role: 'chief-of-staff', displayName: 'Chief of Staff',
   };
 
+  let previousWorker: RoutableAgent | null = null;
+
   for (const phase of PHASE_ORDER) {
     const decision = route?.[phase];
     const worker: RoutableAgent = decision?.agent ?? defaultAgent;
+
+    // Handoff note: phase N → phase N+1 with a worker change → surface as
+    // a routing-channel note so #channels shows real "who passed what".
+    if (previousWorker && previousWorker.id !== worker.id) {
+      appendEvent(workspaceId, {
+        id: randomUUID(), ts: Date.now(), workspaceId, agentId,
+        kind: 'system', level: 'info',
+        text: `handoff: ${previousWorker.displayName} → ${worker.displayName} (${phase})`,
+      });
+    }
+    previousWorker = worker;
     const routing = routeModel({ phase, override: (worker.model as any) ?? undefined });
     const phaseStartedAt = Date.now();
 

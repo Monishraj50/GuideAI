@@ -1,15 +1,17 @@
-import { Hash } from 'lucide-react';
+'use client';
+
+import { useWorkspaceId } from '../../components/WorkspaceProvider';
+import { ChannelsView } from './ChannelsView';
 
 export default function ChannelsPage() {
+  const workspaceId = useWorkspaceId();
   return (
-    <div className="flex-1 min-h-0 flex items-center justify-center p-6">
-      <div className="text-center max-w-md">
-        <div className="w-12 h-12 rounded-full bg-line/40 border border-line/70 flex items-center justify-center mx-auto mb-3">
-          <Hash size={18} className="text-dim" />
-        </div>
-        <div className="text-ink text-sm font-medium mb-1">Channels — coming soon</div>
-        <div className="text-dim text-xs">Per-team rooms land alongside dispatch-to-specialists.</div>
-      </div>
+    <div className="flex flex-col h-full min-h-0">
+      <header className="border-b border-line/70 px-5 py-3 glass">
+        <div className="text-ink font-medium">Channels</div>
+        <div className="text-dim text-[11px] mt-0.5">filtered views of the workspace event stream · workspace <span className="font-mono text-ink2">{workspaceId}</span></div>
+      </header>
+      <ChannelsView workspaceId={workspaceId} />
     </div>
   );
 }
