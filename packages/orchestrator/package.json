@@ -14,7 +14,8 @@
     "./discovery": "./src/discovery.ts",
     "./planReview": "./src/planReview.ts",
     "./wbs": "./src/wbs.ts",
-    "./deliverables": "./src/deliverables.ts"
+    "./deliverables": "./src/deliverables.ts",
+    "./github": "./src/github.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

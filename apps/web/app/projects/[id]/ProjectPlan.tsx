@@ -11,6 +11,7 @@ import { IntakeSection } from './IntakeSection';
 import { PlanReview } from './PlanReview';
 import { Dashboard } from './Dashboard';
 import { Deliverables } from './Deliverables';
+import { RepoSection } from './RepoSection';
 
 interface PlanResp {
   workspace: { id: string; name: string; autonomyMode: string; createdAt: number };
@@ -104,6 +105,9 @@ export function ProjectPlan({ workspaceId }: { workspaceId: string }) {
 
       {/* Deliverables — artifacts, slide decks, explainers, links */}
       <Deliverables workspaceId={workspaceId} />
+
+      {/* GitHub repo — push deliverables, sync WBS → issues */}
+      <RepoSection workspaceId={workspaceId} />
 
       {/* Pending approvals — top of plan since they're blocking */}
       <Section

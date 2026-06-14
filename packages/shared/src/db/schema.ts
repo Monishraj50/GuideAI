@@ -169,6 +169,21 @@ export const workItems = sqliteTable('work_items', {
   updatedAt: integer('updated_at').notNull(),
   startedAt: integer('started_at'),
   completedAt: integer('completed_at'),
+  githubIssueNumber: integer('github_issue_number'),
+  githubIssueUrl: text('github_issue_url'),
+});
+
+export const workspaceRepos = sqliteTable('workspace_repos', {
+  workspaceId: text('workspace_id').primaryKey().references(() => workspaces.id),
+  owner: text('owner').notNull(),
+  repo: text('repo').notNull(),
+  provider: text('provider').notNull().default('github'),
+  visibility: text('visibility').notNull().default('private'),
+  defaultBranch: text('default_branch').notNull().default('main'),
+  htmlUrl: text('html_url'),
+  linkedAt: integer('linked_at').notNull(),
+  lastPushedAt: integer('last_pushed_at'),
+  lastSyncAt: integer('last_sync_at'),
 });
 
 export const discoveries = sqliteTable('discoveries', {

@@ -202,6 +202,20 @@ CREATE INDEX IF NOT EXISTS idx_deliverables_workspace ON deliverables(workspace_
 CREATE INDEX IF NOT EXISTS idx_deliverables_brief ON deliverables(brief_id);
 CREATE INDEX IF NOT EXISTS idx_deliverables_kind ON deliverables(kind);
 
+CREATE TABLE IF NOT EXISTS workspace_repos (
+  workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id),
+  owner TEXT NOT NULL,
+  repo TEXT NOT NULL,
+  provider TEXT NOT NULL DEFAULT 'github',     -- github only for now; placeholder for gitlab/bitbucket
+  visibility TEXT NOT NULL DEFAULT 'private',  -- private|public
+  default_branch TEXT NOT NULL DEFAULT 'main',
+  html_url TEXT,
+  linked_at INTEGER NOT NULL,
+  last_pushed_at INTEGER,
+  last_sync_at INTEGER
+);
+
+
 CREATE INDEX IF NOT EXISTS idx_agents_workspace ON agents(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_briefs_workspace ON briefs(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_brief ON tasks(brief_id);
@@ -219,6 +233,18 @@ function main() {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(DDL);
+
+  // Idempotent column additions (SQLite ALTER ADD COLUMN errors if the column
+  // already exists, so we wrap each one).
+  for (const stmt of [
+    "ALTER TABLE work_items ADD COLUMN github_issue_number INTEGER",
+    "ALTER TABLE work_items ADD COLUMN github_issue_url TEXT",
+  ]) {
+    try { db.exec(stmt); } catch (e: any) {
+      if (!/duplicate column/i.test(String(e?.message ?? ''))) throw e;
+    }
+  }
+
   db.close();
 
   console.log(`[init-db] ready at ${paths.db}`);

@@ -765,3 +765,76 @@ When a brief completes, GuideAI now produces three things automatically: copies 
 - **Explainer always uses haiku** (no router consultation). One $0.001-ish call per brief. If you want opus quality, that's a route-table change — but the trade-off isn't worth it for what's essentially a wiki summary.
 - **`uri` for manual files is just a string** — we don't upload/copy/store the file. Adding it as a deliverable surfaces it in the UI but doesn't move bytes around. If you want true attachment storage, that's a follow-up.
 - **Synthesis fallback**: if a brief was submitted directly (not via a plan), `synthesis` is null and the deck/explainer degrade gracefully (deck uses brief headline; explainer reads phase artifacts only).
+
+---
+
+## Phase 3 — GitHub repo bootstrap
+
+The final roadmap phase. Each workspace can now be bound to a real GitHub repo, push its auto-generated deliverables to it, and surface its WBS as issues. Auth is per-user, opt-in, and prefers the `gh` CLI when present — falling back to a PAT stored locally with chmod 600.
+
+**Schema (`packages/shared/src/db/init.ts` + `schema.ts`):**
+- New `workspace_repos` table (PK on `workspace_id`, one repo per workspace): `owner`, `repo`, `provider` (`github` only for now), `visibility`, `default_branch`, `html_url`, `linked_at`, `last_pushed_at`, `last_sync_at`.
+- Two new columns on `work_items`: `github_issue_number` + `github_issue_url`. Added via idempotent `ALTER TABLE ADD COLUMN` calls in init that swallow "duplicate column" errors.
+
+**Integration storage:**
+- Per-user file at `~/.guideai/integrations/github.json`, mirroring the Claude integration pattern (chmod 600, `users` keyed by username). Stores `ghCliConnectedAt` + `ghCliVersion` + `pat` + `patSavedAt` + `defaultOwner`.
+
+**Module (`packages/orchestrator/src/github.ts`):**
+- `detectGhCli()` → `{detected, version, binaryPath, authenticated, loggedInUser, authError}`. Runs `gh --version` + `gh auth status` with timeouts.
+- `resolveAuth(username)` → `{mode: 'gh-cli' | 'pat', pat?}`. Prefers gh CLI when detected and authenticated; falls back to PAT; throws with a copy-paste-able error message if neither is available.
+- `ghApi(path, auth, opts)` — single API entrypoint:
+  - For `gh-cli` auth, shells out to `gh api <path> -X <method> --input -` (JSON body piped through stdin)
+  - For `pat` auth, uses native `fetch` against `api.github.com` with `Authorization: Bearer <pat>` and `Accept: application/vnd.github+json`
+  - Returns parsed JSON; throws on non-2xx with the response body for debugging
+- **Repo binding**: `getWorkspaceRepo / linkRepo / unlinkRepo`. Link is idempotent (upserts) and preserves `linkedAt`.
+- **`createRepo({workspaceId, name, description?, private?, username})`** — POSTs to `/user/repos` (the authed user's account) with `auto_init: true`, then auto-links the result.
+- **`pushDeliverables({workspaceId, briefId?, username})`** — pulls the latest auto deliverables (Phase 6+7 output) and writes:
+  - `README.md` ← slide deck body
+  - `EXPLAINER.md` ← explainer body
+  - `docs/{research,plan,implement,review,verify}.md` ← phase artifacts
+  - `GUIDEAI.md` ← index file (always written so the repo is never empty)
+  - Idempotent: looks up each file's sha first so re-pushes update in place via the Contents API.
+- **`syncWorkItemsToIssues({workspaceId, briefId?, username})`** — for each WBS item:
+  - No `github_issue_number` → create issue (title = work item title, body includes phase/priority/role/briefId/work-item-id, labels `guideai` + `phase:<phase>` + `priority:<non-normal>`), persist number + URL back.
+  - Already has issue number → PATCH to mirror status: `done` → `closed`, anything else → `open`. Body re-written too in case the item was edited.
+  - `cancelled` items are skipped.
+
+**Server (`apps/server/src/routes/`):**
+- `githubIntegration.ts`:
+  - `GET /api/integrations/github` — public state including CLI detection + auth status + PAT hint + ready flag
+  - `POST /api/integrations/github/cli/connect` — records consent (no API call, just consent persistence)
+  - `POST /api/integrations/github/cli/disconnect`
+  - `PUT /api/integrations/github/pat` — body `{pat?, defaultOwner?}`. Either or both can be set.
+  - `DELETE /api/integrations/github/pat`
+- `workspaceRepo.ts`:
+  - `GET /api/workspaces/:id/repo`
+  - `POST /api/workspaces/:id/repo/link` — body `{owner, repo, visibility?, defaultBranch?, htmlUrl?}` (no API call — just persists the binding)
+  - `POST /api/workspaces/:id/repo/create` — creates + links via GitHub API
+  - `DELETE /api/workspaces/:id/repo` — unlink (repo on GitHub is untouched)
+  - `POST /api/workspaces/:id/repo/push` — body `{briefId?}`
+  - `POST /api/workspaces/:id/repo/sync-issues` — body `{briefId?}`
+
+**UI:**
+- `apps/web/app/settings/GithubIntegration.tsx` — two cards (gh CLI status + PAT input). Mirrors the Claude integration styling: detect badge, "logged in as X" hint, PAT save with last-4-char hint + `chmod 600` note, default-owner input. Lucide doesn't have a `Github` mark icon in this version, so we alias `GitBranch as Github` (consistent with how it'd render anyway).
+- `apps/web/app/projects/[id]/RepoSection.tsx` — new section under Deliverables on the project page. Three states:
+  - **No integration ready** → shows a warn-tinted dashed-border hint pointing to Settings.
+  - **Ready but no repo linked** → `Link existing repo` / `Create new repo` buttons, both with collapsible forms.
+  - **Linked** → status header (owner/repo, public/private icon, default branch chip, "linked / last pushed / last synced" relative timestamps), big `Push deliverables` and `Sync WBS → issues` action buttons, and two history boxes showing the last push file list + last sync (created/updated/errors counts).
+
+**Verified end-to-end (`p3-test` workspace, gh CLI not installed on this box):**
+- `GET /api/integrations/github` returned clean `{ghCliDetected:false, patSet:false, ready:false}` for the current session user.
+- `POST /repo/link` with `{owner:octocat, repo:hello-world, visibility:public}` persisted and returned the full binding.
+- `GET /repo` reflected the link.
+- `POST /repo/push` returned the expected error message (`no GitHub auth available — either run gh auth login or save a PAT in Settings → GitHub`) — no stack trace bleeding out.
+- `POST /repo/sync-issues` returned the same clean error.
+- `DELETE /repo` cleared the binding.
+- `PUT /pat` with a dummy token persisted, returned `patHint:'…cret'` (last 4) + `patSavedAt` + `defaultOwner:'smoketest'` + `ready:true`. File written at `~/.guideai/integrations/github.json` with `0o600` permissions confirmed via `ls -la`.
+- `DELETE /pat` cleared the secret while preserving the user's `defaultOwner` preference.
+
+**Surfaced (Principle 10B):**
+- **No webhook listener** for closed-on-GitHub → done. The mirror is one-way today (GuideAI → GitHub) when `sync-issues` is invoked. A small `POST /api/webhooks/github` handler is the obvious follow-up; we left the schema (`github_issue_number` + `github_issue_url`) ready for it.
+- **`gh api` shells out per request**, no batching/connection-reuse. For the push (~5 files) and the issue sync (typically 10-20 items) this is fine, but a long brief with 50+ issues would benefit from a single `gh api graphql` call or fetch-based batching with the PAT path.
+- **`createRepo` always creates under `/user/repos`** — i.e. the authed user's account. To create under an org, the user links the org-existing repo instead. Adding a `/orgs/:org/repos` form variant is straightforward when needed.
+- **PAT scope assumptions**: needs `repo` scope. The route doesn't validate this proactively; if the token is missing scope, the first push/sync call returns the GitHub 403 verbatim with the body, which is enough to diagnose. A pre-flight `/user` ping with scope check could be added in Settings.
+- **The `Github` icon was aliased from `GitBranch`** because lucide-react@1.18.0 doesn't ship the GitHub mark. Cosmetic; trivial to swap later when the package gets it back, or by pulling in a single SVG.
+- **`uri` field for manual `file` deliverables** (from Phase 6) isn't pushed to the repo today — only the auto-generated artifact/deck/explainer markdown ships. Manual files would need an upload pipeline (or just a doc in the repo pointing at them).

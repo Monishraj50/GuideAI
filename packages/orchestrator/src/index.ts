@@ -7,3 +7,4 @@ export * from './discovery.js';
 export * from './planReview.js';
 export * from './wbs.js';
 export * from './deliverables.js';
+export * from './github.js';

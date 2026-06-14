@@ -6,6 +6,7 @@ import { AuditLog } from './AuditLog';
 import { AuthSection } from './AuthSection';
 import { ClaudeIntegration } from './ClaudeIntegration';
 import { BudgetSection } from './BudgetSection';
+import { GithubIntegration } from './GithubIntegration';
 
 export default function SettingsPage() {
   const workspaceId = useWorkspaceId();
@@ -23,6 +24,9 @@ export default function SettingsPage() {
         </div>
         <div className="border-t border-line/70 mt-8 pt-6">
           <BudgetSection />
+        </div>
+        <div className="border-t border-line/70 mt-8 pt-6">
+          <GithubIntegration />
         </div>
         <div className="border-t border-line/70 mt-8 pt-6">
           <RulesEditor />
