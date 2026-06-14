@@ -12,6 +12,7 @@ import { loadCatalog } from '@guideai/agents-catalog';
 import type { SystemChunk } from '@guideai/shared/chunks';
 import { hireAgent } from './hiring.js';
 import { submitBrief } from './cos.js';
+import { autoSeedFromPlan } from './wbs.js';
 import {
   loadIntake, latestDiscovery, type DiscoverySynthesis,
   type HireMode, type PlanningMode,
@@ -362,6 +363,16 @@ export async function approvePlan(args: {
     status = 'dispatched';
     appendEvent(plan.workspaceId, sys(plan.workspaceId,
       `plan ${plan.id} dispatched → brief ${briefId}`));
+    // Phase 4 — seed the WBS so the dashboard has something to show.
+    try {
+      autoSeedFromPlan({
+        workspaceId: plan.workspaceId, briefId, planId: plan.id,
+        synthesis: plan.synthesis,
+      });
+    } catch (err: any) {
+      appendEvent(plan.workspaceId, sys(plan.workspaceId,
+        `WBS seed skipped: ${err?.message ?? err}`, 'warn'));
+    }
   } else {
     appendEvent(plan.workspaceId, sys(plan.workspaceId,
       `plan ${plan.id} waiting on ${hireSummary.queued.length} queued hire(s) before dispatch`, 'warn'));

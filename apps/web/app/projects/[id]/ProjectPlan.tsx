@@ -9,6 +9,7 @@ import { toast } from '../../../components/Toast';
 import { cn } from '../../../lib/cn';
 import { IntakeSection } from './IntakeSection';
 import { PlanReview } from './PlanReview';
+import { Dashboard } from './Dashboard';
 
 interface PlanResp {
   workspace: { id: string; name: string; autonomyMode: string; createdAt: number };
@@ -96,6 +97,9 @@ export function ProjectPlan({ workspaceId }: { workspaceId: string }) {
 
       {/* Plan review + hire dispatch */}
       <PlanReview workspaceId={workspaceId} />
+
+      {/* Progress dashboard (WBS Kanban + burndown) */}
+      <Dashboard workspaceId={workspaceId} />
 
       {/* Pending approvals — top of plan since they're blocking */}
       <Section

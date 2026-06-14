@@ -10,6 +10,7 @@ import {
   loadBudget, summarizeUsage, forecastPhaseCost, checkBudget, recordUsage, modelToTier,
   type Tier,
 } from '@guideai/policies/budgets';
+import { markPhaseComplete, type WorkPhase } from './wbs.js';
 import { loadSkills, skillsForPhase, renderSkillsAsContext } from '@guideai/skills';
 import { runPassK } from '@guideai/evals';
 import type { AIChunk, Chunk, PhaseChunk, SystemChunk } from '@guideai/shared/chunks';
@@ -299,6 +300,7 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
         k, passes: passK.passes, verdict: passK.verdict,
       });
       appendEvent(workspaceId, makePhaseChunk(workspaceId, agentId, briefId, phase, 'completed', artifact));
+      try { markPhaseComplete({ workspaceId, briefId, phase: phase as WorkPhase }); } catch {}
       continue;
     }
 
@@ -367,6 +369,7 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
     });
 
     appendEvent(workspaceId, makePhaseChunk(workspaceId, agentId, briefId, phase, 'completed', artifact));
+    try { markPhaseComplete({ workspaceId, briefId, phase: phase as WorkPhase }); } catch {}
   }
 
   return {

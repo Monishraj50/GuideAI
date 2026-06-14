@@ -158,6 +158,31 @@ CREATE TABLE IF NOT EXISTS plans (
 CREATE INDEX IF NOT EXISTS idx_plans_workspace ON plans(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_plans_discovery ON plans(discovery_id);
 
+CREATE TABLE IF NOT EXISTS work_items (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+  brief_id TEXT,
+  plan_id TEXT,
+  parent_id TEXT,
+  title TEXT NOT NULL,
+  description TEXT,
+  assigned_role TEXT,                          -- catalog role or alias
+  assigned_agent_id TEXT,                      -- resolved agent if hired
+  phase TEXT,                                  -- research|plan|implement|review|verify|other
+  status TEXT NOT NULL DEFAULT 'todo',         -- todo|in_progress|blocked|done|cancelled
+  priority TEXT NOT NULL DEFAULT 'normal',     -- low|normal|high|critical
+  estimate_hours REAL,
+  position INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'auto',         -- auto|manual — where it came from
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  started_at INTEGER,
+  completed_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_work_items_workspace ON work_items(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_work_items_brief ON work_items(brief_id);
+CREATE INDEX IF NOT EXISTS idx_work_items_status ON work_items(status);
+
 CREATE INDEX IF NOT EXISTS idx_agents_workspace ON agents(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_briefs_workspace ON briefs(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_brief ON tasks(brief_id);

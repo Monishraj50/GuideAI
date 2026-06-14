@@ -638,3 +638,71 @@ Role alias resolution verified: the panelist's `qa-engineer` (not in catalog) re
 - `SAFE_DEFAULT_ROLES` is a hard-coded set. A reasonable upgrade: make it editable from Settings so each workspace can define its own.
 - Plan history (`/api/workspaces/:id/plan-reviews`) is exposed but no UI surfaces it yet — currently we only show the latest. A "plan history" drawer is a small follow-up.
 - When the user changes hire-mode in the intake form, the live preview updates within 4s (auto-refresh) but the stored synthesis doesn't change — only the dispatch decision. That's intentional; the panel's recommendation is independent of *how* you hire.
+
+---
+
+## Phase 4 — Work Breakdown Structure (WBS)
+
+Once a plan is dispatched, every workspace gets a flat, editable list of work items the user can move across a Kanban. Items auto-seed from the synthesis (one set per role × phase, one per risk, one per success metric), and the pipeline auto-completes them as it ticks through phases — so the board reflects real state without bookkeeping.
+
+**Schema (`packages/shared/src/db/init.ts` + `schema.ts`):**
+- `work_items` table: `id`, `workspace_id`, `brief_id`, `plan_id`, `parent_id`, `title`, `description`, `assigned_role` (catalog or alias), `assigned_agent_id`, `phase` (`research|plan|implement|review|verify|other`), `status` (`todo|in_progress|blocked|done|cancelled`), `priority` (`low|normal|high|critical`), `estimate_hours`, `position` (column-local sort), `source` (`auto|manual`), timestamps + `started_at`/`completed_at`. Indexed on workspace + brief + status.
+
+**Module (`packages/orchestrator/src/wbs.ts`):**
+- `listWorkItems(workspaceId, {briefId?, status?})` — sorted by column then position.
+- `createWorkItem(input)` — appends to bottom of the target status column.
+- `updateWorkItem(id, patch)` — status transitions stamp `started_at`/`completed_at`; if status changes and no explicit `position` given, item goes to bottom of the new column.
+- `deleteWorkItem(id)`.
+- `autoSeedFromPlan({workspaceId, briefId, planId, synthesis})` — idempotent per brief: skips if any auto items already exist. Generates:
+  - 1 research item + 1 implement item per recommended role (capped at 8 roles)
+  - 1 review item per risk (capped at 5)
+  - 1 verify item per success metric (capped at 6)
+- `markPhaseComplete({workspaceId, briefId, phase})` — bulk-marks all matching items done.
+
+**Pipeline integration (`packages/orchestrator/src/phases.ts`):**
+- After every phase completion (single-pass and pass@k both), `markPhaseComplete` is called for the (briefId, phase) pair. Wrapped in `try/catch` so a WBS failure can't break the pipeline.
+
+**Plan dispatch hook (`packages/orchestrator/src/planReview.ts`):**
+- `approvePlan` calls `autoSeedFromPlan` immediately after `submitBrief` succeeds, so the dashboard has items the moment the brief lands.
+
+**Server (`apps/server/src/routes/workItems.ts`):**
+- `GET /api/workspaces/:id/work-items` — list with optional `?briefId=` / `?status=` filters.
+- `POST /api/workspaces/:id/work-items` — manual add (defaults source=manual).
+- `PUT /api/work-items/:id` — partial update (title/description/status/priority/phase/assignedRole/estimateHours/position).
+- `DELETE /api/work-items/:id`.
+
+## Phase 5 — Progress dashboard
+
+The dashboard is one section on the project page that turns the WBS into a Kanban + the cost ledger into a pair of inline burndown charts. No external chart library — small inline SVG matching the existing `Sparkline` style.
+
+**Server (`apps/server/src/routes/burndown.ts`):**
+- `GET /api/workspaces/:id/burndown?days=N` — one pass over `work_items` + `usage_log` returning:
+  - `totals`: items/done/open/inProgress/blocked + usd + budgetHintUsd (from intake)
+  - `velocity`: items completed today + items completed in the last 7d
+  - `series`: per-day buckets for the last N days (inclusive of today): `completed`, `cumulativeCompleted`, `remaining` (proxy: totalItems − cumulativeCompleted), `usdSpent`, `cumulativeUsd`
+
+**UI (`apps/web/app/projects/[id]/Dashboard.tsx`):**
+- Lives below `PlanReview` on the project page; auto-refresh every 5s.
+- **KPI strip** (5 cards): open, in-flight (+ blocked sub), done (+ 7d velocity sub), spent (+ budget hint sub), today's velocity.
+- **Two inline-SVG charts** (14d window):
+  - **Items burndown** — actual remaining line + dashed ideal line (linear from total → 0). Tinted accent.
+  - **Cost burndown** — cumulative USD line + dashed budget-hint baseline (when set). Tinted warn.
+  Both show first/last date + current value + budget number.
+- **Add-item form** — collapsible drawer with title + phase + priority + role.
+- **Kanban (4 columns: todo / in-progress / blocked / done):**
+  - Drag-and-drop between columns (optimistic update, server PUT on drop).
+  - Each card shows title, optional description, phase pill + priority pill + role pill, source tag, and a per-card "move" disclosure with one-click status buttons (for users without drag).
+  - Hover-only delete button (with confirm).
+
+**Verified end-to-end (`p4p5-test` workspace):**
+- Submitted intake (`auto+auto`), POST'd discovery → plan auto-dispatched.
+- WBS auto-seeded with **19 items** across phases: 4 research, 4 implement (per recommended role), 5 review (per risk flag), 6 verify (per success metric). Statuses: all `todo`.
+- Manually added a 20th item (`Wire up analytics`, phase=implement) — `source=manual` set correctly.
+- Pipeline ran in the background; each `phase` completion ticked all matching items to `done` (19 items, 1 manual item left at `todo`).
+- `GET /burndown?days=14` returned: `totals.done=19`, `velocity.today=19`, `velocity.last7d=19`, with the spike showing only on today's bucket. Off-by-one fix: `startMs = now − (days − 1) × DAY_MS` so today is included in the window (the original calc cut today off).
+
+**Surfaced (Principle 10B):**
+- **`remaining` is a proxy**, not a historical snapshot. We compute it as `totalItems − cumulativeCompleted`, which is fine for showing today's trend but doesn't reconstruct "items as of N days ago" if items were added or deleted mid-stream. Adding a small `wbs_snapshots` table that records `{ts, total, done}` daily would give true historical accuracy.
+- **`autoSeedFromPlan` is one-shot** — it skips if any auto items already exist for the brief. Re-running discovery on the same plan re-uses the seed; that's the right default. If the user wants a fresh seed they can delete the auto items first.
+- **Kanban drag is HTML5 drag/drop** — works on desktop, awkward on touch. A small touch-shim or library is the right follow-up if mobile becomes a real use case.
+- **`markPhaseComplete` matches by `(workspaceId, briefId, phase)`** — that's narrow on purpose. Manually-added items (no `briefId`) are never auto-ticked. So if the user adds "Wire up analytics" mid-flow, they explicitly mark it done. Good for trust.

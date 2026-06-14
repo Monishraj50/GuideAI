@@ -12,7 +12,8 @@
     "./hiring": "./src/hiring.ts",
     "./digest": "./src/digest.ts",
     "./discovery": "./src/discovery.ts",
-    "./planReview": "./src/planReview.ts"
+    "./planReview": "./src/planReview.ts",
+    "./wbs": "./src/wbs.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
