@@ -463,3 +463,56 @@ The `/channels` tab is real. Built-in topic streams + per-agent + per-brief view
 - Live update uses SSE + refetch; with many events this could thrash. Move to a delta-based filter in a follow-up if it becomes noisy.
 - Agent inboxes (`packages/messaging/inbox.ts`) still exist from step 3 but aren't wired into channels yet — that's the foundation for truly autonomous agent-to-agent messaging (an agent emitting `send to: code-reviewer` mid-pipeline). Phase handoffs are the v1 stand-in; autonomous messaging is the natural next step alongside multi-agent collaboration mid-phase.
 
+---
+
+## Phase 0 — Budget + rate-limit governor (done 2026-06-14)
+
+Foundational layer for the project-lifecycle roadmap. Every phase, every adapter call now consults a per-workspace budget before spending.
+
+**Schema (`packages/shared/src/db/`):**
+- `usage_log { id, workspaceId, agentId, briefId, phase, model, tokensIn, tokensOut, costUsd, ts }` — append-only ledger of every Claude call. Indexed by `(workspaceId, ts)` for fast 5h-window sums.
+- `workspace_budgets { workspaceId, dailyUsdCap, monthlyUsdCap, tokensPer5hCap, behavior, updatedAt }` — per-project caps. `behavior` ∈ `{warn, downgrade, pause}`.
+
+**Module (`packages/policies/src/budgets.ts`):**
+- `recordUsage(event)` — append row + compute USD cost from per-tier price table (haiku $1/$5 per 1M, sonnet $3/$15, opus $15/$75).
+- `summarizeUsage(workspaceId)` → `{todayUsd, monthUsd, tokens5h, lastTs, windowResetTs}`. The 5h window is sliding; `windowResetTs` projects when the oldest in-window event ages out.
+- `forecastPhaseCost({tier, briefLength, artifactsLength, k})` — heuristic estimate (4 chars/token + constants). Cheap, no LLM.
+- `checkBudget({cfg, usage, forecast, tier})` → `{action: 'ok'|'warn'|'downgrade'|'pause', ...}`. Pure function over (config, usage, forecast). Token-cap hits **only** warn or pause (downgrading model doesn't reduce token count); dollar-cap hits cycle through the downgrade ladder (opus → sonnet → haiku) before pausing.
+
+**Pipeline gate (`phases.ts`):**
+- Before every phase, the loop:
+  1. Forecasts phase cost at routed tier
+  2. Summarises current usage
+  3. Calls `checkBudget`
+  4. On `downgrade`: swaps `routing.tier`, emits warn note, retries forecast (up to 3 tries)
+  5. On `warn`: emits warn note, proceeds
+  6. On `pause`: emits error note with `resume at HH:MM`, marks the phase chunk `'paused'`, throws to halt the pipeline
+- After every adapter call (single-pass and pass@k both): calls `recordUsage` with the real `tokensIn/tokensOut`.
+
+**Server (`apps/server/src/routes/budget.ts`):**
+- `GET /api/workspaces/:id/budget` — current config + live usage summary.
+- `PUT /api/workspaces/:id/budget` — update caps + behavior.
+- `GET /api/workspaces/:id/usage` — recent ledger rows for the spend dashboard.
+
+**UI:**
+- **TopBar** gets two new HUD pills:
+  - `today $ X.XX / $ Y` — tinted green/amber/red as you approach the daily cap
+  - `5h Z / W tokens` — tinted similarly, hidden when no token cap is set
+- **Settings → "Budget & rate limits"** (new section, between Claude integration and Approval rules):
+  - 3 live meter cards (today $, 30d $, 5h tokens) with progress bars
+  - 3 cap inputs (daily $, monthly $, 5h tokens) — blank = no cap
+  - Behavior radio cards: Warn / Downgrade / Pause with full descriptions
+  - "save budget" button
+
+**Verified end-to-end:**
+- Setting `dailyUsdCap=0.001, behavior=downgrade` with empty ledger → submitting a brief produced:
+  - `budget downgrade (research): sonnet → haiku · daily cap would be exceeded ($0.02/$0.00)`
+  - `budget pause (research): daily cap would be exceeded ($0.01/$0.00) · resume at 9:31:50 PM`
+- Setting `tokensPer5hCap=5000` with 4500 pre-existing tokens → next brief paused immediately (token cap bypasses the downgrade ladder).
+- Default config (`tokensPer5hCap=140000`, no $ caps, `behavior=downgrade`) lets briefs run normally with full per-phase usage rows persisted.
+
+**Surfaced (Principle 10B):**
+- Pause sets the phase chunk to `'paused'` and throws, halting the pipeline. There's no auto-resume scheduler yet — when the 5h window rolls, the user must re-submit the brief. A small `setInterval` resumer is straightforward to add later (poll for `briefs.status='paused'` + `paused_until <= now`).
+- Forecast heuristic (~4 chars/token + 1500 overhead + 800 response) tends to over-estimate, which biases toward safety. Real usage is recorded post-call so the running totals are accurate.
+- Per-workspace caps only — no global cap across projects. If you want a global cap, that's a follow-up (sum across workspaces in `summarizeUsage`).
+

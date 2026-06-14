@@ -91,6 +91,30 @@ CREATE TABLE IF NOT EXISTS users (
 );
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 
+CREATE TABLE IF NOT EXISTS usage_log (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  agent_id TEXT,
+  brief_id TEXT,
+  phase TEXT,
+  model TEXT NOT NULL,
+  tokens_in INTEGER NOT NULL DEFAULT 0,
+  tokens_out INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  ts INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_usage_ws_ts ON usage_log(workspace_id, ts);
+CREATE INDEX IF NOT EXISTS idx_usage_brief ON usage_log(brief_id);
+
+CREATE TABLE IF NOT EXISTS workspace_budgets (
+  workspace_id TEXT PRIMARY KEY,
+  daily_usd_cap REAL,
+  monthly_usd_cap REAL,
+  tokens_per_5h_cap INTEGER,
+  behavior TEXT NOT NULL DEFAULT 'downgrade',
+  updated_at INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_agents_workspace ON agents(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_briefs_workspace ON briefs(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_brief ON tasks(brief_id);

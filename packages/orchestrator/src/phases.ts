@@ -6,6 +6,10 @@ import { appendEvent } from '@guideai/messaging/events';
 import { paths } from '@guideai/shared/paths';
 import { routeModel } from '@guideai/policies/router';
 import { CAPS, type Phase } from '@guideai/policies/caps';
+import {
+  loadBudget, summarizeUsage, forecastPhaseCost, checkBudget, recordUsage, modelToTier,
+  type Tier,
+} from '@guideai/policies/budgets';
 import { loadSkills, skillsForPhase, renderSkillsAsContext } from '@guideai/skills';
 import { runPassK } from '@guideai/evals';
 import type { AIChunk, Chunk, PhaseChunk, SystemChunk } from '@guideai/shared/chunks';
@@ -131,6 +135,16 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
   };
 
   let previousWorker: RoutableAgent | null = null;
+  const budgetCfg = loadBudget(workspaceId);
+
+  // Helper to record token usage after each phase call. Centralised so pass@k
+  // and single-call paths share the same accounting.
+  const account = (model: string, tIn: number, tOut: number, workerId: string, phase: string) => {
+    recordUsage({
+      workspaceId, agentId: workerId, briefId, phase,
+      model, tokensIn: tIn, tokensOut: tOut,
+    });
+  };
 
   for (const phase of PHASE_ORDER) {
     const decision = route?.[phase];
@@ -146,7 +160,54 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
       });
     }
     previousWorker = worker;
-    const routing = routeModel({ phase, override: (worker.model as any) ?? undefined });
+    let routing = routeModel({ phase, override: (worker.model as any) ?? undefined });
+
+    // Budget + rate-limit gate. May downgrade the model tier, warn, or pause.
+    {
+      const evalCfgForGate = securityTagged && phase === 'review'
+        ? CAPS.evals.security
+        : CAPS.evals[phase as 'implement' | 'review'] ?? { k: 1, requireAgreement: 1 };
+      let currentTier = modelToTier(routing.tier as Tier);
+      let downgrades = 0;
+      while (downgrades < 3) {
+        const forecast = forecastPhaseCost({
+          tier: currentTier,
+          briefLength: brief.length,
+          artifactsLength: Object.values(artifacts).reduce((s, t) => s + (t?.length ?? 0), 0),
+          k: evalCfgForGate.k,
+        });
+        const usage = summarizeUsage(workspaceId, budgetCfg);
+        const outcome = checkBudget({ cfg: budgetCfg, usage, forecast, tier: currentTier });
+        if (outcome.action === 'ok') break;
+        if (outcome.action === 'warn') {
+          appendEvent(workspaceId, {
+            id: randomUUID(), ts: Date.now(), workspaceId, agentId,
+            kind: 'system', level: 'warn',
+            text: `budget warn (${phase}): ${outcome.reason}`,
+          });
+          break;
+        }
+        if (outcome.action === 'downgrade') {
+          appendEvent(workspaceId, {
+            id: randomUUID(), ts: Date.now(), workspaceId, agentId,
+            kind: 'system', level: 'warn',
+            text: `budget downgrade (${phase}): ${outcome.from} → ${outcome.to} · ${outcome.reason}`,
+          });
+          currentTier = outcome.to;
+          routing = { ...routing, tier: outcome.to } as typeof routing;
+          downgrades++;
+          continue;
+        }
+        // pause: stop the pipeline with a clear error.
+        appendEvent(workspaceId, {
+          id: randomUUID(), ts: Date.now(), workspaceId, agentId,
+          kind: 'system', level: 'error',
+          text: `budget pause (${phase}): ${outcome.reason} · resume at ${new Date(outcome.resumeAt).toLocaleTimeString()}`,
+        });
+        appendEvent(workspaceId, makePhaseChunk(workspaceId, agentId, briefId, phase, 'paused'));
+        throw new Error(`budget pause: ${outcome.reason}`);
+      }
+    }
     const phaseStartedAt = Date.now();
 
     // Phase metadata chunk is owned by CoS (the conductor).
@@ -209,6 +270,7 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
       const tokensIn = passK.attempts.reduce((s, a) => s + a.tokensIn, 0);
       const tokensOut = passK.attempts.reduce((s, a) => s + a.tokensOut, 0);
       totalIn += tokensIn; totalOut += tokensOut;
+      account(routing.tier, tokensIn, tokensOut, worker.id, phase);
 
       appendEvent(workspaceId, {
         id: randomUUID(), ts: Date.now(), workspaceId, agentId,
@@ -279,6 +341,7 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
     const tokensIn = result.chunks.filter((c): c is AIChunk => c.kind === 'ai').reduce((a, c) => a + (c.tokensIn ?? 0), 0);
     const tokensOut = result.chunks.filter((c): c is AIChunk => c.kind === 'ai').reduce((a, c) => a + (c.tokensOut ?? 0), 0);
     totalIn += tokensIn; totalOut += tokensOut;
+    account(routing.tier, tokensIn, tokensOut, worker.id, phase);
 
     const artifact = artifactPath(workspaceId, briefId, phase);
     const md = `# ${phase} — brief ${briefId}\n\n` +

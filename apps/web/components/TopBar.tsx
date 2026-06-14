@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Search, Activity, Zap, DollarSign, Skull } from 'lucide-react';
+import { Search, Activity, Zap, DollarSign, Skull, Gauge, Wallet } from 'lucide-react';
 import { useWorkspaceId } from './WorkspaceProvider';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { cn } from '../lib/cn';
@@ -14,6 +14,10 @@ interface AgentStats {
   tokensIn: number;
   tokensOut: number;
   usd: number;
+}
+interface BudgetState {
+  config: { dailyUsdCap?: number; tokensPer5hCap?: number; behavior: string };
+  usage:  { todayUsd: number; tokens5h: number; windowResetTs: number };
 }
 
 function fmtUsd(n: number) {
@@ -28,13 +32,15 @@ export function TopBar() {
   const [tokens, setTokens] = useState(0);
   const [usd, setUsd] = useState(0);
   const [activeAgents, setActiveAgents] = useState(0);
+  const [budget, setBudget] = useState<BudgetState | null>(null);
 
   useEffect(() => {
     const refresh = async () => {
       try {
-        const [ks, metrics] = await Promise.all([
+        const [ks, metrics, budgetResp] = await Promise.all([
           fetch('/api/killswitch/status').then((r) => r.json() as Promise<KillswitchStatus>).catch(() => ({ running: [] as KillswitchStatus['running'] })),
           fetch(`/api/workspaces/${workspaceId}/metrics`).then((r) => r.json()).catch(() => ({ agents: [] })),
+          fetch(`/api/workspaces/${workspaceId}/budget`).then((r) => r.json()).catch(() => null),
         ]);
         setRunning(ks.running?.length ?? 0);
         const agents = (metrics.agents ?? []) as AgentStats[];
@@ -42,12 +48,23 @@ export function TopBar() {
         setActiveAgents(live.length);
         setTokens(live.reduce((s, a) => s + (a.tokensIn ?? 0) + (a.tokensOut ?? 0), 0));
         setUsd(live.reduce((s, a) => s + (a.usd ?? 0), 0));
+        if (budgetResp?.usage) setBudget(budgetResp);
       } catch {}
     };
     refresh();
     const t = setInterval(refresh, 3000);
     return () => clearInterval(t);
   }, [workspaceId]);
+
+  function budgetTint(pct: number | null): 'idle' | 'live' | 'warn' | 'err' {
+    if (pct === null) return 'idle';
+    if (pct >= 90) return 'err';
+    if (pct >= 60) return 'warn';
+    return 'live';
+  }
+
+  const dailyPct = budget?.config.dailyUsdCap ? (budget.usage.todayUsd / budget.config.dailyUsdCap) * 100 : null;
+  const tokenPct = budget?.config.tokensPer5hCap ? (budget.usage.tokens5h / budget.config.tokensPer5hCap) * 100 : null;
 
   function openPalette() {
     window.dispatchEvent(new CustomEvent('guideai:open-palette'));
@@ -80,6 +97,24 @@ export function TopBar() {
           label="spend"
           value={fmtUsd(usd)}
         />
+        {budget && (
+          <Meter
+            icon={<Wallet size={12} />}
+            label="today"
+            value={dailyPct !== null
+              ? `${fmtUsd(budget.usage.todayUsd)} / ${fmtUsd(budget.config.dailyUsdCap!)}`
+              : fmtUsd(budget.usage.todayUsd)}
+            accent={budgetTint(dailyPct) as any}
+          />
+        )}
+        {budget && budget.config.tokensPer5hCap && (
+          <Meter
+            icon={<Gauge size={12} />}
+            label="5h"
+            value={`${budget.usage.tokens5h.toLocaleString()} / ${budget.config.tokensPer5hCap.toLocaleString()}`}
+            accent={budgetTint(tokenPct) as any}
+          />
+        )}
         {running > 0 && (
           <Meter
             icon={<Skull size={12} />}
@@ -113,7 +148,7 @@ function Meter({
   icon: React.ReactNode;
   label: string;
   value: string;
-  accent?: 'idle' | 'live' | 'warn';
+  accent?: 'idle' | 'live' | 'warn' | 'err';
   tail?: React.ReactNode;
 }) {
   return (
@@ -122,6 +157,7 @@ function Meter({
       accent === 'idle' && 'border-line/70 text-dim',
       accent === 'live' && 'border-accent/40 text-accent bg-accent/[0.04]',
       accent === 'warn' && 'border-warn/40 text-warn bg-warn/[0.04]',
+      accent === 'err'  && 'border-err/40 text-err bg-err/[0.06]',
     )}>
       {icon}
       <span className="text-dim2 text-[10px] uppercase tracking-wider">{label}</span>

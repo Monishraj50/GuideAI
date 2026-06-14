@@ -83,3 +83,25 @@ export const users = sqliteTable('users', {
   createdAt: integer('created_at').notNull(),
   lastLoginAt: integer('last_login_at'),
 });
+
+export const usageLog = sqliteTable('usage_log', {
+  id: text('id').primaryKey(),
+  workspaceId: text('workspace_id').notNull(),
+  agentId: text('agent_id'),
+  briefId: text('brief_id'),
+  phase: text('phase'),
+  model: text('model').notNull(),
+  tokensIn: integer('tokens_in').notNull().default(0),
+  tokensOut: integer('tokens_out').notNull().default(0),
+  costUsd: real('cost_usd').notNull().default(0),
+  ts: integer('ts').notNull(),
+});
+
+export const workspaceBudgets = sqliteTable('workspace_budgets', {
+  workspaceId: text('workspace_id').primaryKey(),
+  dailyUsdCap: real('daily_usd_cap'),
+  monthlyUsdCap: real('monthly_usd_cap'),
+  tokensPer5hCap: integer('tokens_per_5h_cap'),
+  behavior: text('behavior').notNull().default('downgrade'),
+  updatedAt: integer('updated_at').notNull(),
+});

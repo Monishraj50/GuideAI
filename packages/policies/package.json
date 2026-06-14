@@ -9,12 +9,14 @@
     ".": "./src/index.ts",
     "./caps": "./src/caps.ts",
     "./router": "./src/router.ts",
-    "./engine": "./src/engine.ts"
+    "./engine": "./src/engine.ts",
+    "./budgets": "./src/budgets.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@guideai/shared": "workspace:*"
+    "@guideai/shared": "workspace:*",
+    "drizzle-orm": "^0.36.4"
   }
 }
