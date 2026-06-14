@@ -58,6 +58,11 @@ function preview(c: Chunk): string {
   return JSON.stringify(c).slice(0, 120);
 }
 
+const ROUTING_RE = /^(routing plan:|dispatch:)/;
+function isRoutingNote(c: Chunk): boolean {
+  return c.kind === 'system' && !!c.text && ROUTING_RE.test(c.text);
+}
+
 export function EventFeed({ workspaceId }: { workspaceId: string }) {
   const [events, setEvents] = useState<Chunk[]>([]);
   const [connected, setConnected] = useState(false);
@@ -150,6 +155,7 @@ export function EventFeed({ workspaceId }: { workspaceId: string }) {
                 c.kind === 'ai'     && 'text-ink',
                 c.kind !== 'system' && c.kind !== 'ai' && 'text-ink2',
                 c.kind === 'system' && !c.level && 'text-dim',
+                isRoutingNote(c) && 'text-sonnet',
               )}>
                 {preview(c)}
               </span>

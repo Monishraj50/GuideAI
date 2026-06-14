@@ -164,8 +164,8 @@ export function OrgChart({ workspaceId }: { workspaceId: string }) {
                 </div>
                 <div className="mt-3 flex items-end gap-3">
                   <div className="flex-1 grid grid-cols-3 gap-2 text-xs">
-                    <Cell label="win" value={hasTasks ? `${Math.round(a.winRate * 100)}%` : '—'} />
-                    <Cell label="tasks" value={hasTasks ? `${a.tasksCompleted}` : '0'} />
+                    <Cell label="phases" value={hasTasks ? `${a.tasksCompleted}` : '0'} />
+                    <Cell label="tokens" value={hasTasks ? (a.tokensIn + a.tokensOut).toLocaleString() : '0'} />
                     <Cell label="$" value={fmtUsd(a.usd)} />
                   </div>
                   <Sparkline data={fakeSparkData(seed)} stroke={tint.stroke} className="opacity-90" />

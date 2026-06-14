@@ -356,3 +356,38 @@ The app now gates on Claude authentication before letting the user in.
 
 **Surfaced (Principle 10B):** SSR pre-hydration shows "connecting…" because `useAuth()` hasn't fetched `/api/auth/status` yet. First paint flashes the stub briefly before the form (or the app shell) appears. Acceptable for a local dev tool; a follow-up could read auth state via a cookie/middleware to skip the flash.
 
+---
+
+## Plan A — Dispatch to specialists (done 2026-06-14)
+
+Specialists in the roster now actually do work. Before this, every phase ran as CoS — the org chart's hired-agent cards never moved off zero.
+
+**Routing (`packages/orchestrator/src/routing.ts`):**
+- `scoreAgent(agent, phase, briefTokens)` — keyword overlap between the brief + agent identity (role, displayName, system prompt) and phase-specific keyword sets (research → analyst/strategist/pm, implement → developer/engineer/pro, review → reviewer/security, verify → qa/tester).
+- `routeRoster({brief, roster, cos, phases})` returns a `RouteDecision` per phase: `{agent, score, fallback, reason}`. Falls back to CoS when no specialist scores positive.
+
+**Pipeline (`phases.ts`):**
+- `runPipeline()` now accepts `route: Record<Phase, RouteDecision>`.
+- Each phase resolves the worker, builds a layered system prompt (`## Your role\n<persona>` + phase task + skills), uses the agent's `toolWhitelist` and `model` preference, and threads `worker.id` into both the adapter call and the chunk stream.
+- `PhaseResult` gained `workerAgentId / workerRole / workerDisplayName`.
+- Phase artifacts (`research.md`, …) record the worker in frontmatter: `_worker: Backend Developer (backend-developer) · model: sonnet · …_`.
+
+**CoS (`cos.ts`):**
+- Loads the workspace's live roster, builds the route, emits a single `routing plan: research→Backend Developer · plan→Backend Developer · implement→Backend Developer · review→Qa Expert · verify→Qa Expert` system chunk for visibility, then fires the pipeline.
+- `schema.tasks` rows are keyed by `workerAgentId` — `/org` metrics aggregate per specialist instead of dumping everything on CoS.
+
+**UI:**
+- `EventFeed` highlights `routing plan:` / `dispatch:` system notes in sonnet (purple) to make routing decisions visually distinct.
+- `OrgChart` cards swap their 3-stat row from `win/tasks/$` to `phases/tokens/$` so specialists with no win-rate data yet read meaningfully.
+
+**Verified end-to-end (guest mode):**
+- Brief: *"Build a small backend API endpoint to return health status. Add a QA pass."*
+- Feed: routing plan + 5 dispatch lines (`research/plan/implement → Backend Developer`, `review/verify → Qa Expert`) with keyword-match scores 6–26.
+- `schema.tasks`: 3 rows under backend-developer, 2 under qa-expert, **0 under CoS for this brief**.
+- `/org`: cards light up — Backend Developer (3 phases, 114↓/168↑), Qa Expert (2 phases, 66↓/97↑).
+- Artifact frontmatter on every `.md` records the worker.
+
+**Surfaced (Principle 10B):**
+- Scoring is heuristic. A brief mentioning "frontend" can route an implement phase to frontend-developer even if the actual work is backend — only by token coincidence. A judge-pass routing layer (extra agent picks workers) is a natural follow-up.
+- Specialists still call the runtime with their own `toolWhitelist`, but step 8's MCP-based real tool interception is still pending — until then they can't actually `Bash`/`Write`. Wiring `--permission-prompt-tool` to GuideAI's approval flow is the next step that fully unblocks "ship real code through your team."
+

@@ -9,6 +9,7 @@ import { CAPS, type Phase } from '@guideai/policies/caps';
 import { loadSkills, skillsForPhase, renderSkillsAsContext } from '@guideai/skills';
 import { runPassK } from '@guideai/evals';
 import type { AIChunk, Chunk, PhaseChunk, SystemChunk } from '@guideai/shared/chunks';
+import type { RoutableAgent, RouteDecision } from './routing.js';
 
 export const PHASE_ORDER: Phase[] = ['research', 'plan', 'implement', 'review', 'verify'];
 
@@ -58,12 +59,16 @@ function makePhaseChunk(workspaceId: string, agentId: string, briefId: string, p
 
 export interface RunPipelineArgs {
   workspaceId: string;
+  /** CoS — owns phase metadata events; also the fallback worker. */
   agentId: string;
   briefId: string;
   brief: string;
   cwd: string;
   /** When true, security-tagged phases (review) run pass@3. */
   securityTagged?: boolean;
+  /** Per-phase routing: agent that should actually run each phase. If absent
+   *  for a phase, the CoS (agentId above) runs it. */
+  route?: Record<Phase, RouteDecision>;
 }
 
 export interface PhaseResult {
@@ -76,6 +81,10 @@ export interface PhaseResult {
   durationMs: number;
   tokensIn: number;
   tokensOut: number;
+  /** Agent that actually ran the phase (may differ from CoS when dispatched). */
+  workerAgentId: string;
+  workerRole?: string;
+  workerDisplayName?: string;
   k?: number;            // > 1 only when pass@k was run
   passes?: number;
   verdict?: 'pass' | 'fail';
@@ -95,7 +104,7 @@ export interface PipelineResult {
  * context and writes a markdown file to the brief's artifact directory.
  */
 export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult> {
-  const { workspaceId, agentId, briefId, brief, cwd, securityTagged } = args;
+  const { workspaceId, agentId, briefId, brief, cwd, securityTagged, route } = args;
   ensureBriefDir(workspaceId, briefId);
 
   const skills = loadSkills();
@@ -116,10 +125,28 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
   let totalOut = 0;
   const startedAt = Date.now();
 
+  // Default route: every phase runs as CoS.
+  const defaultAgent: RoutableAgent = {
+    id: agentId, role: 'chief-of-staff', displayName: 'Chief of Staff',
+  };
+
   for (const phase of PHASE_ORDER) {
-    const routing = routeModel({ phase });
+    const decision = route?.[phase];
+    const worker: RoutableAgent = decision?.agent ?? defaultAgent;
+    const routing = routeModel({ phase, override: (worker.model as any) ?? undefined });
     const phaseStartedAt = Date.now();
+
+    // Phase metadata chunk is owned by CoS (the conductor).
     appendEvent(workspaceId, makePhaseChunk(workspaceId, agentId, briefId, phase, 'started'));
+
+    // Surface the dispatch decision so the feed shows who's working.
+    if (decision && !decision.fallback) {
+      appendEvent(workspaceId, {
+        id: randomUUID(), ts: Date.now(), workspaceId, agentId,
+        kind: 'system', level: 'info',
+        text: `dispatch: ${phase} → ${worker.displayName} (${worker.role}) · ${decision.reason}`,
+      });
+    }
 
     const context = [
       '## Brief',
@@ -128,7 +155,14 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
     ].join('\n\n');
 
     const skillsContext = renderSkillsAsContext(skillsForPhase(skills, phase));
-    const systemPrompt = [PHASE_PROMPT[phase], skillsContext].filter(Boolean).join('\n\n');
+    // System prompt layering: specialist persona (if any) → phase task → skills.
+    const personaBlock = worker.systemPrompt && worker.role !== 'chief-of-staff'
+      ? `## Your role\n\nYou are **${worker.displayName}** (${worker.role}).\n\n${worker.systemPrompt.slice(0, 1500)}`
+      : '';
+    const systemPrompt = [personaBlock, PHASE_PROMPT[phase], skillsContext].filter(Boolean).join('\n\n');
+    const workerTools = worker.toolWhitelist && worker.toolWhitelist.length > 0
+      ? worker.toolWhitelist
+      : READ_ONLY_TOOLS;
 
     // pass@k for security-tagged review. Default elsewhere is k=1 which we
     // run as a single direct call (avoids spinning up the runner for nothing).
@@ -145,8 +179,8 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
         k, requireAgreement: evalCfg.requireAgreement,
         attempt: async () => {
           const res = await resolveActiveAdapter().runOnce({
-            agentId, workspaceId, cwd, systemPrompt,
-            allowedTools: READ_ONLY_TOOLS, model: routing.tier,
+            agentId: worker.id, workspaceId, cwd, systemPrompt,
+            allowedTools: workerTools, model: routing.tier,
           }, context);
           const text = res.chunks.filter((c): c is AIChunk => c.kind === 'ai').map((c) => c.text).join('\n');
           const tIn = res.chunks.filter((c): c is AIChunk => c.kind === 'ai').reduce((s, c) => s + (c.tokensIn ?? 0), 0);
@@ -173,7 +207,7 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
       const attemptsBlock = passK.attempts.map((a, i) =>
         `### attempt ${i + 1} (${a.passed ? 'pass' : 'fail'}) · ${a.tokensIn}↓/${a.tokensOut}↑\n\n${a.text.trim() || '(empty)'}`).join('\n\n---\n\n');
       const md = `# ${phase} — brief ${briefId}\n\n` +
-        `_model: ${routing.tier} · pass@${k} · verdict: ${passK.verdict} (${passK.passes}/${k}) · tokens: ${tokensIn} in / ${tokensOut} out_\n\n` +
+        `_worker: ${worker.displayName} (${worker.role}) · model: ${routing.tier} · pass@${k} · verdict: ${passK.verdict} (${passK.passes}/${k}) · tokens: ${tokensIn} in / ${tokensOut} out_\n\n` +
         `## canonical (longest passing)\n\n${passK.canonical.text.trim() || '(empty)'}\n\n---\n\n${attemptsBlock}\n`;
       fs.writeFileSync(artifact, md);
 
@@ -186,6 +220,7 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
         endedAt: phaseEndedAt,
         durationMs: phaseEndedAt - phaseStartedAt,
         tokensIn, tokensOut,
+        workerAgentId: worker.id, workerRole: worker.role, workerDisplayName: worker.displayName,
         k, passes: passK.passes, verdict: passK.verdict,
       });
       appendEvent(workspaceId, makePhaseChunk(workspaceId, agentId, briefId, phase, 'completed', artifact));
@@ -197,11 +232,11 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
     try {
       result = await resolveActiveAdapter().runOnce(
         {
-          agentId,
+          agentId: worker.id,
           workspaceId,
           cwd,
           systemPrompt,
-          allowedTools: READ_ONLY_TOOLS,
+          allowedTools: workerTools,
           model: routing.tier,
         },
         context,
@@ -211,7 +246,7 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
         id: randomUUID(),
         ts: Date.now(),
         workspaceId,
-        agentId,
+        agentId: worker.id,
         kind: 'system',
         level: 'error',
         text: `phase ${phase} failed to start: ${err?.message ?? err}`,
@@ -234,7 +269,7 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
 
     const artifact = artifactPath(workspaceId, briefId, phase);
     const md = `# ${phase} — brief ${briefId}\n\n` +
-      `_model: ${routing.tier} · tokens: ${tokensIn} in / ${tokensOut} out_\n\n` +
+      `_worker: ${worker.displayName} (${worker.role}) · model: ${routing.tier} · tokens: ${tokensIn} in / ${tokensOut} out_\n\n` +
       `${aiText.trim() || '(no output)'}\n`;
     fs.writeFileSync(artifact, md);
 
@@ -250,6 +285,9 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
       durationMs: phaseEndedAt - phaseStartedAt,
       tokensIn,
       tokensOut,
+      workerAgentId: worker.id,
+      workerRole: worker.role,
+      workerDisplayName: worker.displayName,
     });
 
     appendEvent(workspaceId, makePhaseChunk(workspaceId, agentId, briefId, phase, 'completed', artifact));

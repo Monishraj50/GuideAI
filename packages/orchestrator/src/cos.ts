@@ -4,6 +4,7 @@ import { paths } from '@guideai/shared/paths';
 import { getDb, schema } from '@guideai/shared/db';
 import type { UserChunk, ToolChunk, SystemChunk } from '@guideai/shared/chunks';
 import { runPipeline, PHASE_ORDER } from './phases.js';
+import { routeRoster, type RoutableAgent } from './routing.js';
 import { promoteSkillFromTrace } from '@guideai/skills';
 import { evaluateTool, loadPolicies } from '@guideai/policies/engine';
 import { eq } from 'drizzle-orm';
@@ -15,6 +16,9 @@ const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 function now() { return Date.now(); }
 function base(workspaceId: string, agentId?: string) {
   return { id: randomUUID(), ts: now(), workspaceId, ...(agentId ? { agentId } : {}) };
+}
+function safeArray(s: string): string[] {
+  try { const v = JSON.parse(s); return Array.isArray(v) ? v : []; } catch { return []; }
 }
 
 async function ensureWorkspace(workspaceId: string, name?: string) {
@@ -87,20 +91,46 @@ export async function submitBrief(args: {
 
   const cwd = paths.agentCwd(workspaceId, agentId);
 
+  // Build the dispatch plan: each phase → specialist (or CoS fallback).
+  const rosterRows = db.select().from(schema.agents).all()
+    .filter((a) => a.workspaceId === workspaceId && a.status !== 'retired');
+  const roster: RoutableAgent[] = rosterRows.map((a) => ({
+    id: a.id, role: a.role, displayName: a.displayName,
+    systemPrompt: a.systemPrompt,
+    toolWhitelist: safeArray(a.toolWhitelist),
+    model: a.model,
+  }));
+  const cosLite: RoutableAgent = {
+    id: agentId, role: 'chief-of-staff', displayName: 'Chief of Staff',
+  };
+  const route = routeRoster({ brief: body, roster, cos: cosLite, phases: PHASE_ORDER });
+
+  // Surface the route plan in the feed as a single system note for visibility.
+  const planLine = PHASE_ORDER.map((p) => {
+    const d = route[p]!;
+    return d.fallback ? `${p}→CoS` : `${p}→${d.agent.displayName}`;
+  }).join(' · ');
+  appendEvent(workspaceId, {
+    ...base(workspaceId, agentId),
+    kind: 'system', level: 'info',
+    text: `routing plan: ${planLine}`,
+  } as SystemChunk);
+
   // Fire-and-forget the pipeline. Any failure is surfaced in the event stream
   // via runPipeline()'s internal error chunk; we also log it here for the
   // server console.
   void (async () => {
     try {
       const pipelineResult = await runPipeline({
-        workspaceId, agentId, briefId, brief: body, cwd, securityTagged,
+        workspaceId, agentId, briefId, brief: body, cwd, securityTagged, route,
       });
 
       for (const r of pipelineResult.phaseResults) {
         db.insert(schema.tasks).values({
           id: `${briefId}-${r.phase}`,
           briefId,
-          agentId,
+          // Attribute the task row to whoever actually ran this phase.
+          agentId: r.workerAgentId,
           phase: r.phase,
           status: 'completed',
           artifactPath: r.artifactPath,
