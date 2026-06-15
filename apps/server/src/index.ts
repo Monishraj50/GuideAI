@@ -26,6 +26,8 @@ import { registerDeliverableRoutes } from './routes/deliverables.js';
 import { registerGithubIntegrationRoutes } from './routes/githubIntegration.js';
 import { registerWorkspaceRepoRoutes } from './routes/workspaceRepo.js';
 import { registerValidationRoutes } from './routes/validation.js';
+import { registerOpenAIIntegrationRoutes } from './routes/openaiIntegration.js';
+import { registerSecondOpinionRoutes } from './routes/secondOpinion.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
 const app = Fastify({ logger: true });
@@ -63,6 +65,8 @@ registerDeliverableRoutes(app);
 registerGithubIntegrationRoutes(app);
 registerWorkspaceRepoRoutes(app);
 registerValidationRoutes(app);
+registerOpenAIIntegrationRoutes(app);
+registerSecondOpinionRoutes(app);
 
 app.listen({ port: PORT, host: '0.0.0.0' })
   .then(() => app.log.info(`GuideAI server up on :${PORT} (state: ${paths.home})`))

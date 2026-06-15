@@ -17,7 +17,8 @@
     "./deliverables": "./src/deliverables.ts",
     "./github": "./src/github.ts",
     "./critique": "./src/critique.ts",
-    "./validate": "./src/validate.ts"
+    "./validate": "./src/validate.ts",
+    "./secondOpinion": "./src/secondOpinion.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
@@ -29,6 +30,7 @@
     "@guideai/policies": "workspace:*",
     "@guideai/runtime-claude": "workspace:*",
     "@guideai/runtime-core": "workspace:*",
+    "@guideai/runtime-openai": "workspace:*",
     "@guideai/shared": "workspace:*",
     "@guideai/skills": "workspace:*",
     "drizzle-orm": "^0.36.4"

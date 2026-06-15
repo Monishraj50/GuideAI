@@ -263,6 +263,7 @@ function main() {
     "ALTER TABLE plans ADD COLUMN critiques_run_at INTEGER",
     "ALTER TABLE workspaces ADD COLUMN target_url TEXT",
     "ALTER TABLE workspaces ADD COLUMN target_url_allowlist TEXT",
+    "ALTER TABLE workspaces ADD COLUMN second_opinion_enabled INTEGER NOT NULL DEFAULT 0",
   ]) {
     try { db.exec(stmt); } catch (e: any) {
       if (!/duplicate column/i.test(String(e?.message ?? ''))) throw e;

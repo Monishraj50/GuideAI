@@ -11,6 +11,7 @@ import {
   type Tier,
 } from '@guideai/policies/budgets';
 import { markPhaseComplete, type WorkPhase } from './wbs.js';
+import { setupCrossVendor, type CrossVendorContext } from './secondOpinion.js';
 import { loadSkills, skillsForPhase, renderSkillsAsContext } from '@guideai/skills';
 import { runPassK } from '@guideai/evals';
 import type { AIChunk, Chunk, PhaseChunk, SystemChunk } from '@guideai/shared/chunks';
@@ -250,16 +251,41 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
         kind: 'system', level: 'info',
         text: `phase ${phase} running pass@${k} (security-tagged)`,
       });
+      // Cross-vendor mix: when enabled, swap one attempt for OpenAI.
+      const crossVendor = setupCrossVendor({
+        workspaceId, k,
+        isSecurityReview: phase === 'review' && !!securityTagged,
+      });
+      if (crossVendor) {
+        appendEvent(workspaceId, {
+          id: randomUUID(), ts: Date.now(), workspaceId, agentId,
+          kind: 'system', level: 'info',
+          text: `second opinion: ${crossVendor.reason}${crossVendor.mock ? ' [mock]' : ''}`,
+        });
+      }
+      const attemptProvider: ('claude' | 'openai')[] = [];
       const passK = await runPassK<Chunk[]>({
         k, requireAgreement: evalCfg.requireAgreement,
-        attempt: async () => {
-          const res = await resolveActiveAdapter().runOnce({
-            agentId: worker.id, workspaceId, cwd, systemPrompt,
+        attempt: async (i: number) => {
+          const useOpenAI = !!crossVendor?.crossVendorIdx.has(i);
+          attemptProvider[i] = useOpenAI ? 'openai' : 'claude';
+          const adapter = useOpenAI ? crossVendor!.adapter : resolveActiveAdapter();
+          const res = await adapter.runOnce({
+            agentId: useOpenAI ? `${worker.id}-openai` : worker.id,
+            workspaceId, cwd, systemPrompt,
             allowedTools: workerTools, model: routing.tier,
           }, context);
           const text = res.chunks.filter((c): c is AIChunk => c.kind === 'ai').map((c) => c.text).join('\n');
           const tIn = res.chunks.filter((c): c is AIChunk => c.kind === 'ai').reduce((s, c) => s + (c.tokensIn ?? 0), 0);
           const tOut = res.chunks.filter((c): c is AIChunk => c.kind === 'ai').reduce((s, c) => s + (c.tokensOut ?? 0), 0);
+          // Account the cross-vendor call separately so the ledger reflects it.
+          if (useOpenAI) {
+            recordUsage({
+              workspaceId, agentId: `${worker.id}-openai`, briefId,
+              phase: `${phase}:openai`,
+              model: routing.tier, tokensIn: tIn, tokensOut: tOut,
+            });
+          }
           return { text, tokensIn: tIn, tokensOut: tOut, durationMs: res.durationMs, passthrough: res.chunks };
         },
         parallel: true,
@@ -273,17 +299,37 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
       totalIn += tokensIn; totalOut += tokensOut;
       account(routing.tier, tokensIn, tokensOut, worker.id, phase);
 
+      // Provider-aware verdict breakdown: who passed, who refused.
+      const breakdownParts: string[] = [];
+      if (crossVendor) {
+        const byProv = (prov: 'claude' | 'openai') => {
+          const idxs = passK.attempts.map((_, i) => i).filter((i) => attemptProvider[i] === prov);
+          if (idxs.length === 0) return null;
+          const pass = idxs.filter((i) => passK.attempts[i]?.passed).length;
+          return `${prov}: ${pass}/${idxs.length}`;
+        };
+        const c = byProv('claude'); const o = byProv('openai');
+        if (c) breakdownParts.push(c);
+        if (o) breakdownParts.push(o);
+      }
+      const breakdown = breakdownParts.length ? ` · ${breakdownParts.join(' + ')}` : '';
       appendEvent(workspaceId, {
         id: randomUUID(), ts: Date.now(), workspaceId, agentId,
         kind: 'system', level: passK.verdict === 'pass' ? 'info' : 'warn',
-        text: `pass@${k} verdict: ${passK.verdict} · ${passK.passes}/${k} attempts passed (req ${evalCfg.requireAgreement})`,
+        text: `pass@${k} verdict: ${passK.verdict} · ${passK.passes}/${k} attempts passed (req ${evalCfg.requireAgreement})${breakdown}`,
       });
 
       const artifact = artifactPath(workspaceId, briefId, phase);
-      const attemptsBlock = passK.attempts.map((a, i) =>
-        `### attempt ${i + 1} (${a.passed ? 'pass' : 'fail'}) · ${a.tokensIn}↓/${a.tokensOut}↑\n\n${a.text.trim() || '(empty)'}`).join('\n\n---\n\n');
+      const attemptsBlock = passK.attempts.map((a, i) => {
+        const prov = attemptProvider[i] ?? 'claude';
+        return `### attempt ${i + 1} (${a.passed ? 'pass' : 'fail'}) · provider: ${prov} · ${a.tokensIn}↓/${a.tokensOut}↑\n\n${a.text.trim() || '(empty)'}`;
+      }).join('\n\n---\n\n');
+      const crossVendorLine = crossVendor
+        ? `_cross-vendor: ${breakdownParts.join(' + ')}${crossVendor.mock ? ' (mock)' : ''}_\n\n`
+        : '';
       const md = `# ${phase} — brief ${briefId}\n\n` +
         `_worker: ${worker.displayName} (${worker.role}) · model: ${routing.tier} · pass@${k} · verdict: ${passK.verdict} (${passK.passes}/${k}) · tokens: ${tokensIn} in / ${tokensOut} out_\n\n` +
+        crossVendorLine +
         `## canonical (longest passing)\n\n${passK.canonical.text.trim() || '(empty)'}\n\n---\n\n${attemptsBlock}\n`;
       fs.writeFileSync(artifact, md);
 

@@ -7,6 +7,7 @@ export const workspaces = sqliteTable('workspaces', {
   createdAt: integer('created_at').notNull(),
   targetUrl: text('target_url'),
   targetUrlAllowlist: text('target_url_allowlist'),  // JSON array of origins
+  secondOpinionEnabled: integer('second_opinion_enabled').notNull().default(0),
 });
 
 export const validationRuns = sqliteTable('validation_runs', {

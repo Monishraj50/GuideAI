@@ -1,0 +1,19 @@
+{
+  "name": "@guideai/runtime-openai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./adapter": "./src/adapter.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@guideai/runtime-core": "workspace:*",
+    "@guideai/shared": "workspace:*"
+  }
+}

@@ -980,3 +980,67 @@ The first GuideAI surface that **actually runs** the user's app instead of just 
 - **Tests rot**. The persisted script is a snapshot — selectors like `button[data-test=submit]` will break if the user renames `data-test`. No self-healing today; the user would re-run validation against a fresh brief to regenerate. A future "self-healing tests" pass would re-prompt when a step fails to find its target.
 - **Auto-validate respects Phase 8A's critic gate**. If critics block dispatch, no brief is submitted, so the validation hook doesn't fire. Confirmed during the smoke: had to force-dispatch through the CEO `needs-revision` before the pipeline + auto-validate would run.
 - **Same-machine assumption**. The `target_url` must be reachable from the GuideAI server process. For local dev, that's `localhost`. For a hosted GuideAI, it's whatever the user's app is running at. We don't tunnel into the user's machine.
+
+---
+
+## Phase 9 — Cross-vendor second opinion (OpenAI adapter for review pass@k)
+
+Security-tagged briefs already ran review at pass@3, but all 3 attempts came from the same model family (Claude). Phase 9 swaps one attempt for **OpenAI** so the verdict reflects agreement across vendors, not just within Claude. Off by default — both a per-user OpenAI key AND a per-workspace toggle are required. Inspired by gstack's `/codex` skill (independent second opinion), wired through the existing `RuntimeAdapter` interface that was scaffolded back in step 13.
+
+**Schema (`packages/shared/src/db/init.ts` + `schema.ts`):**
+- `workspaces.second_opinion_enabled INTEGER NOT NULL DEFAULT 0` (idempotent ALTER).
+
+**New package `packages/runtime-openai/`** — drop-in `RuntimeAdapter` (id `'codex'`, slotting into the existing picker stub):
+- `makeOpenAIAdapter({apiKey, overrides?})` factory that closes over a key provider so the same instance survives session/key changes.
+- `runOnce()` calls the **OpenAI chat completions API** via raw `fetch` with `Authorization: Bearer …`, 60s timeout, structured error returned as a system chunk on the run.
+- `spawn()` deliberately throws — pass@k is one-shot per attempt, no streaming/interactive needed for the v1 scope.
+- `MockOpenAIAdapter` exported for guest mode / no-key fallback: deterministic "pass" review fixture, same chunk shape.
+- `DEFAULT_MODEL_FOR_TIER`: `haiku → gpt-5-mini`, `sonnet → gpt-5`, `opus → gpt-5`. Per-user overrides available.
+- `~/.guideai/integrations/openai.json` storage (chmod 600, keyed by username, same shape as the Claude + GitHub integrations).
+
+**Module `packages/orchestrator/src/secondOpinion.ts`:**
+- `setupCrossVendor({workspaceId, k, isSecurityReview})` returns `{adapter, crossVendorIdx, mock, reason}` or `null` when not enabled / not usable.
+- Routing: **reserve the LAST attempt index for OpenAI**. k=3 → `[claude, claude, openai]` (2/3 self-consistency + 1/3 cross-vendor sanity check).
+- Falls back to `MockOpenAIAdapter` when toggle is on but no key on file — keeps the codepath exercised in guest/dev environments instead of silently dropping back to all-Claude.
+
+**Pipeline integration (`packages/orchestrator/src/phases.ts`):**
+- The pass@k branch now consults `setupCrossVendor()` and picks `crossVendor.adapter` for any index in `crossVendorIdx`.
+- Each attempt records its provider via an in-scope `attemptProvider[i]` array.
+- Cross-vendor OpenAI tokens are recorded in `usage_log` separately under phase `review:openai` so the Phase 0 HUD pills + cost report reflect them distinctly from Claude usage.
+- **Verdict event** gets an extra breakdown: `pass@3 verdict: pass · 3/3 attempts passed (req 3) · claude: 2/2 + openai: 1/1`.
+- **Artifact markdown** gets:
+  - A `_cross-vendor: claude: X/Y + openai: A/B (mock?)_` line under the header
+  - `provider: claude|openai` annotation on each attempt block
+
+**Server (`apps/server/src/routes/`):**
+- `openaiIntegration.ts`:
+  - `GET /api/integrations/openai` → `{apiKeySet, apiKeyHint, modelOverrides, ready}`
+  - `PUT /api/integrations/openai` body `{apiKey?, modelOverrides?}`
+  - `DELETE /api/integrations/openai`
+- `secondOpinion.ts`:
+  - `GET /api/workspaces/:id/second-opinion` → `{enabled}`
+  - `PUT /api/workspaces/:id/second-opinion` body `{enabled}`
+
+**UI:**
+- `apps/web/app/settings/OpenAIIntegration.tsx` — new card under the GitHub integration. Sparkles icon, "ready" pill, API key input with last-4 hint, 3 model-override inputs (haiku/sonnet/opus) with sensible placeholders, save + clear actions.
+- `apps/web/app/projects/[id]/SecondOpinionToggle.tsx` — compact switch card at the top of the project page. Tints:
+  - **Accent + glow** when both toggle is on AND a real key is configured
+  - **Warn** when toggle is on but no key (will fall back to mock)
+  - **Idle** when off
+  Shows the API key hint when fully armed; explains the mock fallback when not.
+
+**Verified end-to-end (`p9-test`):**
+1. ✅ Initial state: `apiKeySet=false`, `secondOpinionEnabled=false`.
+2. ✅ Toggle PUT flips the workspace flag (default off → on).
+3. ✅ Security-tagged brief (`securityTagged: true` in submitBrief) → review phase runs pass@3.
+4. ✅ Event feed shows `second opinion: attempt #3 routed to OpenAI MOCK (no API key on file) [mock]`, `[openai-mock] running cross-vendor review`, and the new verdict line `pass@3 verdict: pass · 3/3 attempts passed (req 3) · claude: 2/2 + openai: 1/1`.
+5. ✅ `review.md` artifact contains `_cross-vendor: claude: 2/2 + openai: 1/1 (mock)_` and each attempt block is labelled `provider: claude` or `provider: openai`. The OpenAI attempt's body is the mock fixture's "Independent review (cross-vendor)" text.
+6. ✅ PUT API key (`sk-test-fake-key-1234`) → `apiKeySet=true`, `hint=…1234`, `ready=true`, file written with mode `rw-------` (0o600).
+7. ✅ DELETE API key cleanly removes secret, preserves user record.
+
+**Surfaced (Principle 10B):**
+- **Pricing is Claude-tier**. The budget governor's `tierCost` table is only Claude-priced (`haiku $1/$5`, `sonnet $3/$15`, `opus $15/$75` per 1M tokens). OpenAI attempts use the same table — so a `gpt-5` call is billed as Claude `sonnet`, which is in the right order of magnitude but not exact. A future tweak: model-to-vendor pricing table indexed by both provider + tier.
+- **Only review phase is cross-vendor**. Discovery panelists, plan critique, slide-deck synthesis, explainer, and validation script composition all still go through whichever `resolveActiveAdapter()` returns (Claude). Wider rollout is a routing-table edit when we want it.
+- **No semantic agreement check**. Pass@k still uses the loose "text length ≥ 30 chars" predicate from the evals package — so OpenAI's "Verdict: PASS." block always passes the predicate even if it actually disagrees with Claude. Adding a judge-panel pass that reads each attempt's text and votes on agreement is the next step here.
+- **No streaming from the OpenAI adapter**. `spawn()` throws by design. If we ever want OpenAI to drive a phase as the primary worker, we'd need streaming + an interactive `send/onEvent` impl — the chat completions API supports `stream: true` but the work to thread it through is non-trivial.
+- **One-shot routing only**. `crossVendorIdx = Set([k-1])` is hardcoded. If you wanted "claude × 2 + openai × 2" (k=4) or "claude × 1 + openai × 1 + gemini × 1" (k=3 with 3 vendors), that's a small routing-table addition; the rest of the plumbing accepts it.

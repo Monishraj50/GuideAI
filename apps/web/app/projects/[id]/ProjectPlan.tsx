@@ -13,6 +13,7 @@ import { Dashboard } from './Dashboard';
 import { Deliverables } from './Deliverables';
 import { RepoSection } from './RepoSection';
 import { Validation } from './Validation';
+import { SecondOpinionToggle } from './SecondOpinionToggle';
 
 interface PlanResp {
   workspace: { id: string; name: string; autonomyMode: string; createdAt: number };
@@ -97,6 +98,9 @@ export function ProjectPlan({ workspaceId }: { workspaceId: string }) {
 
       {/* Intake + discovery round-table */}
       <IntakeSection workspaceId={workspaceId} />
+
+      {/* Cross-vendor review toggle (Phase 9) */}
+      <SecondOpinionToggle workspaceId={workspaceId} />
 
       {/* Plan review + hire dispatch */}
       <PlanReview workspaceId={workspaceId} />
