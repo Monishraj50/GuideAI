@@ -12,8 +12,8 @@ const inter = Inter({ subsets: ['latin'], variable: '--font-inter', display: 'sw
 const mono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono', display: 'swap' });
 
 export const metadata: Metadata = {
-  title: 'GuideAI — Mission Control',
-  description: 'Multi-agent company platform.',
+  title: 'Atrium.AI — Mission Control',
+  description: 'Your AI workplace. Brief your team. Review their work. Ship faster.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

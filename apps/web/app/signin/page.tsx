@@ -1,7 +1,7 @@
 import { SignInClient } from './SignInClient';
 
 export const metadata = {
-  title: 'GuideAI — Sign in',
+  title: 'Atrium.AI — Sign in',
 };
 
 export default function SignInPage() {

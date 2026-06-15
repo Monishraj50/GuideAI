@@ -3,10 +3,11 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  Sparkles, User, Lock, Ghost, CheckCircle2, AlertTriangle, Loader2,
+  User, Lock, Ghost, CheckCircle2, AlertTriangle, Loader2,
   ArrowRight, LogIn, UserPlus,
 } from 'lucide-react';
 import { useAuth } from '../../components/AuthProvider';
+import { AtriumMark } from '../../components/AtriumMark';
 import { cn } from '../../lib/cn';
 
 type Mode = 'signin' | 'signup' | 'guest';
@@ -61,9 +62,9 @@ export function SignInClient() {
         <div className="relative">
           <div className="flex items-center gap-2 mb-6">
             <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-accent to-sonnet flex items-center justify-center shadow-glow">
-              <Sparkles size={16} strokeWidth={2.4} className="text-bg" />
+              <AtriumMark size={19} pulse className="text-bg" />
             </div>
-            <span className="text-ink text-lg font-semibold tracking-tight">GuideAI</span>
+            <span className="text-ink text-lg font-semibold tracking-tight">Atrium.AI</span>
           </div>
           <h2 className="text-2xl font-semibold tracking-tight text-ink leading-snug max-w-xs">
             Your company,<br />run by agents.

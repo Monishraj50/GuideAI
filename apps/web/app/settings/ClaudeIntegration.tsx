@@ -55,7 +55,7 @@ export function ClaudeIntegration() {
   async function connectCli() {
     if (!state?.cliDetected) return;
     if (!confirm(
-      `Connect GuideAI to your local Claude CLI session?\n\nVersion: ${state.cliVersion ?? 'detected'}\n\nBriefs will execute against the credentials and subscription of whoever is currently logged in via \`claude /login\`. You can disconnect at any time.`,
+      `Connect Atrium to your local Claude CLI session?\n\nVersion: ${state.cliVersion ?? 'detected'}\n\nBriefs will execute against the credentials and subscription of whoever is currently logged in via \`claude /login\`. You can disconnect at any time.`,
     )) return;
     setBusy('cli-connect');
     try {
@@ -98,7 +98,7 @@ export function ClaudeIntegration() {
   }
 
   async function clearKey() {
-    if (!confirm('Remove stored Anthropic API key? GuideAI will fall back to the connected CLI session if any.')) return;
+    if (!confirm('Remove stored Anthropic API key? Atrium will fall back to the connected CLI session if any.')) return;
     setBusy('clear');
     try {
       const r = await fetch('/api/integrations/claude/apikey', { method: 'DELETE' });
@@ -324,7 +324,7 @@ export function ClaudeIntegration() {
             )}
           </div>
           <div className="text-dim2 text-[10px] mt-2">
-            Stored in <code className="font-mono text-ink2">~/.guideai/integrations/claude.json</code> · chmod 600. Never sent to GuideAI servers.
+            Stored in <code className="font-mono text-ink2">~/.guideai/integrations/claude.json</code> · chmod 600. Never leaves your machine.
           </div>
         </div>
       </div>
