@@ -396,6 +396,20 @@ export async function approvePlan(args: {
     return plan;  // status stays 'draft', UI shows the critique cards
   }
 
+  // 0b) Over-budget gate. If the synthesizer's verdict is `over-budget` (cost ×
+  // buffer exceeds the user's hint), block dispatch until the user either
+  // raises the budget, trims scope, or explicitly force-dispatches.
+  if (plan.synthesis.costVerdict === 'over-budget' && !args.forceDispatch) {
+    const unit = intake?.budgetHintUnit ?? 'USD';
+    const hint = intake?.budgetHintUsd != null
+      ? `${intake.budgetHintUsd.toLocaleString()} ${unit}`
+      : '(no budget set)';
+    appendEvent(plan.workspaceId, sys(plan.workspaceId,
+      `plan ${plan.id} blocked: estimated ~$${plan.synthesis.costEstimateUsd?.toFixed(2) ?? '?'} (× ~30% buffer) exceeds budget ${hint} · trim scope or raise budget, or force-dispatch`,
+      'warn'));
+    return plan;
+  }
+
   // 1) Hires.
   const preview = previewHires({
     workspaceId: plan.workspaceId,

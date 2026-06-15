@@ -288,6 +288,7 @@ function main() {
     "ALTER TABLE workspaces ADD COLUMN target_url_allowlist TEXT",
     "ALTER TABLE workspaces ADD COLUMN second_opinion_enabled INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE workspaces ADD COLUMN memory_share TEXT NOT NULL DEFAULT 'read-only'",
+    "ALTER TABLE project_intakes ADD COLUMN budget_hint_unit TEXT NOT NULL DEFAULT 'USD'",
   ]) {
     try { db.exec(stmt); } catch (e: any) {
       if (!/duplicate column/i.test(String(e?.message ?? ''))) throw e;

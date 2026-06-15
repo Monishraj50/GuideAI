@@ -16,10 +16,15 @@ function slugify(input: string): string {
 }
 
 export function registerWorkspaceRoutes(app: FastifyInstance) {
-  // List all workspaces with rich summaries for the /projects view.
-  app.get('/api/workspaces', async () => {
+  // List workspaces with rich summaries for the /projects view.
+  // Archived workspaces are hidden by default; pass ?includeArchived=1 to
+  // include them (e.g. for a future "show archived" UI).
+  app.get<{ Querystring: { includeArchived?: string } }>(
+    '/api/workspaces', async (req) => {
     const db = getDb();
+    const includeArchived = req.query.includeArchived === '1' || req.query.includeArchived === 'true';
     const workspaces = db.select().from(schema.workspaces).all()
+      .filter((w) => includeArchived || w.autonomyMode !== 'archived')
       .sort((a, b) => b.createdAt - a.createdAt);
 
     const summaries = await Promise.all(workspaces.map(async (w) => {
@@ -60,14 +65,33 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
   });
 
   // Create a new workspace. Body: { name }; id derived from slug.
+  //
+  // Conflict semantics:
+  //   - id taken by an ACTIVE workspace → 409 (true collision).
+  //   - id taken only by ARCHIVED workspaces → auto-suffix (`-2`, `-3`, …) so
+  //     the user can reuse the name without losing the archived data on disk.
   app.post<{ Body: { name: string } }>('/api/workspaces', async (req, reply) => {
     const name = (req.body?.name ?? '').toString().trim();
     if (!name) { reply.code(400); return { error: 'name is required' }; }
-    const id = slugify(name);
+    const base = slugify(name);
 
     const db = getDb();
-    const exists = db.select().from(schema.workspaces).where(eq(schema.workspaces.id, id)).all()[0];
-    if (exists) { reply.code(409); return { error: `workspace "${id}" already exists` }; }
+    const rowFor = (slug: string) =>
+      db.select().from(schema.workspaces).where(eq(schema.workspaces.id, slug)).all()[0];
+
+    // Hard-collision: an ACTIVE workspace owns this slug.
+    const taken = rowFor(base);
+    if (taken && taken.autonomyMode !== 'archived') {
+      reply.code(409); return { error: `workspace "${base}" already exists` };
+    }
+
+    // Walk a suffix counter until we find an unused (or only-archived-elsewhere) slug.
+    let id = base;
+    let n = 2;
+    while (rowFor(id)) {
+      id = `${base}-${n++}`;
+      if (n > 100) { reply.code(409); return { error: `too many archived workspaces named "${base}"` }; }
+    }
 
     db.insert(schema.workspaces).values({
       id, name,

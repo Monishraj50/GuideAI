@@ -69,7 +69,7 @@ export function SignInClient() {
             Your company,<br />run by agents.
           </h2>
           <p className="text-dim text-sm mt-3 max-w-sm">
-            You&apos;re the boss. Brief them. Review their work. Ship faster than ever.
+            You&apos;re in charge. Brief them. Review their work. Ship faster than ever.
           </p>
         </div>
         <ul className="relative space-y-2 text-xs text-dim">

@@ -12,12 +12,24 @@ import { cn } from '../../../lib/cn';
 type PlanningMode = 'auto' | 'assisted' | 'manual';
 type HireMode = 'auto' | 'manual' | 'hybrid';
 
+type BudgetUnit = 'USD' | 'EUR' | 'GBP' | 'INR' | 'JPY' | 'tokens';
+type Currency = Exclude<BudgetUnit, 'tokens'>;
+
+const CURRENCY_OPTIONS: { value: Currency; label: string; symbol: string }[] = [
+  { value: 'USD', label: 'USD ($)', symbol: '$' },
+  { value: 'EUR', label: 'EUR (€)', symbol: '€' },
+  { value: 'GBP', label: 'GBP (£)', symbol: '£' },
+  { value: 'INR', label: 'INR (₹)', symbol: '₹' },
+  { value: 'JPY', label: 'JPY (¥)', symbol: '¥' },
+];
+
 interface IntakeRecord {
   workspaceId: string;
   goal: string;
   successCriteria: string[];
   constraints: string[];
   budgetHintUsd: number | null;
+  budgetHintUnit: BudgetUnit;
   planningMode: PlanningMode;
   hireMode: HireMode;
 }
@@ -91,6 +103,8 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
   const [running, setRunning] = useState(false);
   const [criteriaDraft, setCriteriaDraft] = useState('');
   const [constraintDraft, setConstraintDraft] = useState('');
+  /** Remember the currency choice when toggling to tokens, so toggling back restores it. */
+  const [lastCurrency, setLastCurrency] = useState<Currency>('USD');
 
   async function refresh() {
     const r = await fetch(`/api/workspaces/${workspaceId}/intake`);
@@ -98,6 +112,10 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
       const j = await r.json();
       setIntake(j.intake);
       setDiscovery(j.latestDiscovery);
+      // If the stored unit is a currency, remember it for the toggle.
+      if (j.intake?.budgetHintUnit && j.intake.budgetHintUnit !== 'tokens') {
+        setLastCurrency(j.intake.budgetHintUnit);
+      }
     }
   }
   useEffect(() => { refresh(); }, [workspaceId]);
@@ -113,6 +131,7 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
           successCriteria: intake.successCriteria,
           constraints: intake.constraints,
           budgetHintUsd: intake.budgetHintUsd,
+          budgetHintUnit: intake.budgetHintUnit,
           planningMode: intake.planningMode,
           hireMode: intake.hireMode,
         }),
@@ -239,17 +258,91 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
           {/* Budget hint */}
           <Field
             icon={<Coins size={12} />}
-            label="Budget hint (USD)"
-            hint="A ceiling the team should keep in mind. Leave blank for no hint."
+            label="Budget hint"
+            hint={intake.budgetHintUnit === 'tokens'
+              ? 'Total tokens (input + output) the team should plan within. We add ~30% buffer for retries.'
+              : 'A ceiling the team should keep in mind. We add ~30% buffer for retries — plan blocks if estimated cost exceeds this.'}
           >
-            <input
-              type="number"
-              step="0.01"
-              value={intake.budgetHintUsd ?? ''}
-              onChange={(e) => setIntake({ ...intake, budgetHintUsd: e.target.value === '' ? null : Number(e.target.value) })}
-              placeholder="—"
-              className="w-40 bg-bg/60 border border-line/70 rounded-md px-2 py-1.5 text-sm text-ink font-mono outline-none focus:border-accent/60"
-            />
+            {/* Currency / Tokens toggle */}
+            <div className="inline-flex rounded-md border border-line/70 bg-bg/40 p-0.5 mb-2 text-xs">
+              <button
+                type="button"
+                onClick={() => setIntake({ ...intake, budgetHintUnit: lastCurrency })}
+                className={cn(
+                  'px-3 py-1 rounded transition-colors',
+                  intake.budgetHintUnit !== 'tokens'
+                    ? 'bg-accent text-bg font-medium shadow-glow'
+                    : 'text-dim2 hover:text-ink',
+                )}
+              >
+                Currency
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  // Remember the currency before switching to tokens.
+                  if (intake.budgetHintUnit !== 'tokens') setLastCurrency(intake.budgetHintUnit as Currency);
+                  setIntake({ ...intake, budgetHintUnit: 'tokens' });
+                }}
+                className={cn(
+                  'px-3 py-1 rounded transition-colors',
+                  intake.budgetHintUnit === 'tokens'
+                    ? 'bg-accent text-bg font-medium shadow-glow'
+                    : 'text-dim2 hover:text-ink',
+                )}
+              >
+                Tokens
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              {intake.budgetHintUnit === 'tokens' ? (
+                <input
+                  type="number"
+                  step="1"
+                  min={0}
+                  value={intake.budgetHintUsd != null ? intake.budgetHintUsd / 1000 : ''}
+                  onChange={(e) => setIntake({
+                    ...intake,
+                    // UI is in k-units; store the actual token count (×1000) so
+                    // downstream math + LLM prompts see real token numbers.
+                    budgetHintUsd: e.target.value === '' ? null : Number(e.target.value) * 1000,
+                  })}
+                  placeholder="100"
+                  className="w-32 bg-bg/60 border border-line/70 rounded-md px-2 py-1.5 text-sm text-ink font-mono outline-none focus:border-accent/60"
+                />
+              ) : (
+                <input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  value={intake.budgetHintUsd ?? ''}
+                  onChange={(e) => setIntake({ ...intake, budgetHintUsd: e.target.value === '' ? null : Number(e.target.value) })}
+                  placeholder="—"
+                  className="w-40 bg-bg/60 border border-line/70 rounded-md px-2 py-1.5 text-sm text-ink font-mono outline-none focus:border-accent/60"
+                />
+              )}
+              {intake.budgetHintUnit !== 'tokens' ? (
+                <select
+                  value={intake.budgetHintUnit}
+                  onChange={(e) => {
+                    const cur = e.target.value as Currency;
+                    setLastCurrency(cur);
+                    setIntake({ ...intake, budgetHintUnit: cur });
+                  }}
+                  className="bg-bg/60 border border-line/70 rounded-md px-2 py-1.5 text-sm text-ink outline-none focus:border-accent/60"
+                >
+                  {CURRENCY_OPTIONS.map((u) => (
+                    <option key={u.value} value={u.value}>{u.label}</option>
+                  ))}
+                </select>
+              ) : (
+                <span className="text-dim text-[12px] font-mono px-2 py-1.5 rounded-md border border-line/40 bg-bg/30">k tokens</span>
+              )}
+              {intake.budgetHintUnit === 'tokens' && intake.budgetHintUsd != null && intake.budgetHintUsd > 0 && (
+                <span className="text-dim2 text-[10px] font-mono">= {intake.budgetHintUsd.toLocaleString()} tokens</span>
+              )}
+              <span className="text-dim2 text-[10px] ml-auto">leave blank = no limit</span>
+            </div>
           </Field>
 
           {/* Planning mode */}

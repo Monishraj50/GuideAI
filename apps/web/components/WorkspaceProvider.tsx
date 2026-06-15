@@ -84,6 +84,22 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   }, [refresh, setActive]);
 
   const archive = useCallback(async (id: string) => {
+    // Optimistic: drop it from the list immediately so the UI feels responsive.
+    setWorkspaces((cur) => cur.filter((w) => w.id !== id));
+    // If the archived workspace was active, switch to whatever's left.
+    setActiveId((cur) => {
+      if (cur !== id) return cur;
+      // We need the fresh list — use the state setter to read it inside.
+      // Pick the first surviving workspace if any; otherwise fall back.
+      // This setter runs after the filter above, so workspaces no longer has `id`.
+      let next = cur;
+      setWorkspaces((current) => {
+        next = current[0]?.id ?? DEFAULT_ID;
+        return current;
+      });
+      try { window.localStorage.setItem(STORAGE_KEY, next); } catch {}
+      return next;
+    });
     await fetch(`/api/workspaces/${id}`, { method: 'DELETE' });
     await refresh();
   }, [refresh]);

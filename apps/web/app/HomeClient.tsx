@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Sparkles, Play, RadioTower, Store, Network, Settings as SettingsIcon, ArrowRight, FolderTree } from 'lucide-react';
 import { useWorkspaceId, useWorkspace } from '../components/WorkspaceProvider';
+import { useAuth } from '../components/AuthProvider';
 import { toast } from '../components/Toast';
 import { cn } from '../lib/cn';
 
@@ -16,7 +17,10 @@ interface Digest {
 export function Home() {
   const workspaceId = useWorkspaceId();
   const { workspaces } = useWorkspace();
+  const { state: auth } = useAuth();
   const active = workspaces.find((w) => w.id === workspaceId);
+  // Greet by user's display name (or fall back to username, then a friendly default).
+  const userName = auth?.user?.displayName?.trim() || auth?.user?.username || 'there';
   const [digest, setDigest] = useState<Digest | null>(null);
   const [busy, setBusy] = useState(false);
   const [greeting, setGreeting] = useState('Hello');
@@ -51,7 +55,7 @@ export function Home() {
             <a href="/projects" className="text-accent text-[10px] hover:underline ml-2">switch</a>
           </div>
           <h1 className="text-3xl font-semibold tracking-tight bg-gradient-to-r from-ink via-ink to-dim bg-clip-text text-transparent">
-            {greeting}, boss.
+            {greeting}, {userName}.
           </h1>
           <p className="text-dim mt-2 text-sm">Your team has been working. Here&apos;s the digest.</p>
         </div>

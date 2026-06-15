@@ -1,12 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import {
   loadIntake, saveIntake, runDiscovery, latestDiscovery, listDiscoveries,
-  type IntakeRecord, type PlanningMode, type HireMode,
+  type IntakeRecord, type PlanningMode, type HireMode, type BudgetUnit,
 } from '@guideai/orchestrator/discovery';
 import { planFromDiscoveryByMode } from '@guideai/orchestrator/planReview';
 
 const PLANNING: PlanningMode[] = ['auto', 'assisted', 'manual'];
 const HIRING: HireMode[] = ['auto', 'manual', 'hybrid'];
+const BUDGET_UNITS: BudgetUnit[] = ['USD', 'EUR', 'GBP', 'INR', 'JPY', 'tokens'];
 
 function defaultsFor(workspaceId: string): IntakeRecord {
   return {
@@ -15,6 +16,7 @@ function defaultsFor(workspaceId: string): IntakeRecord {
     successCriteria: [],
     constraints: [],
     budgetHintUsd: null,
+    budgetHintUnit: 'USD',
     planningMode: 'assisted',
     hireMode: 'manual',
   };
@@ -34,6 +36,7 @@ export function registerIntakeRoutes(app: FastifyInstance) {
       successCriteria: string[];
       constraints: string[];
       budgetHintUsd: number | null;
+      budgetHintUnit: BudgetUnit;
       planningMode: PlanningMode;
       hireMode: HireMode;
     }>;
@@ -51,13 +54,18 @@ export function registerIntakeRoutes(app: FastifyInstance) {
         : current.constraints,
       budgetHintUsd: body.budgetHintUsd === undefined ? current.budgetHintUsd
         : (body.budgetHintUsd === null ? null : Number(body.budgetHintUsd)),
+      budgetHintUnit: BUDGET_UNITS.includes(body.budgetHintUnit as BudgetUnit)
+        ? (body.budgetHintUnit as BudgetUnit) : current.budgetHintUnit,
       planningMode: PLANNING.includes(body.planningMode as PlanningMode)
         ? (body.planningMode as PlanningMode) : current.planningMode,
       hireMode: HIRING.includes(body.hireMode as HireMode)
         ? (body.hireMode as HireMode) : current.hireMode,
     };
     if (next.budgetHintUsd != null && !Number.isFinite(next.budgetHintUsd)) {
-      reply.code(400); return { error: 'budgetHintUsd must be a number or null' };
+      reply.code(400); return { error: 'budget amount must be a number or null' };
+    }
+    if (next.budgetHintUsd != null && next.budgetHintUsd < 0) {
+      reply.code(400); return { error: 'budget amount cannot be negative' };
     }
     saveIntake(next);
     return { intake: next };

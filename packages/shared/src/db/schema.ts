@@ -153,7 +153,8 @@ export const projectIntakes = sqliteTable('project_intakes', {
   goal: text('goal').notNull().default(''),
   successCriteria: text('success_criteria').notNull().default('[]'),
   constraints: text('constraints').notNull().default('[]'),
-  budgetHintUsd: real('budget_hint_usd'),
+  budgetHintUsd: real('budget_hint_usd'),  // legacy name; stores the numeric amount regardless of unit
+  budgetHintUnit: text('budget_hint_unit').notNull().default('USD'),
   planningMode: text('planning_mode').notNull().default('assisted'),  // auto|assisted|manual
   hireMode: text('hire_mode').notNull().default('manual'),            // auto|manual|hybrid
   createdAt: integer('created_at').notNull(),

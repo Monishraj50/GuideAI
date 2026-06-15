@@ -181,6 +181,15 @@ export function PlanReview({ workspaceId }: { workspaceId: string }) {
         });
         return;
       }
+      // Budget blocked the approval.
+      if (j.plan.status === 'draft' && j.plan.synthesis?.costVerdict === 'over-budget') {
+        toast({
+          title: 'Plan exceeds your budget',
+          description: 'Trim scope, raise the budget, or click "force dispatch" to override.',
+          variant: 'warn',
+        });
+        return;
+      }
       toast({
         title: j.plan.status === 'dispatched' ? 'Plan dispatched' : 'Plan approved — hires queued',
         description: j.plan.briefId ? `brief ${j.plan.briefId}` : `${j.plan.hireSummary?.queued.length ?? 0} hires need approval`,
@@ -435,7 +444,12 @@ export function PlanReview({ workspaceId }: { workspaceId: string }) {
         {/* Footer actions */}
         {(isDraft || (isApproved && plan.hireSummary && plan.hireSummary.queued.length > 0)) && (
           <div className="mt-4 border-t border-line/40 pt-3 flex items-center justify-end gap-2 flex-wrap">
-            {isDraft && plan.critiques?.blocked && (
+            {isDraft && syn.costVerdict === 'over-budget' && (
+              <span className="text-err text-[11px] mr-auto flex items-center gap-1">
+                <AlertTriangle size={11} /> Estimated cost exceeds your budget (incl. ~30% buffer). Trim scope, raise budget, or force-dispatch to override.
+              </span>
+            )}
+            {isDraft && plan.critiques?.blocked && syn.costVerdict !== 'over-budget' && (
               <span className="text-warn text-[11px] mr-auto flex items-center gap-1">
                 <AlertTriangle size={11} /> Critics flagged issues. Edit + re-run, or force-dispatch to override.
               </span>
@@ -449,7 +463,7 @@ export function PlanReview({ workspaceId }: { workspaceId: string }) {
                 <X size={11} /> reject
               </button>
             )}
-            {isDraft && !plan.critiques?.blocked && (
+            {isDraft && !plan.critiques?.blocked && syn.costVerdict !== 'over-budget' && (
               <button
                 onClick={() => approve(false)}
                 disabled={busy === 'approve' || editing}
@@ -459,14 +473,19 @@ export function PlanReview({ workspaceId }: { workspaceId: string }) {
                 <ArrowRight size={11} /> {busy === 'approve' ? 'approving…' : (plan.critiques ? 'approve & dispatch' : 'run critics & approve')}
               </button>
             )}
-            {isDraft && plan.critiques?.blocked && (
+            {isDraft && (plan.critiques?.blocked || syn.costVerdict === 'over-budget') && (
               <button
                 onClick={() => approve(true)}
                 disabled={busy === 'approve' || editing}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-warn text-bg text-xs font-medium hover:brightness-110 disabled:opacity-40"
-                title="Override the critics and dispatch anyway"
+                className={cn(
+                  'flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium hover:brightness-110 disabled:opacity-40',
+                  syn.costVerdict === 'over-budget' ? 'bg-err text-bg' : 'bg-warn text-bg',
+                )}
+                title="Override the gate and dispatch anyway"
               >
-                <Send size={11} /> {busy === 'approve' ? 'dispatching…' : 'force dispatch (override critics)'}
+                <Send size={11} /> {busy === 'approve' ? 'dispatching…' : (
+                  syn.costVerdict === 'over-budget' ? 'force dispatch (over budget)' : 'force dispatch (override critics)'
+                )}
               </button>
             )}
             {isApproved && (

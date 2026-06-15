@@ -19,14 +19,40 @@ import {
 export type PlanningMode = 'auto' | 'assisted' | 'manual';
 export type HireMode = 'auto' | 'manual' | 'hybrid';
 
+export type BudgetUnit = 'USD' | 'EUR' | 'GBP' | 'INR' | 'JPY' | 'tokens';
+
 export interface IntakeRecord {
   workspaceId: string;
   goal: string;
   successCriteria: string[];
   constraints: string[];
+  /** Numeric budget hint; interpreted via budgetHintUnit. Legacy DB column name. */
   budgetHintUsd: number | null;
+  budgetHintUnit: BudgetUnit;
   planningMode: PlanningMode;
   hireMode: HireMode;
+}
+
+/** Plans should be conservative — leave headroom for retries, longer-than-expected
+ *  briefs, and pass@k runs. Forecast × buffer is what we compare to the user's hint. */
+export const BUDGET_BUFFER = 1.3;
+
+/** Approximate FX rates to USD. Hardcoded — currency conversion is best-effort
+ *  for sizing the budget, not for billing. Update if exchange rates drift wildly. */
+const USD_PER_UNIT: Record<Exclude<BudgetUnit, 'tokens'>, number> = {
+  USD: 1.0,
+  EUR: 1.08,
+  GBP: 1.27,
+  INR: 0.012,
+  JPY: 0.0067,
+};
+
+/** Convert a (amount, unit) hint to an equivalent USD amount.
+ *  Returns null for `tokens` (token budgets are checked separately, not in USD). */
+export function budgetHintToUsd(amount: number | null | undefined, unit: BudgetUnit): number | null {
+  if (amount == null || !Number.isFinite(amount)) return null;
+  if (unit === 'tokens') return null;
+  return amount * USD_PER_UNIT[unit];
 }
 
 export interface Panelist {
@@ -151,6 +177,7 @@ export function loadIntake(workspaceId: string): IntakeRecord | null {
     successCriteria: safeArr(row.successCriteria),
     constraints: safeArr(row.constraints),
     budgetHintUsd: row.budgetHintUsd ?? null,
+    budgetHintUnit: ((row as any).budgetHintUnit as BudgetUnit) ?? 'USD',
     planningMode: (row.planningMode as PlanningMode) ?? 'assisted',
     hireMode: (row.hireMode as HireMode) ?? 'manual',
   };
@@ -167,6 +194,7 @@ export function saveIntake(intake: IntakeRecord): void {
     successCriteria: JSON.stringify(intake.successCriteria),
     constraints: JSON.stringify(intake.constraints),
     budgetHintUsd: intake.budgetHintUsd ?? null,
+    budgetHintUnit: intake.budgetHintUnit ?? 'USD',
     planningMode: intake.planningMode,
     hireMode: intake.hireMode,
     updatedAt: now,
@@ -360,7 +388,18 @@ function renderIntake(i: IntakeRecord): string {
     for (const c of i.constraints) lines.push(`- ${c}`);
   }
   if (i.budgetHintUsd != null) {
-    lines.push('', `Budget hint: $${i.budgetHintUsd.toFixed(2)} USD total`);
+    const unit = i.budgetHintUnit ?? 'USD';
+    if (unit === 'tokens') {
+      lines.push('', `Budget hint: ${i.budgetHintUsd.toLocaleString()} tokens total (input + output combined).`);
+    } else {
+      const usd = budgetHintToUsd(i.budgetHintUsd, unit);
+      const usdNote = unit === 'USD' ? '' : ` (~$${usd?.toFixed(2)} USD at approximate FX)`;
+      lines.push('', `Budget hint: ${i.budgetHintUsd.toLocaleString()} ${unit} total${usdNote}.`);
+    }
+    lines.push(
+      `IMPORTANT: leave a ~${Math.round((BUDGET_BUFFER - 1) * 100)}% buffer for retries, pass@k attempts, and longer-than-expected briefs. ` +
+      `If the realistic ballpark cost × buffer exceeds the user's hint, set VERDICT: over-budget and CUTS: explain what to drop.`,
+    );
   }
   lines.push('', `Planning mode: ${i.planningMode}`, `Hiring mode: ${i.hireMode}`);
   return lines.join('\n');
@@ -413,15 +452,24 @@ function synthesize(panel: PanelEntry[], intake: IntakeRecord): DiscoverySynthes
   const costEstimateUsd = num ? Number(num[0]) : null;
 
   // Verdict: prefer the finance analyst's call; fall back to budget hint check.
+  // For non-USD currencies we convert via the FX table; for token budgets we
+  // skip USD math and trust the finance analyst's verdict (since the analyst
+  // sees the token-cost line in the prompt context).
   let costVerdict: DiscoverySynthesis['costVerdict'] = 'unknown';
   const verdict = field(financeText, 'VERDICT').toLowerCase();
   if (verdict.includes('within')) costVerdict = 'within-budget';
   else if (verdict.includes('tight')) costVerdict = 'tight';
   else if (verdict.includes('over')) costVerdict = 'over-budget';
   else if (intake.budgetHintUsd != null && costEstimateUsd != null) {
-    if (costEstimateUsd <= intake.budgetHintUsd) costVerdict = 'within-budget';
-    else if (costEstimateUsd <= intake.budgetHintUsd * 1.25) costVerdict = 'tight';
-    else costVerdict = 'over-budget';
+    const unit = intake.budgetHintUnit ?? 'USD';
+    if (unit !== 'tokens') {
+      const budgetUsd = budgetHintToUsd(intake.budgetHintUsd, unit) ?? 0;
+      // Apply buffer: forecast × BUDGET_BUFFER is what we compare against the cap.
+      const buffered = costEstimateUsd * BUDGET_BUFFER;
+      if (buffered <= budgetUsd) costVerdict = 'within-budget';
+      else if (costEstimateUsd <= budgetUsd) costVerdict = 'tight';
+      else costVerdict = 'over-budget';
+    }
   }
 
   // Security tag
