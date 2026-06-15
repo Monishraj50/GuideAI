@@ -5,9 +5,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   KanbanSquare, GripVertical, Trash2, Search, Filter, X,
   RefreshCw, Activity, Gauge, CheckCircle2, AlertTriangle,
-  FolderTree, ExternalLink, ChevronDown,
+  FolderTree, ExternalLink, ChevronDown, ArrowRight,
 } from 'lucide-react';
 import { toast } from '../../components/Toast';
+import { useWorkspace, useWorkspaceId } from '../../components/WorkspaceProvider';
 import { cn } from '../../lib/cn';
 
 type Status = 'todo' | 'in_progress' | 'blocked' | 'done' | 'cancelled';
@@ -64,16 +65,18 @@ const PHASE_TINT: Record<Phase, string> = {
 };
 
 interface Filters {
-  workspaceId: string;
   phase: string;
   priority: string;
   assignedRole: string;
   q: string;
 }
 
-const EMPTY_FILTERS: Filters = { workspaceId: '', phase: '', priority: '', assignedRole: '', q: '' };
+const EMPTY_FILTERS: Filters = { phase: '', priority: '', assignedRole: '', q: '' };
 
 export function BoardClient() {
+  const workspaceId = useWorkspaceId();
+  const { workspaces } = useWorkspace();
+  const currentWs = workspaces.find((w) => w.id === workspaceId);
   const [items, setItems] = useState<WorkItem[]>([]);
   const [facets, setFacets] = useState<Facets | null>(null);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
@@ -82,7 +85,7 @@ export function BoardClient() {
 
   function buildQs(f: Filters): string {
     const sp = new URLSearchParams();
-    if (f.workspaceId)   sp.set('workspaceId', f.workspaceId);
+    sp.set('workspaceId', workspaceId);
     if (f.phase)         sp.set('phase', f.phase);
     if (f.priority)      sp.set('priority', f.priority);
     if (f.assignedRole)  sp.set('assignedRole', f.assignedRole);
@@ -91,6 +94,7 @@ export function BoardClient() {
   }
 
   async function refresh() {
+    if (!workspaceId) return;
     try {
       const r = await fetch(`/api/work-items?${buildQs(filters)}`);
       if (r.ok) {
@@ -100,7 +104,8 @@ export function BoardClient() {
       }
     } catch {}
   }
-  useEffect(() => { refresh(); const t = setInterval(refresh, 5000); return () => clearInterval(t); }, [filters.workspaceId, filters.phase, filters.priority, filters.assignedRole, filters.q]);
+  useEffect(() => { refresh(); const t = setInterval(refresh, 5000); return () => clearInterval(t); },
+    [workspaceId, filters.phase, filters.priority, filters.assignedRole, filters.q]);
 
   const byStatus = useMemo(() => {
     const out: Record<Status, WorkItem[]> = { todo: [], in_progress: [], blocked: [], done: [], cancelled: [] };
@@ -118,9 +123,8 @@ export function BoardClient() {
       blocked: items.filter((i) => i.status === 'blocked').length,
       doneToday: items.filter((i) => i.status === 'done' && i.completedAt && i.completedAt >= dayAgo).length,
       doneWeek: items.filter((i) => i.status === 'done' && i.completedAt && i.completedAt >= weekAgo).length,
-      workspaces: facets?.workspaces?.length ?? 0,
     };
-  }, [items, facets]);
+  }, [items]);
 
   async function moveTo(id: string, status: Status) {
     setItems((cur) => cur.map((x) => x.id === id ? { ...x, status } : x));
@@ -143,19 +147,41 @@ export function BoardClient() {
     try { await fetch(`/api/work-items/${id}`, { method: 'DELETE' }); } catch { refresh(); }
   }
 
-  const activeFilterCount = Number(!!filters.workspaceId) + Number(!!filters.phase) +
+  const activeFilterCount = Number(!!filters.phase) +
     Number(!!filters.priority) + Number(!!filters.assignedRole) + Number(!!filters.q);
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
+    <div className="flex-1 min-h-0 overflow-y-auto">
+      {/* Project-scoped header */}
+      <header className="border-b border-line/70 px-5 py-3 glass flex items-center gap-3">
+        <KanbanSquare size={16} className="text-accent" />
+        <div className="min-w-0">
+          <div className="text-ink font-medium flex items-center gap-2">
+            Board
+            <span className="text-dim2 text-[11px]">·</span>
+            <span className="text-ink2 text-sm font-medium truncate">{currentWs?.name ?? workspaceId ?? '—'}</span>
+          </div>
+          <div className="text-dim text-[11px] mt-0.5 font-mono">{workspaceId} · drag to move</div>
+        </div>
+        {currentWs && (
+          <Link
+            href={`/projects/${workspaceId}`}
+            className="ml-auto flex items-center gap-1 text-dim2 hover:text-ink text-xs"
+            title="Open this project's full plan"
+          >
+            open project <ArrowRight size={11} />
+          </Link>
+        )}
+      </header>
+
+      <div className="p-4 space-y-4">
       {/* KPI strip */}
-      <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
+      <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
         <Kpi icon={<Activity size={11} />}      label="open"        value={stats.open} sub={`of ${stats.total} total`} />
         <Kpi icon={<Gauge size={11} />}          label="in flight"   value={stats.inFlight} sub={stats.blocked > 0 ? `${stats.blocked} blocked` : 'no blockers'} />
         <Kpi icon={<AlertTriangle size={11} />} label="blocked"     value={stats.blocked} tint={stats.blocked > 0 ? 'text-err' : undefined} />
         <Kpi icon={<CheckCircle2 size={11} />}  label="done · 24h"  value={stats.doneToday} />
         <Kpi icon={<CheckCircle2 size={11} />}  label="done · 7d"   value={stats.doneWeek} />
-        <Kpi icon={<FolderTree size={11} />}    label="projects"    value={stats.workspaces} />
       </div>
 
       {/* Search + filters */}
@@ -198,13 +224,7 @@ export function BoardClient() {
       </div>
 
       {showFilters && facets && (
-        <div className="border border-line/70 rounded-lg bg-surface2/40 p-3 grid md:grid-cols-4 gap-3">
-          <FilterSelect
-            label="Project"
-            value={filters.workspaceId}
-            onChange={(v) => setFilters((f) => ({ ...f, workspaceId: v }))}
-            options={[{ value: '', label: 'all projects' }, ...facets.workspaces.map((w) => ({ value: w.id, label: w.name }))]}
-          />
+        <div className="border border-line/70 rounded-lg bg-surface2/40 p-3 grid md:grid-cols-3 gap-3">
           <FilterSelect
             label="Phase"
             value={filters.phase}
@@ -230,9 +250,13 @@ export function BoardClient() {
       {items.length === 0 ? (
         <div className="border border-dashed border-line/70 rounded-lg p-6 text-center">
           <KanbanSquare size={20} className="mx-auto text-dim2 mb-2" />
-          <div className="text-ink text-sm">No work items match these filters</div>
+          <div className="text-ink text-sm">
+            {activeFilterCount > 0 ? 'No work items match these filters' : `No work items in ${currentWs?.name ?? 'this project'} yet`}
+          </div>
           <div className="text-dim text-xs mt-1">
-            {activeFilterCount > 0 ? 'Try clearing some filters' : 'Dispatch a brief in any project to populate the board'}
+            {activeFilterCount > 0 ? 'Try clearing some filters' : (
+              <>Dispatch a brief in <Link href={`/projects/${workspaceId}`} className="text-accent hover:underline">this project</Link> to populate the board, or pick a different project from the top bar.</>
+            )}
           </div>
         </div>
       ) : (
@@ -273,6 +297,7 @@ export function BoardClient() {
           })}
         </div>
       )}
+      </div>
     </div>
   );
 }
@@ -290,15 +315,7 @@ function BoardCard({ item, onDragStart, onMove, onDelete }: {
       <div className="flex items-start gap-1.5">
         <GripVertical size={11} className="text-dim2 mt-0.5 shrink-0 opacity-60 group-hover:opacity-100" />
         <div className="flex-1 min-w-0">
-          <Link
-            href={`/projects/${item.workspaceId}`}
-            className="text-[10px] font-mono text-accent hover:underline flex items-center gap-0.5 truncate"
-            title={`Open project ${item.workspaceName}`}
-          >
-            <FolderTree size={9} /> {item.workspaceName}
-            <ExternalLink size={8} className="opacity-50" />
-          </Link>
-          <div className="text-ink text-[12.5px] font-medium leading-snug mt-0.5">{item.title}</div>
+          <div className="text-ink text-[12.5px] font-medium leading-snug">{item.title}</div>
           {item.description && (
             <div className="text-dim text-[11px] mt-0.5 line-clamp-2">{item.description}</div>
           )}
