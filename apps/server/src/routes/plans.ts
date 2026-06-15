@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import {
   listPlans, latestPlan, getPlan, createPlanFromDiscovery, savePlanEdits,
-  approvePlan, rejectPlan, previewHires,
+  approvePlan, rejectPlan, previewHires, recritique,
   type PlanRecord,
 } from '@guideai/orchestrator/planReview';
 import { loadIntake, latestDiscovery, type DiscoverySynthesis } from '@guideai/orchestrator/discovery';
@@ -75,6 +75,16 @@ export function registerPlanRoutes(app: FastifyInstance) {
       }
     },
   );
+
+  app.post<{ Params: { id: string } }>('/api/plans/:id/critique', async (req, reply) => {
+    try {
+      const plan = await recritique(req.params.id);
+      return { plan };
+    } catch (err: any) {
+      req.log.error(err);
+      reply.code(400); return { error: String(err?.message ?? err) };
+    }
+  });
 
   app.post<{ Params: { id: string } }>('/api/plans/:id/reject', async (req, reply) => {
     try {

@@ -838,3 +838,66 @@ The final roadmap phase. Each workspace can now be bound to a real GitHub repo, 
 - **PAT scope assumptions**: needs `repo` scope. The route doesn't validate this proactively; if the token is missing scope, the first push/sync call returns the GitHub 403 verbatim with the body, which is enough to diagnose. A pre-flight `/user` ping with scope check could be added in Settings.
 - **The `Github` icon was aliased from `GitBranch`** because lucide-react@1.18.0 doesn't ship the GitHub mark. Cosmetic; trivial to swap later when the package gets it back, or by pulling in a single SVG.
 - **`uri` field for manual `file` deliverables** (from Phase 6) isn't pushed to the repo today — only the auto-generated artifact/deck/explainer markdown ships. Manual files would need an upload pipeline (or just a doc in the repo pointing at them).
+
+---
+
+## Phase 8A — Multi-perspective plan critique
+
+Between draft and dispatch, two parallel critics now read the plan — a **CEO lens** (business value / scope / ROI) and an **Eng lens** (architecture / staffing / risk). Each returns a structured verdict (`pass | needs-revision | reject`), concerns, and field-targeted suggested edits. If either critic blocks, dispatch halts until the user edits or force-overrides. Inspired by gstack's `/plan-ceo-review` + `/plan-eng-review` skills; collapsed into the existing plan-review flow.
+
+**Schema (`packages/shared/src/db/init.ts` + `schema.ts`):**
+- Two new columns on `plans` (added via idempotent `ALTER TABLE ADD COLUMN`):
+  - `critiques_json TEXT` — full bundle `{ceo, eng, ranAt, blocked}`
+  - `critiques_run_at INTEGER` — for staleness checks
+
+**Module (`packages/orchestrator/src/critique.ts`):**
+- Two `CriticDef`s (CEO + Eng) with terse 4-label prompts: `VERDICT: / CONCERNS: / EDITS: / RATIONALE:`.
+- EDITS use `FIELD=SUGGESTION` syntax; valid fields are whitelisted (`summary | recommendedRoles | successMetrics | riskFlags | benefits`) so a malformed edit is silently dropped, not crashed-on.
+- `runCritiques()` fires both critics in parallel via cheap haiku. Records usage with `phase='critique'` so spend lands in the Phase 0 ledger and HUD pills.
+- **Fail-open**: if a critic call throws, the verdict defaults to `pass` and `failed:true` — a broken critic must never block a brief.
+- `blocked` flag is computed: true if either critic returned `needs-revision` or `reject` (failed critics don't count).
+
+**Mock adapter fixtures (`packages/runtime-claude/src/mockAdapter.ts`):**
+- `[critique:ceo]` → `needs-revision` with 3 concerns + 2 suggested edits.
+- `[critique:eng]` → `pass` with 2 concerns + 1 suggested edit.
+- Guest-mode demos critique end-to-end without a Claude account.
+
+**Plan-review integration (`packages/orchestrator/src/planReview.ts`):**
+- `PlanRecord` now includes `critiques: CritiqueBundle | null` and `critiquesRunAt: number | null`.
+- `approvePlan({planId, forceDispatch?, skipCritique?})`:
+  - **Step 0 (new)**: if no critique bundle exists and `skipCritique` is false, run critics and persist. Bundle is idempotent — subsequent approve calls reuse it.
+  - If `bundle.blocked && !forceDispatch` → return early with status still `draft`, critique bundle populated. No hires, no dispatch.
+  - Otherwise proceed to hires + dispatch as before.
+- `savePlanEdits()` now clears `critiques_json` + `critiques_run_at` when synthesis changes — stale critiques can't gate a freshly edited plan.
+- New helper `recritique(planId)` re-runs critics unconditionally (used by the manual "re-run" button).
+
+**Server route (`apps/server/src/routes/plans.ts`):**
+- `POST /api/plans/:id/critique` — force-rerun critics, return updated plan.
+
+**UI (`apps/web/app/projects/[id]/PlanReview.tsx`):**
+- New **Critique panel** between the editable lists and the hire preview. Shows:
+  - CEO card (Scale icon) + Eng card (Wrench icon), each with a verdict pill (green/amber/red), concerns list, suggested-edits with `MessageSquare` icon and `field · suggestion` formatting, and a per-card tokens/cost/duration footer.
+  - "blocked" pill in the header when at least one critic isn't `pass`.
+  - "re-run / run critics" link in the header that calls `POST /critique`.
+  - When no bundle exists yet: italic prompt explaining "Critics will run automatically when you click approve".
+- **Footer button states**:
+  - No bundle yet → button says **"run critics & approve"**.
+  - Bundle exists, not blocked → standard **"approve & dispatch"**.
+  - Bundle exists, blocked → primary CTA swaps to warn-tinted **"force dispatch (override critics)"**, with a critic-warning banner ("Critics flagged issues. Edit + re-run, or force-dispatch to override.") on the left side of the footer.
+- `approve` handler now branches on `j.plan.status === 'draft' && j.plan.critiques?.blocked` to emit a `warn` toast instead of a `success` toast.
+
+**Verified end-to-end (`p8a-test` workspace, assisted+manual):**
+1. ✅ Discovery → plan drafted, `critiques: null`.
+2. ✅ First approve → critiques fired, CEO `needs-revision` with 3 concerns + 2 edits, Eng `pass`, `blocked:true`, status stays `draft`, no `briefId`.
+3. ✅ Second approve attempt → bundle cached (same `critiquesRunAt` timestamp), no rerun.
+4. ✅ PUT plan edits → `critiques: null, critiquesRunAt: null` (stale clear works).
+5. ✅ Next approve → critics re-run on edited synthesis.
+6. ✅ Approve with `forceDispatch:true` → bypass block, status `dispatched`, brief id assigned.
+7. ✅ Explicit `POST /api/plans/:id/critique` → returns updated bundle.
+
+**Surfaced (Principle 10B):**
+- **Critics are advisory, not legal verdicts.** Even `reject` is force-overridable. The UI makes this clear (warn-tinted CTA, not blocked-by-error). Adding a "require dual-approve" toggle for high-stakes workspaces would be a Settings-side follow-up.
+- **Critic costs are per-plan, not per-brief.** Cached after first run; re-run on synthesis edit (intentional) or explicit user click. Worst case ~$0.002 per critique pass at haiku rates.
+- **Suggested edits are not auto-applied.** The UI shows them as text annotations next to the field name; user reads, decides, edits manually. That's deliberate — auto-applying LLM suggestions to a plan the user is reviewing would defeat the point.
+- **No `force-skip-critique` UI flag** — `skipCritique` exists on the module but isn't surfaced. If a user wanted to disable critique entirely (e.g. for trusted templates), that's a Settings-side toggle to add later.
+- **Mock fixture is single-shot** — CEO always returns `needs-revision`, Eng always `pass`. For real Claude, the verdicts vary plan-to-plan. The deterministic fixture is good for testing the gate logic; not representative of real behaviour.

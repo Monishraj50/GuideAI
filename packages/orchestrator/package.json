@@ -15,7 +15,8 @@
     "./planReview": "./src/planReview.ts",
     "./wbs": "./src/wbs.ts",
     "./deliverables": "./src/deliverables.ts",
-    "./github": "./src/github.ts"
+    "./github": "./src/github.ts",
+    "./critique": "./src/critique.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

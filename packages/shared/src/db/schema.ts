@@ -127,6 +127,8 @@ export const plans = sqliteTable('plans', {
   notes: text('notes'),
   briefId: text('brief_id'),
   hireSummaryJson: text('hire_summary_json'),
+  critiquesJson: text('critiques_json'),
+  critiquesRunAt: integer('critiques_run_at'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
   approvedAt: integer('approved_at'),

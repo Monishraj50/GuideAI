@@ -70,9 +70,24 @@ A workspace where you brief AI agents like teammates and they ship work end-to-e
 ## What's next
 The pipeline runs to "verify" but doesn't push to GitHub or ship to a runtime yet. The next phase wires real-PR integration so the human boss reviews a diff, not just a markdown file.`;
 
+const CRITIQUE_RESPONSES: Record<string, string> = {
+  ceo:
+    'VERDICT: needs-revision\n' +
+    'CONCERNS: scope drift toward "everything-app", ROI on devops slice unclear at this stage, success-metrics phrased as features not outcomes\n' +
+    'EDITS: successMetrics=rephrase as outcomes the user can name (e.g. "time-to-first-output < 5 min"), recommendedRoles=defer devops-engineer until v2\n' +
+    'RATIONALE: shippable but the business case needs sharpening before we burn the budget.',
+  eng:
+    'VERDICT: pass\n' +
+    'CONCERNS: token cost on long briefs may exceed forecast, retry semantics for failed phases unspecified\n' +
+    'EDITS: riskFlags=add "no retry policy for transient phase failures"\n' +
+    'RATIONALE: stack + roles are sensible; risks are surfaced but mitigations are light.',
+};
+
 function pickResponse(systemPrompt: string | undefined, prompt: string): string {
   const haystack = `${systemPrompt ?? ''}\n${prompt}`.toLowerCase();
   if (haystack.includes('[explainer]') || haystack.includes("guideai's explainer")) return EXPLAINER_FIXTURE;
+  const critique = haystack.match(/\[critique:(ceo|eng)\]/);
+  if (critique?.[1] && CRITIQUE_RESPONSES[critique[1]]) return CRITIQUE_RESPONSES[critique[1]]!;
   const panel = haystack.match(/\[panel:([a-z0-9-]+)\]/);
   if (panel?.[1] && PANEL_RESPONSES[panel[1]]) return PANEL_RESPONSES[panel[1]]!;
   if (haystack.includes('research phase'))  return SAMPLE_RESPONSES.research![0]!;

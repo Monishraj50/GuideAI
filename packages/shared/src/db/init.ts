@@ -239,6 +239,8 @@ function main() {
   for (const stmt of [
     "ALTER TABLE work_items ADD COLUMN github_issue_number INTEGER",
     "ALTER TABLE work_items ADD COLUMN github_issue_url TEXT",
+    "ALTER TABLE plans ADD COLUMN critiques_json TEXT",
+    "ALTER TABLE plans ADD COLUMN critiques_run_at INTEGER",
   ]) {
     try { db.exec(stmt); } catch (e: any) {
       if (!/duplicate column/i.test(String(e?.message ?? ''))) throw e;

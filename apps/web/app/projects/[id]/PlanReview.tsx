@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import {
   ClipboardCheck, Pencil, Check, X, ArrowRight, AlertTriangle, ShieldAlert,
   Users, Coins, Lightbulb, Send, UserPlus, UserCheck, UserX, Hourglass,
-  RotateCcw, ExternalLink,
+  RotateCcw, ExternalLink, Scale, Wrench, Gavel, MessageSquare, Sparkles,
 } from 'lucide-react';
 import { toast } from '../../../components/Toast';
 import { cn } from '../../../lib/cn';
@@ -37,6 +37,24 @@ interface HireSummary {
   errors: { role: string; error: string }[];
 }
 
+type CritiqueVerdict = 'pass' | 'needs-revision' | 'reject';
+interface SuggestedEdit { where: string; what: string }
+interface Critique {
+  role: 'ceo' | 'eng';
+  displayName: string;
+  verdict: CritiqueVerdict;
+  concerns: string[];
+  suggestedEdits: SuggestedEdit[];
+  rawText: string;
+  tokensIn: number;
+  tokensOut: number;
+  costUsd: number;
+  durationMs: number;
+  failed?: boolean;
+  error?: string;
+}
+interface CritiqueBundle { ceo: Critique; eng: Critique; ranAt: number; blocked: boolean }
+
 interface PlanRecord {
   id: string;
   workspaceId: string;
@@ -46,11 +64,23 @@ interface PlanRecord {
   notes: string | null;
   briefId: string | null;
   hireSummary: HireSummary | null;
+  critiques: CritiqueBundle | null;
+  critiquesRunAt: number | null;
   createdAt: number;
   updatedAt: number;
   approvedAt: number | null;
   dispatchedAt: number | null;
 }
+
+const CRITIQUE_TINT: Record<CritiqueVerdict, string> = {
+  pass:             'border-accent/40 text-accent bg-accent/10',
+  'needs-revision': 'border-warn/40 text-warn bg-warn/10',
+  reject:           'border-err/40 text-err bg-err/10',
+};
+const CRITIQUE_ICONS: Record<'ceo' | 'eng', React.ComponentType<{ size?: number; className?: string }>> = {
+  ceo: Scale,
+  eng: Wrench,
+};
 
 const VERDICT_TINT: Record<Verdict, string> = {
   'within-budget': 'border-accent/40 text-accent bg-accent/10',
@@ -141,14 +171,41 @@ export function PlanReview({ workspaceId }: { workspaceId: string }) {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error ?? 'approve failed');
+      setPlan(j.plan); await refresh();
+      // Critic blocked the approval — surface as warn, not success.
+      if (j.plan.status === 'draft' && j.plan.critiques?.blocked) {
+        toast({
+          title: 'Critics flagged issues',
+          description: `CEO: ${j.plan.critiques.ceo.verdict} · Eng: ${j.plan.critiques.eng.verdict}`,
+          variant: 'warn',
+        });
+        return;
+      }
       toast({
         title: j.plan.status === 'dispatched' ? 'Plan dispatched' : 'Plan approved — hires queued',
         description: j.plan.briefId ? `brief ${j.plan.briefId}` : `${j.plan.hireSummary?.queued.length ?? 0} hires need approval`,
         variant: 'success',
       });
-      setPlan(j.plan); await refresh();
     } catch (e: any) {
       toast({ title: 'Approve failed', description: e?.message, variant: 'error' });
+    } finally { setBusy(null); }
+  }
+
+  async function recritique() {
+    if (!plan) return;
+    setBusy('critique');
+    try {
+      const r = await fetch(`/api/plans/${plan.id}/critique`, { method: 'POST' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error ?? 'critique failed');
+      setPlan(j.plan);
+      toast({
+        title: 'Critics re-ran',
+        description: `CEO: ${j.plan.critiques?.ceo.verdict} · Eng: ${j.plan.critiques?.eng.verdict}`,
+        variant: j.plan.critiques?.blocked ? 'warn' : 'success',
+      });
+    } catch (e: any) {
+      toast({ title: 'Critique failed', description: e?.message, variant: 'error' });
     } finally { setBusy(null); }
   }
 
@@ -293,6 +350,42 @@ export function PlanReview({ workspaceId }: { workspaceId: string }) {
           chipTint="border-line/70 text-ink2 bg-bg/30"
         />
 
+        {/* Critique panel */}
+        {(plan.critiques || isDraft) && (
+          <div className="mt-4 border-t border-line/40 pt-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Gavel size={11} className="text-warn" />
+              <span className="text-dim2 text-[10px] uppercase tracking-wider">Critic pass</span>
+              {plan.critiques && (
+                <span className="text-dim2 text-[10px] font-mono">
+                  ran {new Date(plan.critiques.ranAt).toLocaleTimeString()}
+                </span>
+              )}
+              {plan.critiques?.blocked && (
+                <span className="text-[10px] uppercase tracking-wider font-mono px-1.5 py-0.5 rounded-full border border-warn/40 text-warn bg-warn/10">blocked</span>
+              )}
+              <button
+                onClick={recritique}
+                disabled={busy === 'critique'}
+                className="ml-auto text-dim2 hover:text-ink text-[11px] flex items-center gap-1 disabled:opacity-40"
+                title="Re-run CEO + Eng critics against the current synthesis"
+              >
+                <Sparkles size={10} /> {busy === 'critique' ? 'critiquing…' : (plan.critiques ? 're-run' : 'run critics')}
+              </button>
+            </div>
+            {plan.critiques ? (
+              <div className="grid md:grid-cols-2 gap-2">
+                <CritiqueCard c={plan.critiques.ceo} />
+                <CritiqueCard c={plan.critiques.eng} />
+              </div>
+            ) : (
+              <div className="text-dim2 text-[11px] italic">
+                Critics will run automatically when you click <span className="text-ink">approve</span> — or kick them now to see verdicts before approving.
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Hire preview */}
         {preview && (
           <div className="mt-4 border-t border-line/40 pt-3">
@@ -341,7 +434,12 @@ export function PlanReview({ workspaceId }: { workspaceId: string }) {
 
         {/* Footer actions */}
         {(isDraft || (isApproved && plan.hireSummary && plan.hireSummary.queued.length > 0)) && (
-          <div className="mt-4 border-t border-line/40 pt-3 flex items-center justify-end gap-2">
+          <div className="mt-4 border-t border-line/40 pt-3 flex items-center justify-end gap-2 flex-wrap">
+            {isDraft && plan.critiques?.blocked && (
+              <span className="text-warn text-[11px] mr-auto flex items-center gap-1">
+                <AlertTriangle size={11} /> Critics flagged issues. Edit + re-run, or force-dispatch to override.
+              </span>
+            )}
             {isDraft && (
               <button
                 onClick={reject}
@@ -351,14 +449,24 @@ export function PlanReview({ workspaceId }: { workspaceId: string }) {
                 <X size={11} /> reject
               </button>
             )}
-            {isDraft && (
+            {isDraft && !plan.critiques?.blocked && (
               <button
                 onClick={() => approve(false)}
                 disabled={busy === 'approve' || editing}
                 className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-accent text-bg text-xs font-medium shadow-glow hover:brightness-110 disabled:opacity-40"
                 title={editing ? 'save edits first' : ''}
               >
-                <ArrowRight size={11} /> {busy === 'approve' ? 'approving…' : 'approve & dispatch'}
+                <ArrowRight size={11} /> {busy === 'approve' ? 'approving…' : (plan.critiques ? 'approve & dispatch' : 'run critics & approve')}
+              </button>
+            )}
+            {isDraft && plan.critiques?.blocked && (
+              <button
+                onClick={() => approve(true)}
+                disabled={busy === 'approve' || editing}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-warn text-bg text-xs font-medium hover:brightness-110 disabled:opacity-40"
+                title="Override the critics and dispatch anyway"
+              >
+                <Send size={11} /> {busy === 'approve' ? 'dispatching…' : 'force dispatch (override critics)'}
               </button>
             )}
             {isApproved && (
@@ -387,6 +495,50 @@ export function PlanReview({ workspaceId }: { workspaceId: string }) {
         )}
       </div>
     </section>
+  );
+}
+
+function CritiqueCard({ c }: { c: Critique }) {
+  const Icon = CRITIQUE_ICONS[c.role];
+  const tint = CRITIQUE_TINT[c.verdict];
+  return (
+    <div className={cn('border rounded-md p-2.5 bg-bg/30', tint)}>
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <Icon size={11} />
+        <span className="text-ink text-[12px] font-medium">{c.displayName}</span>
+        <span className={cn('ml-auto text-[10px] uppercase tracking-wider font-mono px-1.5 py-0.5 rounded-full border', tint)}>
+          {c.verdict}
+        </span>
+      </div>
+      {c.failed ? (
+        <div className="text-err text-[11px]">failed: {c.error}</div>
+      ) : (
+        <>
+          {c.concerns.length > 0 && (
+            <ul className="text-ink2 text-[11.5px] space-y-0.5 list-disc list-inside marker:text-current mb-1.5">
+              {c.concerns.map((x, i) => <li key={i}>{x}</li>)}
+            </ul>
+          )}
+          {c.suggestedEdits.length > 0 && (
+            <div className="space-y-0.5 mb-1.5">
+              {c.suggestedEdits.map((e, i) => (
+                <div key={i} className="text-[11px] text-ink2 flex items-start gap-1">
+                  <MessageSquare size={9} className="mt-1 shrink-0 opacity-70" />
+                  <span><span className="font-mono text-dim2">{e.where}</span> · {e.what}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+      <div className="text-dim2 text-[10px] font-mono pt-1 border-t border-line/30 flex items-center gap-2 flex-wrap">
+        <span>{c.tokensIn}↓/{c.tokensOut}↑</span>
+        <span>·</span>
+        <span>${c.costUsd.toFixed(4)}</span>
+        <span>·</span>
+        <span>{c.durationMs}ms</span>
+      </div>
+    </div>
   );
 }
 

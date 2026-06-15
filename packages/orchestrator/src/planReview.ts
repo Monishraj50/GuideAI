@@ -13,6 +13,7 @@ import type { SystemChunk } from '@guideai/shared/chunks';
 import { hireAgent } from './hiring.js';
 import { submitBrief } from './cos.js';
 import { autoSeedFromPlan } from './wbs.js';
+import { runCritiques, type CritiqueBundle } from './critique.js';
 import {
   loadIntake, latestDiscovery, type DiscoverySynthesis,
   type HireMode, type PlanningMode,
@@ -50,6 +51,8 @@ export interface PlanRecord {
   notes: string | null;
   briefId: string | null;
   hireSummary: HireDispatchResult | null;
+  critiques: CritiqueBundle | null;
+  critiquesRunAt: number | null;
   createdAt: number;
   updatedAt: number;
   approvedAt: number | null;
@@ -194,6 +197,8 @@ function rowToPlan(row: any): PlanRecord {
     notes: row.notes,
     briefId: row.briefId,
     hireSummary: row.hireSummaryJson ? JSON.parse(row.hireSummaryJson) : null,
+    critiques: row.critiquesJson ? JSON.parse(row.critiquesJson) : null,
+    critiquesRunAt: row.critiquesRunAt ?? null,
     createdAt: row.createdAt, updatedAt: row.updatedAt,
     approvedAt: row.approvedAt, dispatchedAt: row.dispatchedAt,
   };
@@ -270,11 +275,36 @@ export function savePlanEdits(args: {
   if (current.status !== 'draft') throw new Error(`plan ${args.planId} is ${current.status}; cannot edit`);
 
   const patch: Record<string, any> = { updatedAt: Date.now() };
-  if (args.synthesis) patch.editedSynthesisJson = JSON.stringify(args.synthesis);
+  if (args.synthesis) {
+    patch.editedSynthesisJson = JSON.stringify(args.synthesis);
+    // Synthesis changed — any prior critique is stale. Clear so the next
+    // approve call re-runs the critics against the edited version.
+    patch.critiquesJson = null;
+    patch.critiquesRunAt = null;
+  }
   if (args.notes !== undefined) patch.notes = args.notes;
 
   db.update(schema.plans).set(patch).where(eq(schema.plans.id, args.planId)).run();
   return getPlan(args.planId)!;
+}
+
+/** Re-run the critic pass on demand (e.g. after a manual edit, or if the user
+ *  just wants a fresh take). Overwrites any prior bundle. */
+export async function recritique(planId: string): Promise<PlanRecord> {
+  const db = getDb();
+  const plan = getPlan(planId);
+  if (!plan) throw new Error(`plan ${planId} not found`);
+  const intake = loadIntake(plan.workspaceId);
+  const bundle = await runCritiques({
+    workspaceId: plan.workspaceId, planId: plan.id,
+    synthesis: plan.synthesis, intake,
+  });
+  db.update(schema.plans).set({
+    critiquesJson: JSON.stringify(bundle),
+    critiquesRunAt: bundle.ranAt,
+    updatedAt: Date.now(),
+  } as any).where(eq(schema.plans.id, plan.id)).run();
+  return getPlan(plan.id)!;
 }
 
 export function rejectPlan(planId: string): PlanRecord {
@@ -325,10 +355,11 @@ export function composeBriefBody(syn: DiscoverySynthesis, intakeGoal: string): s
  */
 export async function approvePlan(args: {
   planId: string;
-  forceDispatch?: boolean;  // when true, dispatch the brief even if hires are queued
+  forceDispatch?: boolean;  // when true, dispatch the brief even if hires are queued OR critics blocked
+  skipCritique?: boolean;   // when true, never run critics (useful for retries)
 }): Promise<PlanRecord> {
   const db = getDb();
-  const plan = getPlan(args.planId);
+  let plan = getPlan(args.planId);
   if (!plan) throw new Error(`plan ${args.planId} not found`);
   if (plan.status === 'rejected') throw new Error('plan was rejected');
   if (plan.status === 'dispatched') return plan;
@@ -336,6 +367,34 @@ export async function approvePlan(args: {
   const intake = loadIntake(plan.workspaceId);
   const hireMode: HireMode = intake?.hireMode ?? 'manual';
   const securityTagged = plan.synthesis.securityTag === 'required';
+
+  // 0) Critique gate. Run critics if no bundle yet (idempotent per plan version).
+  //    If a critic blocks and forceDispatch is not set, return early without
+  //    hiring or dispatching — the UI must surface the bundle and let the user
+  //    edit + re-approve, or force-dispatch.
+  if (!plan.critiques && !args.skipCritique) {
+    try {
+      const bundle = await runCritiques({
+        workspaceId: plan.workspaceId, planId: plan.id,
+        synthesis: plan.synthesis, intake,
+      });
+      db.update(schema.plans).set({
+        critiquesJson: JSON.stringify(bundle),
+        critiquesRunAt: bundle.ranAt,
+        updatedAt: Date.now(),
+      } as any).where(eq(schema.plans.id, plan.id)).run();
+      plan = getPlan(plan.id)!;
+    } catch (err: any) {
+      // Fail-open: if critique infra dies, don't block the brief. Just log.
+      appendEvent(plan.workspaceId, sys(plan.workspaceId,
+        `critique skipped (continuing): ${err?.message ?? err}`, 'warn'));
+    }
+  }
+  if (plan.critiques?.blocked && !args.forceDispatch) {
+    appendEvent(plan.workspaceId, sys(plan.workspaceId,
+      `plan ${plan.id} blocked by critics · CEO:${plan.critiques.ceo.verdict} Eng:${plan.critiques.eng.verdict} · force-dispatch or edit to proceed`, 'warn'));
+    return plan;  // status stays 'draft', UI shows the critique cards
+  }
 
   // 1) Hires.
   const preview = previewHires({
