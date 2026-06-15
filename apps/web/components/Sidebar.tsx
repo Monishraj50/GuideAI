@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   HomeIcon, RadioTower, Hash, Network, Store, ScrollText,
-  Settings as SettingsIcon, Sparkles, FolderTree,
+  Settings as SettingsIcon, Sparkles, FolderTree, KanbanSquare,
 } from 'lucide-react';
 import { Killswitch } from './Killswitch';
 import { useWorkspaceId } from './WorkspaceProvider';
@@ -14,6 +14,7 @@ import { cn } from '../lib/cn';
 const TABS = [
   { href: '/',         label: 'Home',     hint: 'digest',      icon: HomeIcon },
   { href: '/projects', label: 'Projects', hint: 'all',         icon: FolderTree },
+  { href: '/board',    label: 'Board',    hint: 'kanban',      icon: KanbanSquare },
   { href: '/ops',      label: 'Ops',      hint: 'live feed',   icon: RadioTower },
   { href: '/channels', label: 'Channels', hint: 'team rooms',  icon: Hash },
   { href: '/org',      label: 'Org',      hint: 'roster',      icon: Network },

@@ -1044,3 +1044,144 @@ Security-tagged briefs already ran review at pass@3, but all 3 attempts came fro
 - **No semantic agreement check**. Pass@k still uses the loose "text length ≥ 30 chars" predicate from the evals package — so OpenAI's "Verdict: PASS." block always passes the predicate even if it actually disagrees with Claude. Adding a judge-panel pass that reads each attempt's text and votes on agreement is the next step here.
 - **No streaming from the OpenAI adapter**. `spawn()` throws by design. If we ever want OpenAI to drive a phase as the primary worker, we'd need streaming + an interactive `send/onEvent` impl — the chat completions API supports `stream: true` but the work to thread it through is non-trivial.
 - **One-shot routing only**. `crossVendorIdx = Set([k-1])` is hardcoded. If you wanted "claude × 2 + openai × 2" (k=4) or "claude × 1 + openai × 1 + gemini × 1" (k=3 with 3 vendors), that's a small routing-table addition; the rest of the plumbing accepts it.
+
+---
+
+## Phase 10 — Cross-workspace agent memory
+
+Each role can now accumulate notes that travel between projects, gated by a per-workspace share ACL. Inspired by gstack's GBrain. v1 is manual-only — the user adds notes via UI; we don't auto-distill from traces (skill-promotion is the auto-extraction lane).
+
+**Schema:**
+- `agent_memory` table (id, role, source_workspace_id, body, source, timestamps).
+- `workspaces.memory_share` column: `all | read-only | deny` (default `read-only`).
+
+**Module (`packages/orchestrator/src/memory.ts`):**
+- `createMemory/deleteMemory/listMemoryByWorkspace` CRUD.
+- `getMemoryShare/setMemoryShare` ACL toggle.
+- `loadAgentMemoryForRole({role, currentWorkspaceId, limit?})` — aggregates from current workspace + every other workspace whose share isn't `deny`. Newest first, capped at 6 to keep prompts lean.
+- `renderMemoryBlock({role, currentWorkspaceId})` — produces a markdown block tagging each note with its source (`from \`workspace-id\`` or `this workspace`).
+
+**Pipeline integration (`phases.ts`):**
+- Each phase composes its system prompt as `[personaBlock, memoryBlock, PHASE_PROMPT, skillsContext]`. Memory block prepends right after the role persona so the role-specific notes get top billing.
+
+**Server routes (`apps/server/src/routes/memory.ts`):**
+- `GET /api/workspaces/:id/memory?role=` — list entries from this workspace + current share mode.
+- `POST /api/workspaces/:id/memory` — body `{role, body}` (forced manual source).
+- `DELETE /api/memory/:id`.
+- `PUT /api/workspaces/:id/memory/share` — body `{share}`.
+- `GET /api/workspaces/:id/memory/effective/:role` — what `loadAgentMemoryForRole` would return (useful for debugging share rules + the UI to show "what this role will actually see when run here").
+
+**UI (`apps/web/app/projects/[id]/MemorySection.tsx`):**
+- Cross-workspace share toggle: 3 cards (Share to all / Read-only / Don't share) with icons + descriptions, tinted accent when active.
+- Add-note form (role + body inline inputs).
+- Per-role entries list with hover delete + per-entry timestamp + source tag.
+
+---
+
+## Phase 11 — Design-shotgun (variant generation + taste memory)
+
+When a brief is tagged `[design]` (or `[ux]` / `[ui]`), the implement phase fan-outs to **N=4 parallel variants** instead of one — each driven by a distinct design persona. The user picks one; the pick becomes taste-memory context for the next design brief. gstack-inspired pattern (`/design-shotgun`), reusing the existing pass@k machinery.
+
+**Schema:**
+- `design_picks` table (id, workspace_id, brief_id, picked_deliverable_id, rejected_deliverable_ids, notes, created_at).
+- `deliverables.kind` union extended with `'design-variant'` (also added `'regression-test'` properly since it was being written without a route until now).
+
+**Module (`packages/orchestrator/src/designShotgun.ts`):**
+- `DESIGN_TAG_RE` matches `[design]`, `[ux]`, `[ui]` at the start of a brief.
+- `DESIGN_LENSES` — 4 hardcoded design personas: `mvp-first`, `power-user`, `first-timer`, `accessibility`. Each has its own prompt extension instructing the model on what to optimise for.
+- `persistVariant({workspaceId, briefId, lens, body, index})` — writes one `design-variant` deliverable per attempt (titled `Variant N · lens`).
+- `pickVariant({pickedDeliverableId, notes?})` — replaces any prior pick for the brief, records all siblings as rejected.
+- `renderTasteMemory(workspaceId, limit=4)` — composes a markdown block of past picks for inclusion in future design briefs.
+
+**Pipeline integration (`phases.ts`):**
+- New `isDesignImplement = designTagged && phase === 'implement'` branch.
+- When true: overrides `evalCfg` to `{k: DESIGN_VARIANTS=4, requireAgreement: 1}` so the existing pass@k runner produces 4 attempts.
+- Each attempt gets a **distinct lens prompt** prepended (`## Design lens for this variant: **mvp-first**\n...`) plus the taste-memory block.
+- Each attempt's text is persisted as a deliverable via `persistVariant`.
+- Composes cleanly with cross-vendor (Phase 9): if both designTagged and security review fire, design uses k=4 lenses and review still gets its k=3 with 1 OpenAI attempt — they're different phases.
+
+**cos.ts:**
+- `runPipeline` now receives `designTagged: isDesignTagged(body)` alongside `securityTagged`.
+
+**Mock fixtures:**
+- `mockAdapter` detects the `Design lens for this variant: **lens-name**` line and returns a distinct fixture body per lens (mvp-first / power-user / first-timer / accessibility). Guest mode demos the full shotgun.
+
+**Server routes (in `routes/deliverables.ts`):**
+- `POST /api/deliverables/:id/pick` body `{notes?}` — records the pick + auto-rejects siblings.
+- `GET /api/workspaces/:id/design-picks` — list history.
+
+**UI (`Deliverables.tsx` extended):**
+- New "Design variants" section at the top of the Deliverables grid (Palette icon, accent tint).
+- Each variant card gets a `Check pick this` action.
+- Picked variant cards show a `picked` chip + glow + accent-tinted background.
+- Sibling variants stay listed (you can still open + read them, but the picked one is unambiguous).
+
+---
+
+## Verified end-to-end (P10 + P11 combined, mock driver)
+
+**P10 (memory):**
+1. ✅ Add note in workspace A (`backend-developer: "default rate-limit windows to 60s on auth endpoints"`).
+2. ✅ Effective view from workspace B shows A's note (default share=`read-only`).
+3. ✅ Setting A → `deny` hides it (effective view returns 0 entries).
+4. ✅ Setting A → `all` restores it.
+
+**P11 (design-shotgun):**
+1. ✅ `[design] Build a fresh dashboard…` brief dispatched.
+2. ✅ 4 `design-variant` deliverables produced — one per lens (mvp-first / power-user / first-timer / accessibility), each with its own fixture body.
+3. ✅ Pick variant #3 → returns `{picked: del-…, rejected: [3 sibling ids]}`.
+4. ✅ Pick persists in `design-picks` table.
+5. ✅ Second design brief dispatches; taste-memory block would be included for real Claude (mock fixture doesn't reflect it visually, but the prompt code path is exercised).
+
+---
+
+## Surfaced (Principle 10B) — final two phases
+
+**P10:**
+- **No auto-distillation** from traces. We don't read every phase artifact and extract "lessons learned" — the user writes notes explicitly. Skill promotion (Stop-hook) already auto-captures successful traces as skills; treating that as the auto lane keeps the memory layer simple.
+- **No diff between roles**. If you write a note for `backend-developer`, the `frontend-developer` running in another workspace won't see it. That's deliberate — notes are role-tagged. But the UI doesn't yet surface "memory for which roles are populated" at a glance.
+- **No prompt-injection guard**. Memory bodies go into agent system prompts verbatim. A malicious workspace owner could write `IGNORE ALL PRIOR INSTRUCTIONS` into a note and have it leak across to other projects that read it. Local-first single-user assumption holds today, but if you ever multi-tenant this, sanitise.
+- **No versioning**. Editing a note overwrites. No history kept. A real GBrain would track who wrote what when.
+
+**P11:**
+- **Design-shotgun runs the full pipeline through implement at k=4**, so subsequent phases (review/verify) only see the canonical (longest) variant — not all 4. If you wanted "review each variant independently", that's a separate fan-out pattern, not implemented.
+- **Lenses are hardcoded** (mvp-first / power-user / first-timer / accessibility). Editable lens roster is a Settings-side follow-up.
+- **Taste memory is markdown-template only**. Each new pick adds context to future briefs but we don't train any selector ML on which variants the user prefers. Lightweight by design.
+- **No variant scoring**. The user reads + picks; there's no auto-rank suggestion. A future "designs ranked by your taste so far" pass is straightforward — a haiku judge call over the 4 variants conditioned on past picks.
+- **k=4 hardcoded.** Need 8 lenses? Edit DESIGN_LENSES + bump DESIGN_VARIANTS. The runner accepts any k.
+
+---
+
+# v1 complete
+
+**11 phases shipped end-to-end.** Roadmap from the project plan: Phases 0–7. Stretch from the gstack analysis: Phases 8A, 8B, 9, 10, 11. The local-first happy path is now:
+
+```
+intake → discovery round-table → critic gate (CEO + Eng) → plan review →
+hire orchestration → pipeline (research → plan → implement → review → verify)
+→ WBS auto-seed → dashboard → deliverables harvest → browser validation →
+explainer + slide deck → GitHub bootstrap → cross-vendor review (security) →
+agent memory → design-shotgun
+```
+
+**Surface count today:**
+- 11 packages (`agents-catalog`, `evals`, `messaging`, `metrics`, `orchestrator`, `permission-hook`, `policies`, `runtime-claude`, `runtime-core`, `runtime-openai`, `shared`, `skills`)
+- 2 apps (`apps/web` Next.js Mission Control, `apps/server` Fastify orchestrator)
+- 18 server route files
+- ~25 React UI components on the project page alone
+- 17 SQLite tables
+- 5 integration files at `~/.guideai/integrations/` (claude, github, openai + per-user keying)
+- 5 in-feed event kinds (user, ai, system, tool, phase, approval)
+- 7 deliverable kinds (artifact, slide-deck, explainer, link, file, regression-test, design-variant)
+
+What's left for v2 (per the build plan) is mostly **distribution + cross-runtime breadth**:
+- VS Code extension (planned post-v1; reuses all packages)
+- Additional adapters (Codex CLI proper, Copilot, Gemini — stubs already exist)
+- Public agent marketplace (post server-sync)
+- Voice briefing / Whisper local
+- Replay-to-prompt automation
+- Two-way GitHub sync via polling (we documented the webhook discussion earlier; polling is the local-first answer)
+
+For now: **v1 shippable**. The build contract's 10 ECC principles have been honoured throughout — every cap is visible, every spend is logged, every phase is gated, every cross-vendor mix is auditable, and every limitation is surfaced in this log rather than swallowed.
+
+Build log closes here.

@@ -20,7 +20,7 @@ import type { AIChunk, SystemChunk } from '@guideai/shared/chunks';
 import { tierCost, modelToTier, recordUsage } from '@guideai/policies/budgets';
 import type { DiscoverySynthesis } from './discovery.js';
 
-export type DeliverableKind = 'artifact' | 'slide-deck' | 'explainer' | 'link' | 'file';
+export type DeliverableKind = 'artifact' | 'slide-deck' | 'explainer' | 'link' | 'file' | 'regression-test' | 'design-variant';
 
 export interface Deliverable {
   id: string;

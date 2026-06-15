@@ -8,6 +8,27 @@ export const workspaces = sqliteTable('workspaces', {
   targetUrl: text('target_url'),
   targetUrlAllowlist: text('target_url_allowlist'),  // JSON array of origins
   secondOpinionEnabled: integer('second_opinion_enabled').notNull().default(0),
+  memoryShare: text('memory_share').notNull().default('read-only'),  // all|read-only|deny
+});
+
+export const agentMemory = sqliteTable('agent_memory', {
+  id: text('id').primaryKey(),
+  role: text('role').notNull(),
+  sourceWorkspaceId: text('source_workspace_id').notNull().references(() => workspaces.id),
+  body: text('body').notNull(),
+  source: text('source').notNull().default('manual'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
+export const designPicks = sqliteTable('design_picks', {
+  id: text('id').primaryKey(),
+  workspaceId: text('workspace_id').notNull().references(() => workspaces.id),
+  briefId: text('brief_id'),
+  pickedDeliverableId: text('picked_deliverable_id').notNull(),
+  rejectedDeliverableIds: text('rejected_deliverable_ids').notNull().default('[]'),
+  notes: text('notes'),
+  createdAt: integer('created_at').notNull(),
 });
 
 export const validationRuns = sqliteTable('validation_runs', {

@@ -14,6 +14,7 @@ import { Deliverables } from './Deliverables';
 import { RepoSection } from './RepoSection';
 import { Validation } from './Validation';
 import { SecondOpinionToggle } from './SecondOpinionToggle';
+import { MemorySection } from './MemorySection';
 
 interface PlanResp {
   workspace: { id: string; name: string; autonomyMode: string; createdAt: number };
@@ -116,6 +117,9 @@ export function ProjectPlan({ workspaceId }: { workspaceId: string }) {
 
       {/* Browser-driven validation */}
       <Validation workspaceId={workspaceId} />
+
+      {/* Cross-workspace agent memory */}
+      <MemorySection workspaceId={workspaceId} />
 
       {/* Pending approvals — top of plan since they're blocking */}
       <Section

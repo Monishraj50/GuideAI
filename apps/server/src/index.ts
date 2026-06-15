@@ -28,6 +28,7 @@ import { registerWorkspaceRepoRoutes } from './routes/workspaceRepo.js';
 import { registerValidationRoutes } from './routes/validation.js';
 import { registerOpenAIIntegrationRoutes } from './routes/openaiIntegration.js';
 import { registerSecondOpinionRoutes } from './routes/secondOpinion.js';
+import { registerMemoryRoutes } from './routes/memory.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
 const app = Fastify({ logger: true });
@@ -67,6 +68,7 @@ registerWorkspaceRepoRoutes(app);
 registerValidationRoutes(app);
 registerOpenAIIntegrationRoutes(app);
 registerSecondOpinionRoutes(app);
+registerMemoryRoutes(app);
 
 app.listen({ port: PORT, host: '0.0.0.0' })
   .then(() => app.log.info(`GuideAI server up on :${PORT} (state: ${paths.home})`))

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { getDb, schema } from '@guideai/shared/db';
 import {
   listWorkItems, createWorkItem, updateWorkItem, deleteWorkItem, getWorkItem,
   type WorkStatus, type WorkPriority, type WorkPhase,
@@ -17,6 +18,45 @@ export function registerWorkItemRoutes(app: FastifyInstance) {
       });
       return { items };
     });
+
+  // Cross-workspace board view. Filters via querystring; items enriched with
+  // the workspace's display name so the UI can render a workspace pill per card.
+  app.get<{ Querystring: {
+    workspaceId?: string; status?: WorkStatus; phase?: WorkPhase;
+    priority?: WorkPriority; assignedRole?: string; q?: string;
+  } }>('/api/work-items', async (req) => {
+    const db = getDb();
+    const workspaces = db.select().from(schema.workspaces).all();
+    const nameByWs = new Map(workspaces.map((w) => [w.id, w.name]));
+    let rows = db.select().from(schema.workItems).all();
+    if (req.query.workspaceId)
+      rows = rows.filter((r) => r.workspaceId === req.query.workspaceId);
+    if (STATUSES.includes(req.query.status as WorkStatus))
+      rows = rows.filter((r) => r.status === req.query.status);
+    if (PHASES.includes(req.query.phase as WorkPhase))
+      rows = rows.filter((r) => r.phase === req.query.phase);
+    if (PRIORITIES.includes(req.query.priority as WorkPriority))
+      rows = rows.filter((r) => r.priority === req.query.priority);
+    if (req.query.assignedRole)
+      rows = rows.filter((r) => r.assignedRole === req.query.assignedRole);
+    if (req.query.q) {
+      const q = req.query.q.toLowerCase();
+      rows = rows.filter((r) => r.title.toLowerCase().includes(q) || (r.description ?? '').toLowerCase().includes(q));
+    }
+    const items = rows
+      .map((r) => ({ ...r, workspaceName: nameByWs.get(r.workspaceId) ?? r.workspaceId }))
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+    // Distinct facets — handy for the filter chips.
+    const facets = {
+      workspaces: workspaces
+        .filter((w) => rows.some((r) => r.workspaceId === w.id))
+        .map((w) => ({ id: w.id, name: w.name })),
+      phases: Array.from(new Set(rows.map((r) => r.phase).filter(Boolean))) as string[],
+      priorities: Array.from(new Set(rows.map((r) => r.priority))),
+      roles: Array.from(new Set(rows.map((r) => r.assignedRole).filter(Boolean))) as string[],
+    };
+    return { items, facets };
+  });
 
   app.post<{
     Params: { id: string };

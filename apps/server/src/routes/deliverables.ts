@@ -5,8 +5,9 @@ import {
   harvestBriefDeliverables,
   type DeliverableKind,
 } from '@guideai/orchestrator/deliverables';
+import { pickVariant, listDesignPicks } from '@guideai/orchestrator/designShotgun';
 
-const KINDS: DeliverableKind[] = ['artifact', 'slide-deck', 'explainer', 'link', 'file'];
+const KINDS: DeliverableKind[] = ['artifact', 'slide-deck', 'explainer', 'link', 'file', 'regression-test', 'design-variant'];
 
 export function registerDeliverableRoutes(app: FastifyInstance) {
   app.get<{ Params: { id: string }; Querystring: { briefId?: string; kind?: DeliverableKind } }>(
@@ -48,6 +49,25 @@ export function registerDeliverableRoutes(app: FastifyInstance) {
       reply.code(400); return { error: String(err?.message ?? err) };
     }
   });
+
+  // Pick a design variant (gstack-style design-shotgun) — siblings become rejected.
+  app.post<{ Params: { id: string }; Body?: { notes?: string } }>(
+    '/api/deliverables/:id/pick', async (req, reply) => {
+      try {
+        const pick = pickVariant({
+          pickedDeliverableId: req.params.id,
+          notes: req.body?.notes,
+        });
+        return { pick };
+      } catch (err: any) {
+        reply.code(400); return { error: String(err?.message ?? err) };
+      }
+    });
+
+  app.get<{ Params: { id: string } }>(
+    '/api/workspaces/:id/design-picks', async (req) => {
+      return { picks: listDesignPicks(req.params.id) };
+    });
 
   app.delete<{ Params: { id: string } }>('/api/deliverables/:id', async (req, reply) => {
     try {

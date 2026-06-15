@@ -11,3 +11,5 @@ export * from './github.js';
 export * from './critique.js';
 export * from './validate.js';
 export * from './secondOpinion.js';
+export * from './memory.js';
+export * from './designShotgun.js';

@@ -12,6 +12,10 @@ import {
 } from '@guideai/policies/budgets';
 import { markPhaseComplete, type WorkPhase } from './wbs.js';
 import { setupCrossVendor, type CrossVendorContext } from './secondOpinion.js';
+import { renderMemoryBlock } from './memory.js';
+import {
+  DESIGN_LENSES, DESIGN_VARIANTS, persistVariant, renderTasteMemory,
+} from './designShotgun.js';
 import { loadSkills, skillsForPhase, renderSkillsAsContext } from '@guideai/skills';
 import { runPassK } from '@guideai/evals';
 import type { AIChunk, Chunk, PhaseChunk, SystemChunk } from '@guideai/shared/chunks';
@@ -72,6 +76,9 @@ export interface RunPipelineArgs {
   cwd: string;
   /** When true, security-tagged phases (review) run pass@3. */
   securityTagged?: boolean;
+  /** When true, the implement phase produces N parallel variants for the user
+   *  to pick (gstack-style design-shotgun). */
+  designTagged?: boolean;
   /** Per-phase routing: agent that should actually run each phase. If absent
    *  for a phase, the CoS (agentId above) runs it. */
   route?: Record<Phase, RouteDecision>;
@@ -110,7 +117,7 @@ export interface PipelineResult {
  * context and writes a markdown file to the brief's artifact directory.
  */
 export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult> {
-  const { workspaceId, agentId, briefId, brief, cwd, securityTagged, route } = args;
+  const { workspaceId, agentId, briefId, brief, cwd, securityTagged, designTagged, route } = args;
   ensureBriefDir(workspaceId, briefId);
 
   const skills = loadSkills();
@@ -235,14 +242,22 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
     const personaBlock = worker.systemPrompt && worker.role !== 'chief-of-staff'
       ? `## Your role\n\nYou are **${worker.displayName}** (${worker.role}).\n\n${worker.systemPrompt.slice(0, 1500)}`
       : '';
-    const systemPrompt = [personaBlock, PHASE_PROMPT[phase], skillsContext].filter(Boolean).join('\n\n');
+    const memoryBlock = renderMemoryBlock({
+      role: worker.role, currentWorkspaceId: workspaceId,
+    });
+    const systemPrompt = [personaBlock, memoryBlock, PHASE_PROMPT[phase], skillsContext].filter(Boolean).join('\n\n');
     const workerTools = worker.toolWhitelist && worker.toolWhitelist.length > 0
       ? worker.toolWhitelist
       : READ_ONLY_TOOLS;
 
     // pass@k for security-tagged review. Default elsewhere is k=1 which we
     // run as a single direct call (avoids spinning up the runner for nothing).
-    const evalCfg = securityTagged && phase === 'review' ? CAPS.evals.security : CAPS.evals[phase as 'implement' | 'review'] ?? { k: 1, requireAgreement: 1 };
+    // Design-tagged briefs also fan-out implement at k=DESIGN_VARIANTS — the
+    // "design-shotgun" variant generation lane.
+    const isDesignImplement = !!designTagged && phase === 'implement';
+    const evalCfg = isDesignImplement
+      ? { k: DESIGN_VARIANTS, requireAgreement: 1 }
+      : (securityTagged && phase === 'review' ? CAPS.evals.security : CAPS.evals[phase as 'implement' | 'review'] ?? { k: 1, requireAgreement: 1 });
     const k = evalCfg.k;
 
     if (k > 1) {
@@ -264,15 +279,32 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
         });
       }
       const attemptProvider: ('claude' | 'openai')[] = [];
+      // For design-shotgun: precompute the taste-memory block once so every
+      // variant attempt gets the same context.
+      const tasteBlock = isDesignImplement
+        ? renderTasteMemory(workspaceId) : '';
       const passK = await runPassK<Chunk[]>({
         k, requireAgreement: evalCfg.requireAgreement,
         attempt: async (i: number) => {
           const useOpenAI = !!crossVendor?.crossVendorIdx.has(i);
           attemptProvider[i] = useOpenAI ? 'openai' : 'claude';
           const adapter = useOpenAI ? crossVendor!.adapter : resolveActiveAdapter();
+          // Per-variant lens for design-shotgun. Each variant gets a distinct
+          // design persona prepended to the system prompt + a taste-memory block.
+          const lens = isDesignImplement
+            ? DESIGN_LENSES[i % DESIGN_LENSES.length]!
+            : null;
+          const variantPrompt = lens
+            ? [
+                `## Design lens for this variant: **${lens.lens}**\n${lens.instructions}`,
+                tasteBlock,
+                systemPrompt,
+                'Produce ONE coherent variant in your assigned lens. Be opinionated.',
+              ].filter(Boolean).join('\n\n')
+            : systemPrompt;
           const res = await adapter.runOnce({
-            agentId: useOpenAI ? `${worker.id}-openai` : worker.id,
-            workspaceId, cwd, systemPrompt,
+            agentId: useOpenAI ? `${worker.id}-openai` : (lens ? `${worker.id}-${lens.lens}` : worker.id),
+            workspaceId, cwd, systemPrompt: variantPrompt,
             allowedTools: workerTools, model: routing.tier,
           }, context);
           const text = res.chunks.filter((c): c is AIChunk => c.kind === 'ai').map((c) => c.text).join('\n');
@@ -285,6 +317,21 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
               phase: `${phase}:openai`,
               model: routing.tier, tokensIn: tIn, tokensOut: tOut,
             });
+          }
+          // Persist each design variant as its own deliverable so the UI can
+          // show them as a gallery + the picker can record taste.
+          if (lens && text.trim().length > 0) {
+            try {
+              persistVariant({
+                workspaceId, briefId, lens: lens.lens, body: text, index: i,
+              });
+            } catch (err: any) {
+              appendEvent(workspaceId, {
+                id: randomUUID(), ts: Date.now(), workspaceId, agentId,
+                kind: 'system', level: 'warn',
+                text: `variant ${i + 1} persist skipped: ${err?.message ?? err}`,
+              });
+            }
           }
           return { text, tokensIn: tIn, tokensOut: tOut, durationMs: res.durationMs, passthrough: res.chunks };
         },

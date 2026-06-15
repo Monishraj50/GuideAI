@@ -9,6 +9,7 @@ import { promoteSkillFromTrace } from '@guideai/skills';
 import { harvestBriefDeliverables } from './deliverables.js';
 import { loadTarget, runValidation } from './validate.js';
 import { loadIntake } from './discovery.js';
+import { isDesignTagged } from './designShotgun.js';
 import { eq } from 'drizzle-orm';
 
 const COS_AGENT_ROLE = 'chief-of-staff';
@@ -124,7 +125,8 @@ export async function submitBrief(args: {
   void (async () => {
     try {
       const pipelineResult = await runPipeline({
-        workspaceId, agentId, briefId, brief: body, cwd, securityTagged, route,
+        workspaceId, agentId, briefId, brief: body, cwd, securityTagged,
+        designTagged: isDesignTagged(body), route,
       });
 
       for (const r of pipelineResult.phaseResults) {

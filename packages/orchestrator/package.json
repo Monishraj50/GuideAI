@@ -18,7 +18,9 @@
     "./github": "./src/github.ts",
     "./critique": "./src/critique.ts",
     "./validate": "./src/validate.ts",
-    "./secondOpinion": "./src/secondOpinion.ts"
+    "./secondOpinion": "./src/secondOpinion.ts",
+    "./memory": "./src/memory.ts",
+    "./designShotgun": "./src/designShotgun.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

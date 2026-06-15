@@ -202,6 +202,29 @@ CREATE INDEX IF NOT EXISTS idx_deliverables_workspace ON deliverables(workspace_
 CREATE INDEX IF NOT EXISTS idx_deliverables_brief ON deliverables(brief_id);
 CREATE INDEX IF NOT EXISTS idx_deliverables_kind ON deliverables(kind);
 
+CREATE TABLE IF NOT EXISTS agent_memory (
+  id TEXT PRIMARY KEY,
+  role TEXT NOT NULL,
+  source_workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+  body TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'manual',   -- manual|auto
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_role ON agent_memory(role);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_workspace ON agent_memory(source_workspace_id);
+
+CREATE TABLE IF NOT EXISTS design_picks (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+  brief_id TEXT,
+  picked_deliverable_id TEXT NOT NULL,
+  rejected_deliverable_ids TEXT NOT NULL DEFAULT '[]',  -- JSON array
+  notes TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_design_picks_workspace ON design_picks(workspace_id);
+
 CREATE TABLE IF NOT EXISTS validation_runs (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id),
@@ -264,6 +287,7 @@ function main() {
     "ALTER TABLE workspaces ADD COLUMN target_url TEXT",
     "ALTER TABLE workspaces ADD COLUMN target_url_allowlist TEXT",
     "ALTER TABLE workspaces ADD COLUMN second_opinion_enabled INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE workspaces ADD COLUMN memory_share TEXT NOT NULL DEFAULT 'read-only'",
   ]) {
     try { db.exec(stmt); } catch (e: any) {
       if (!/duplicate column/i.test(String(e?.message ?? ''))) throw e;

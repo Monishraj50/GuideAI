@@ -4,11 +4,22 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Package, FileText, BookOpen, Link as LinkIcon, Paperclip, Presentation,
   X, ChevronLeft, ChevronRight, Plus, RefreshCw, ExternalLink, Trash2, Sparkles,
+  Palette, Check, FlaskConical,
 } from 'lucide-react';
 import { toast } from '../../../components/Toast';
 import { cn } from '../../../lib/cn';
 
-type Kind = 'artifact' | 'slide-deck' | 'explainer' | 'link' | 'file';
+type Kind = 'artifact' | 'slide-deck' | 'explainer' | 'link' | 'file' | 'regression-test' | 'design-variant';
+
+interface DesignPick {
+  id: string;
+  workspaceId: string;
+  briefId: string | null;
+  pickedDeliverableId: string;
+  rejectedDeliverableIds: string[];
+  notes: string | null;
+  createdAt: number;
+}
 
 interface Deliverable {
   id: string;
@@ -27,14 +38,16 @@ interface Deliverable {
 }
 
 const KIND_META: Record<Kind, { label: string; icon: React.ComponentType<{ size?: number; className?: string }>; tint: string }> = {
-  'slide-deck': { label: 'Slide decks', icon: Presentation, tint: 'text-accent border-accent/40' },
-  'explainer':  { label: 'Explainers',  icon: BookOpen,     tint: 'text-info border-info/40' },
-  'artifact':   { label: 'Phase artifacts', icon: FileText, tint: 'text-warn border-warn/40' },
-  'link':       { label: 'Links',       icon: LinkIcon,     tint: 'text-dim border-line/70' },
-  'file':       { label: 'Files',       icon: Paperclip,    tint: 'text-dim border-line/70' },
+  'design-variant':  { label: 'Design variants', icon: Palette,      tint: 'text-accent border-accent/40' },
+  'slide-deck':      { label: 'Slide decks',     icon: Presentation, tint: 'text-accent border-accent/40' },
+  'explainer':       { label: 'Explainers',      icon: BookOpen,     tint: 'text-info border-info/40' },
+  'artifact':        { label: 'Phase artifacts', icon: FileText,     tint: 'text-warn border-warn/40' },
+  'regression-test': { label: 'Regression tests', icon: FlaskConical, tint: 'text-info border-info/40' },
+  'link':            { label: 'Links',           icon: LinkIcon,     tint: 'text-dim border-line/70' },
+  'file':            { label: 'Files',           icon: Paperclip,    tint: 'text-dim border-line/70' },
 };
 
-const KIND_ORDER: Kind[] = ['slide-deck', 'explainer', 'artifact', 'link', 'file'];
+const KIND_ORDER: Kind[] = ['design-variant', 'slide-deck', 'explainer', 'artifact', 'regression-test', 'link', 'file'];
 
 function fmtTs(ms: number) {
   const d = Date.now() - ms;
@@ -53,22 +66,42 @@ export function Deliverables({ workspaceId }: { workspaceId: string }) {
     kind: 'link', title: '', uri: '', briefId: '',
   });
 
+  const [picks, setPicks] = useState<DesignPick[]>([]);
+
   async function refresh() {
     try {
-      const r = await fetch(`/api/workspaces/${workspaceId}/deliverables`);
-      if (r.ok) {
-        const j = await r.json();
-        setItems(j.items ?? []);
-      }
+      const [r, p] = await Promise.all([
+        fetch(`/api/workspaces/${workspaceId}/deliverables`).then((x) => x.json()),
+        fetch(`/api/workspaces/${workspaceId}/design-picks`).then((x) => x.ok ? x.json() : { picks: [] }).catch(() => ({ picks: [] })),
+      ]);
+      setItems(r.items ?? []);
+      setPicks(p.picks ?? []);
     } catch {}
   }
   useEffect(() => { refresh(); const t = setInterval(refresh, 6000); return () => clearInterval(t); }, [workspaceId]);
 
+  const pickedIds = useMemo(() => new Set(picks.map((p) => p.pickedDeliverableId)), [picks]);
+
   const grouped = useMemo(() => {
-    const out: Record<Kind, Deliverable[]> = { 'slide-deck': [], explainer: [], artifact: [], link: [], file: [] };
+    const out: Record<Kind, Deliverable[]> = {
+      'design-variant': [], 'slide-deck': [], explainer: [], artifact: [],
+      'regression-test': [], link: [], file: [],
+    };
     for (const it of items) out[it.kind]?.push(it);
     return out;
   }, [items]);
+
+  async function pickVariant(id: string) {
+    try {
+      const r = await fetch(`/api/deliverables/${id}/pick`, { method: 'POST' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error ?? 'pick failed');
+      toast({ title: 'Variant picked · taste recorded', variant: 'success' });
+      await refresh();
+    } catch (e: any) {
+      toast({ title: 'Pick failed', description: e?.message, variant: 'error' });
+    }
+  }
 
   async function destroy(id: string) {
     if (!confirm('Delete this deliverable?')) return;
@@ -236,6 +269,8 @@ export function Deliverables({ workspaceId }: { workspaceId: string }) {
                       key={d.id} d={d}
                       onOpen={() => { setOpen(d); setSlideIdx(0); }}
                       onDelete={() => destroy(d.id)}
+                      picked={pickedIds.has(d.id)}
+                      onPick={d.kind === 'design-variant' ? () => pickVariant(d.id) : undefined}
                     />
                   ))}
                 </div>
@@ -257,16 +292,26 @@ export function Deliverables({ workspaceId }: { workspaceId: string }) {
   );
 }
 
-function DeliverableCard({ d, onOpen, onDelete }: { d: Deliverable; onOpen: () => void; onDelete: () => void }) {
+function DeliverableCard({ d, onOpen, onDelete, picked, onPick }: {
+  d: Deliverable; onOpen: () => void; onDelete: () => void;
+  picked?: boolean; onPick?: () => void;
+}) {
   const meta = KIND_META[d.kind];
   const Icon = meta.icon;
   const slideCount = d.kind === 'slide-deck' && d.body ? d.body.split(/\n---\n/).length : null;
   return (
-    <div className={cn('group rounded-md border bg-surface2/40 p-3 hover:border-line2 transition-colors', meta.tint)}>
+    <div className={cn(
+      'group rounded-md border bg-surface2/40 p-3 hover:border-line2 transition-colors',
+      meta.tint,
+      picked && 'shadow-glow border-accent/60 bg-accent/[0.06]',
+    )}>
       <div className="flex items-start gap-2">
         <Icon size={13} className={meta.tint.split(' ')[0]} />
         <div className="flex-1 min-w-0">
-          <div className="text-ink text-[13px] font-medium truncate">{d.title}</div>
+          <div className="text-ink text-[13px] font-medium truncate flex items-center gap-1.5">
+            {d.title}
+            {picked && <span className="text-[10px] uppercase tracking-wider font-mono px-1.5 py-0.5 rounded-full border border-accent/40 text-accent bg-accent/15">picked</span>}
+          </div>
           <div className="text-dim2 text-[10px] flex items-center gap-2 mt-0.5 font-mono">
             <span>{d.briefId ?? '(no brief)'}</span>
             <span>·</span>
@@ -293,6 +338,15 @@ function DeliverableCard({ d, onOpen, onDelete }: { d: Deliverable; onOpen: () =
           <a href={d.uri} target="_blank" rel="noreferrer" className="text-accent hover:underline text-[11px] flex items-center gap-0.5">
             visit <ExternalLink size={9} />
           </a>
+        )}
+        {onPick && !picked && (
+          <button
+            onClick={onPick}
+            className="text-accent hover:underline text-[11px] flex items-center gap-0.5"
+            title="Pick this variant — taste memory will use it for future design briefs"
+          >
+            <Check size={10} /> pick this
+          </button>
         )}
         <button onClick={onDelete} className="ml-auto text-dim2 hover:text-err opacity-0 group-hover:opacity-100 transition-opacity">
           <Trash2 size={11} />

@@ -93,8 +93,38 @@ const VALIDATE_FIXTURE = `[
   { "step": "expectVisible", "selector": "[data-test=project-list], main", "criterion": "projects surface reachable" }
 ]`;
 
+const DESIGN_VARIANTS: Record<string, string> = {
+  'mvp-first':
+    '## Variant: MVP-first\n\n' +
+    '- Single page, single action — no nav.\n' +
+    '- Inline empty state explains what one click will do.\n' +
+    '- Defer settings/preferences entirely. Ship; learn from real users.\n' +
+    'Files: `src/HomePage.tsx`, `src/api/create.ts`.',
+  'power-user':
+    '## Variant: Power-user\n\n' +
+    '- Dense table with sortable columns, keyboard shortcuts `j/k/g`.\n' +
+    '- Command palette (`⌘K`) is the primary verb-source.\n' +
+    '- Skip onboarding; surface advanced filters by default.\n' +
+    'Files: `src/PowerTable.tsx`, `src/cmdk/`.',
+  'first-timer':
+    '## Variant: First-timer\n\n' +
+    '- Three-step wizard with progress dots.\n' +
+    '- Every input has helper text + an example below.\n' +
+    '- Empty state shows a 30-second product tour.\n' +
+    'Files: `src/onboarding/Wizard.tsx`, `src/EmptyState.tsx`.',
+  'accessibility':
+    '## Variant: Accessibility-first\n\n' +
+    '- All interactive surfaces reachable by tab; visible focus rings.\n' +
+    '- Contrast AA against light + dark; large click targets.\n' +
+    '- Screen-reader landmarks: header/main/aside; semantic headings.\n' +
+    'Files: `src/components/Button.tsx`, `src/theme/contrast.ts`.',
+};
+
 function pickResponse(systemPrompt: string | undefined, prompt: string): string {
   const haystack = `${systemPrompt ?? ''}\n${prompt}`.toLowerCase();
+  // Design-shotgun lens detection — match before any generic implement fallback.
+  const lensMatch = haystack.match(/design lens for this variant:\s*\*\*([a-z-]+)\*\*/);
+  if (lensMatch?.[1] && DESIGN_VARIANTS[lensMatch[1]]) return DESIGN_VARIANTS[lensMatch[1]]!;
   if (haystack.includes('[validate]') || haystack.includes("guideai's validator")) return VALIDATE_FIXTURE;
   if (haystack.includes('[explainer]') || haystack.includes("guideai's explainer")) return EXPLAINER_FIXTURE;
   const critique = haystack.match(/\[critique:(ceo|eng)\]/);
