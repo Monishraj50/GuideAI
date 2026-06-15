@@ -16,7 +16,8 @@
     "./wbs": "./src/wbs.ts",
     "./deliverables": "./src/deliverables.ts",
     "./github": "./src/github.ts",
-    "./critique": "./src/critique.ts"
+    "./critique": "./src/critique.ts",
+    "./validate": "./src/validate.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

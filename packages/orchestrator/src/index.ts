@@ -9,3 +9,4 @@ export * from './wbs.js';
 export * from './deliverables.js';
 export * from './github.js';
 export * from './critique.js';
+export * from './validate.js';

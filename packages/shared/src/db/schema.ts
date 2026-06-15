@@ -5,6 +5,26 @@ export const workspaces = sqliteTable('workspaces', {
   name: text('name').notNull(),
   autonomyMode: text('autonomy_mode').notNull().default('approval-gated'),
   createdAt: integer('created_at').notNull(),
+  targetUrl: text('target_url'),
+  targetUrlAllowlist: text('target_url_allowlist'),  // JSON array of origins
+});
+
+export const validationRuns = sqliteTable('validation_runs', {
+  id: text('id').primaryKey(),
+  workspaceId: text('workspace_id').notNull().references(() => workspaces.id),
+  briefId: text('brief_id'),
+  status: text('status').notNull().default('running'),
+  targetUrl: text('target_url').notNull(),
+  scriptJson: text('script_json').notNull(),
+  reportJson: text('report_json'),
+  screenshotsDir: text('screenshots_dir'),
+  source: text('source').notNull().default('auto'),
+  tokensIn: integer('tokens_in').notNull().default(0),
+  tokensOut: integer('tokens_out').notNull().default(0),
+  costUsd: real('cost_usd').notNull().default(0),
+  startedAt: integer('started_at').notNull(),
+  endedAt: integer('ended_at'),
+  errorMessage: text('error_message'),
 });
 
 export const agents = sqliteTable('agents', {

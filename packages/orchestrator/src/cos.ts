@@ -7,6 +7,8 @@ import { runPipeline, PHASE_ORDER } from './phases.js';
 import { routeRoster, type RoutableAgent } from './routing.js';
 import { promoteSkillFromTrace } from '@guideai/skills';
 import { harvestBriefDeliverables } from './deliverables.js';
+import { loadTarget, runValidation } from './validate.js';
+import { loadIntake } from './discovery.js';
 import { eq } from 'drizzle-orm';
 
 const COS_AGENT_ROLE = 'chief-of-staff';
@@ -176,19 +178,39 @@ export async function submitBrief(args: {
 
       // Phase 6/7 — harvest deliverables (artifacts + slide deck + explainer).
       // Try to find the synthesis from the plan that produced this brief.
+      let synthesisForHooks: any = null;
       try {
         const plan = db.select().from(schema.plans).all()
           .find((p) => p.briefId === briefId);
-        const synthesis = plan?.editedSynthesisJson
+        synthesisForHooks = plan?.editedSynthesisJson
           ? (JSON.parse(plan.editedSynthesisJson) as any) : null;
         await harvestBriefDeliverables({
-          workspaceId, briefId, briefBody: body, synthesis,
+          workspaceId, briefId, briefBody: body, synthesis: synthesisForHooks,
         });
       } catch (err: any) {
         appendEvent(workspaceId, {
           ...base(workspaceId, agentId),
           kind: 'system', level: 'warn',
           text: `deliverables harvest skipped: ${err?.message ?? err}`,
+        } as SystemChunk);
+      }
+
+      // Phase 8B — browser-driven validation, if a target_url is configured.
+      try {
+        const cfg = loadTarget(workspaceId);
+        if (cfg.targetUrl) {
+          const intake = loadIntake(workspaceId);
+          await runValidation({
+            workspaceId, briefId, briefBody: body,
+            synthesis: synthesisForHooks, intake,
+            source: 'auto',
+          });
+        }
+      } catch (err: any) {
+        appendEvent(workspaceId, {
+          ...base(workspaceId, agentId),
+          kind: 'system', level: 'warn',
+          text: `auto validation skipped: ${err?.message ?? err}`,
         } as SystemChunk);
       }
 

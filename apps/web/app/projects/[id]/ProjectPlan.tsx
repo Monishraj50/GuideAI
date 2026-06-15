@@ -12,6 +12,7 @@ import { PlanReview } from './PlanReview';
 import { Dashboard } from './Dashboard';
 import { Deliverables } from './Deliverables';
 import { RepoSection } from './RepoSection';
+import { Validation } from './Validation';
 
 interface PlanResp {
   workspace: { id: string; name: string; autonomyMode: string; createdAt: number };
@@ -108,6 +109,9 @@ export function ProjectPlan({ workspaceId }: { workspaceId: string }) {
 
       {/* GitHub repo — push deliverables, sync WBS → issues */}
       <RepoSection workspaceId={workspaceId} />
+
+      {/* Browser-driven validation */}
+      <Validation workspaceId={workspaceId} />
 
       {/* Pending approvals — top of plan since they're blocking */}
       <Section

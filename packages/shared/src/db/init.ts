@@ -202,6 +202,26 @@ CREATE INDEX IF NOT EXISTS idx_deliverables_workspace ON deliverables(workspace_
 CREATE INDEX IF NOT EXISTS idx_deliverables_brief ON deliverables(brief_id);
 CREATE INDEX IF NOT EXISTS idx_deliverables_kind ON deliverables(kind);
 
+CREATE TABLE IF NOT EXISTS validation_runs (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+  brief_id TEXT,
+  status TEXT NOT NULL DEFAULT 'running',     -- running|pass|fail|error|skipped
+  target_url TEXT NOT NULL,
+  script_json TEXT NOT NULL,                   -- the persisted Playwright-lite script
+  report_json TEXT,                            -- {steps: [...], summary: {...}}
+  screenshots_dir TEXT,
+  source TEXT NOT NULL DEFAULT 'auto',         -- auto|manual|rerun
+  tokens_in INTEGER NOT NULL DEFAULT 0,
+  tokens_out INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER,
+  error_message TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_validation_runs_workspace ON validation_runs(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_validation_runs_brief ON validation_runs(brief_id);
+
 CREATE TABLE IF NOT EXISTS workspace_repos (
   workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id),
   owner TEXT NOT NULL,
@@ -241,6 +261,8 @@ function main() {
     "ALTER TABLE work_items ADD COLUMN github_issue_url TEXT",
     "ALTER TABLE plans ADD COLUMN critiques_json TEXT",
     "ALTER TABLE plans ADD COLUMN critiques_run_at INTEGER",
+    "ALTER TABLE workspaces ADD COLUMN target_url TEXT",
+    "ALTER TABLE workspaces ADD COLUMN target_url_allowlist TEXT",
   ]) {
     try { db.exec(stmt); } catch (e: any) {
       if (!/duplicate column/i.test(String(e?.message ?? ''))) throw e;

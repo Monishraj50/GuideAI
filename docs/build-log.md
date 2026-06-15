@@ -901,3 +901,82 @@ Between draft and dispatch, two parallel critics now read the plan — a **CEO l
 - **Suggested edits are not auto-applied.** The UI shows them as text annotations next to the field name; user reads, decides, edits manually. That's deliberate — auto-applying LLM suggestions to a plan the user is reviewing would defeat the point.
 - **No `force-skip-critique` UI flag** — `skipCritique` exists on the module but isn't surfaced. If a user wanted to disable critique entirely (e.g. for trusted templates), that's a Settings-side toggle to add later.
 - **Mock fixture is single-shot** — CEO always returns `needs-revision`, Eng always `pass`. For real Claude, the verdicts vary plan-to-plan. The deterministic fixture is good for testing the gate logic; not representative of real behaviour.
+
+---
+
+## Phase 8B — Browser-driven validation
+
+The first GuideAI surface that **actually runs** the user's app instead of just describing it. After a brief completes, if a `target_url` is set on the workspace, an LLM composes a tiny test script from the success criteria and a real Chromium drives it — assertion-by-assertion — producing a structured report with screenshots. The script is persisted as a `regression-test` deliverable so re-runs are LLM-free. Inspired by gstack's `/qa` skill.
+
+**Schema (`packages/shared/src/db/init.ts` + `schema.ts`):**
+- `workspaces` gets two columns (idempotent ALTER):
+  - `target_url TEXT` — where Playwright drives (e.g. `http://localhost:5173`)
+  - `target_url_allowlist TEXT` — JSON array of origins the script is allowed to navigate to
+- New `validation_runs` table: `id`, `workspace_id`, `brief_id`, `status` (`running|pass|fail|error|skipped`), `target_url`, `script_json`, `report_json` (steps + summary), `screenshots_dir`, `source` (`auto|manual|rerun`), tokens/cost columns, timestamps, `error_message`.
+
+**Optional Playwright dep:**
+- Added to `apps/server/package.json` under `optionalDependencies` so an install failure (or skipping it on a constrained box) doesn't break the install. Runtime loads it via dynamic `import('playwright')` wrapped in try/catch with a `@ts-ignore` (Playwright's types aren't visible to tsc when not installed).
+- **Mock driver fallback**: when Playwright isn't loadable, `driveScript` falls back to a synthetic driver that marks every step as passed with deterministic durations — no Chromium, no screenshots, but the rest of the flow (script compose + persist + report + deliverable) still works. Lets guest mode + dev-without-Playwright demo end-to-end.
+
+**Module (`packages/orchestrator/src/validate.ts`):**
+- **Restricted script vocabulary** (deliberately small): `goto | click | fill | expectText | expectVisible | screenshot`. Each step has typed optional fields (`url, selector, text, contains, label, criterion`). Anything else returned by the LLM is silently dropped during parse, not crashed-on.
+- `goto.url` templates `{TARGET}` → the configured target URL. Script can't navigate elsewhere by design.
+- `composeScript()` → one cheap haiku call with a strict-JSON prompt + `[validate]` marker. Tolerant parser: strips code fences, finds the first `[...]` block, validates each step.
+- `runValidation({workspaceId, briefId, briefBody, synthesis?, intake?, source?})`:
+  1. Loads target config → throws clean errors if `target_url` unset or origin not in allowlist
+  2. Inserts the run row in `running` status (so the UI shows progress)
+  3. Composes script, persists it, records usage with `phase='validate'` (Phase 0 budget HUD picks it up)
+  4. Drives the script (Playwright or mock), captures screenshots per step + on failure
+  5. Persists report + screenshots dir, marks `pass`/`fail` per summary
+  6. Also persists the script as a `regression-test` deliverable for browse-ability + reruns
+- `rerunValidation({runId})` — replays a persisted script against the current `target_url` with **zero LLM calls**. Source is `rerun`.
+- **Failure handling**: assertion failures don't abort the run — every step records its result, and we keep going so the report is fully informative. A failure screenshot is captured automatically.
+- **Allowlist semantics**: `saveTarget` auto-merges the target's origin into the allowlist ONLY when the caller doesn't pass an explicit allowlist. When they do, the allowlist is honoured verbatim — that's the gate that prevents a malicious target URL from being self-authorising.
+
+**Mock fixtures (`packages/runtime-claude/src/mockAdapter.ts`):**
+- `[validate]` marker triggers a 7-step JSON fixture (goto → screenshot → expectVisible body → expectText brand → click → screenshot → expectVisible main). Guest mode demos the whole flow.
+
+**Pipeline integration (`packages/orchestrator/src/cos.ts`):**
+- Post-pipeline hook (after deliverables harvest): if `target_url` is set, call `runValidation` with `source='auto'`. Wrapped in `try/catch` — a validation failure must never block the brief. Emits a `warn` chunk if it skipped.
+
+**Server (`apps/server/src/routes/validation.ts`):**
+- `GET /api/workspaces/:id/target` — current config
+- `PUT /api/workspaces/:id/target` — body `{targetUrl?, allowlist?}`. Bad URLs → 400.
+- `GET /api/workspaces/:id/validations?briefId=` — history
+- `GET /api/workspaces/:id/validation/latest?briefId=`
+- `GET /api/validations/:id` — fetch one
+- `POST /api/workspaces/:id/briefs/:briefId/validate` — manual run; pre-validates target + allowlist before kicking
+- `POST /api/validations/:id/rerun`
+- `GET /api/validations/:id/screenshots/:name` — streams PNGs, path-traversal hardened (`basename` + regex + final `startsWith(dir + sep)` guard)
+
+**UI (`apps/web/app/projects/[id]/Validation.tsx`):**
+- New section under the GitHub repo panel. Auto-refresh every 6s.
+- **Target config card**: collapsed when set (one-line target + origin count) / expanded modal-ish when editing. Allowlist chips with add/remove. Bad URL save → toast error.
+- **Per-brief manual-run row**: chip buttons for every brief that's had a validation run, click to re-validate that brief.
+- **Latest run card** (full-width, headline-tinted): status pill + icon (CheckCircle2/XCircle/AlertTriangle), target URL, brief id, `N/M steps passed`, duration, source tag, `open`/`rerun` actions.
+- **History (collapsible details)**: 2-col grid of earlier runs in the same card shape.
+- **Full-screen run detail modal** (click "open"):
+  - Status header with status pill + run id
+  - Summary KPIs (total/passed/failed/duration)
+  - **Per-step list**: each step shows `step` keyword + selector (mono) + criterion (humanised) + duration + screenshot inline (when present). Failed steps show the error line.
+  - Collapsible raw script JSON for transparency.
+  - Tokens/cost/source footer.
+
+**Verified end-to-end (`p8b-test`, auto+auto, mock driver):**
+1. ✅ Target unset → `{targetUrl:null, allowlist:[]}`.
+2. ✅ PUT `targetUrl="http://localhost:5173/dashboard"` (no allowlist) → origin `http://localhost:5173` auto-merged.
+3. ✅ PUT `targetUrl="not-a-url"` → 400 `targetUrl must be a valid URL`.
+4. ✅ Discovery → Phase 8A critic blocked (CEO `needs-revision`) → manually force-dispatched plan → pipeline ran → auto-validation fired at `source=auto`, ran the 7-step mock script, all 7 passed.
+5. ✅ Regression-test deliverable persisted (script JSON, briefId-tagged).
+6. ✅ Manual run via `POST /briefs/:id/validate` — fresh script, all steps pass.
+7. ✅ Rerun via `POST /validations/:id/rerun` — `tokensIn=0` (no LLM), `source=rerun`, same outcome.
+8. ✅ Bad target with explicit non-matching allowlist (`targetUrl=evil`, `allowlist=[only-this]`) → `POST /validate` returns 400 with `target_url origin not in allowlist`.
+
+**Surfaced (Principle 10B):**
+- **No Playwright on the test box** — the mock driver carried the end-to-end demo. Real-browser smoke requires `pnpm -F @guideai/server add playwright && pnpm exec playwright install chromium` first (~50MB JS + ~170MB browser). Module already handles both paths; no code change needed.
+- **No ML prompt-injection classifier** (gstack ships a 22MB ONNX model for `/browse`). v1 mitigation = URL allowlist + restricted script vocabulary + `goto.url` templated to `{TARGET}` only. If a user adds untrusted origins, they're on the hook. This is documented in the target-config UI.
+- **No visual diff regressions**. Screenshots are captured but never compared. A future `expectScreenshotMatches` step would close that loop; for now, validation = success-criteria pass/fail only.
+- **Composer is fallible**. If the LLM returns invalid JSON / missing steps, the parser throws and the run is marked `error` with the message. We don't retry composition.
+- **Tests rot**. The persisted script is a snapshot — selectors like `button[data-test=submit]` will break if the user renames `data-test`. No self-healing today; the user would re-run validation against a fresh brief to regenerate. A future "self-healing tests" pass would re-prompt when a step fails to find its target.
+- **Auto-validate respects Phase 8A's critic gate**. If critics block dispatch, no brief is submitted, so the validation hook doesn't fire. Confirmed during the smoke: had to force-dispatch through the CEO `needs-revision` before the pipeline + auto-validate would run.
+- **Same-machine assumption**. The `target_url` must be reachable from the GuideAI server process. For local dev, that's `localhost`. For a hosted GuideAI, it's whatever the user's app is running at. We don't tunnel into the user's machine.

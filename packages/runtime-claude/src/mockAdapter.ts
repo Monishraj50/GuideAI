@@ -83,8 +83,19 @@ const CRITIQUE_RESPONSES: Record<string, string> = {
     'RATIONALE: stack + roles are sensible; risks are surfaced but mitigations are light.',
 };
 
+const VALIDATE_FIXTURE = `[
+  { "step": "goto", "url": "{TARGET}" },
+  { "step": "screenshot", "label": "landing" },
+  { "step": "expectVisible", "selector": "body", "criterion": "page renders without error" },
+  { "step": "expectText", "selector": "title, h1, [data-test=hero]", "contains": "GuideAI", "criterion": "brand visible on landing" },
+  { "step": "click", "selector": "a[href*=\\"projects\\"], button[data-test=projects]" },
+  { "step": "screenshot", "label": "projects" },
+  { "step": "expectVisible", "selector": "[data-test=project-list], main", "criterion": "projects surface reachable" }
+]`;
+
 function pickResponse(systemPrompt: string | undefined, prompt: string): string {
   const haystack = `${systemPrompt ?? ''}\n${prompt}`.toLowerCase();
+  if (haystack.includes('[validate]') || haystack.includes("guideai's validator")) return VALIDATE_FIXTURE;
   if (haystack.includes('[explainer]') || haystack.includes("guideai's explainer")) return EXPLAINER_FIXTURE;
   const critique = haystack.match(/\[critique:(ceo|eng)\]/);
   if (critique?.[1] && CRITIQUE_RESPONSES[critique[1]]) return CRITIQUE_RESPONSES[critique[1]]!;
