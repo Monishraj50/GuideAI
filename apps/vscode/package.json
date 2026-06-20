@@ -1,0 +1,107 @@
+{
+  "name": "@guideai/vscode",
+  "displayName": "Atrium.AI",
+  "description": "Your AI workplace, inside VS Code. Brief your team, watch the pipeline, ship faster.",
+  "version": "0.1.0",
+  "publisher": "atrium-ai",
+  "private": true,
+  "license": "AGPL-3.0",
+  "main": "./dist/extension.js",
+  "engines": {
+    "vscode": "^1.85.0",
+    "node": ">=20"
+  },
+  "categories": ["AI", "Other"],
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "atrium",
+          "title": "Atrium.AI",
+          "icon": "images/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "atrium": [
+        {
+          "id": "atrium.activeWork",
+          "name": "Active work",
+          "icon": "$(target)"
+        },
+        {
+          "id": "atrium.pending",
+          "name": "Pending",
+          "icon": "$(check)"
+        },
+        {
+          "id": "atrium.team",
+          "name": "Team",
+          "icon": "$(organization)"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Atrium.AI",
+      "properties": {
+        "atrium.serverPort": {
+          "type": "number",
+          "default": 4000,
+          "description": "Port the Fastify server listens on."
+        },
+        "atrium.webPort": {
+          "type": "number",
+          "default": 3000,
+          "description": "Port the Next.js dev server listens on."
+        },
+        "atrium.autoSpawn": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto-spawn the Atrium server + web on activation if they aren't already running."
+        },
+        "atrium.repoRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the Atrium monorepo root (auto-detected; override if running from a different location)."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "atrium.openMissionControl",
+        "title": "Atrium: Open Mission Control"
+      },
+      {
+        "command": "atrium.refresh",
+        "title": "Atrium: Refresh sidebar"
+      },
+      {
+        "command": "atrium.restartServer",
+        "title": "Atrium: Restart server"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "atrium.refresh",
+          "when": "view == atrium.activeWork || view == atrium.pending || view == atrium.team",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json -w",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@guideai/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.6.3"
+  }
+}

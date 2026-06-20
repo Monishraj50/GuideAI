@@ -1,0 +1,54 @@
+// 👥 Team — hired roster for the active project.
+
+import * as vscode from 'vscode';
+import { AtriumApi, type Agent } from '../api';
+
+interface Node {
+  label: string;
+  description?: string;
+  tooltip?: string;
+  iconId?: string;
+  contextValue?: string;
+  agent?: Agent;
+}
+
+export class TeamProvider implements vscode.TreeDataProvider<Node> {
+  private _emit = new vscode.EventEmitter<Node | undefined | void>();
+  readonly onDidChangeTreeData = this._emit.event;
+  refresh() { this._emit.fire(); }
+
+  constructor(
+    private api: AtriumApi,
+    private activeWorkspaceId: () => string | null,
+  ) {}
+
+  getTreeItem(node: Node): vscode.TreeItem {
+    const item = new vscode.TreeItem(node.label, vscode.TreeItemCollapsibleState.None);
+    if (node.description) item.description = node.description;
+    if (node.tooltip)     item.tooltip = node.tooltip;
+    if (node.iconId)      item.iconPath = new vscode.ThemeIcon(node.iconId);
+    if (node.contextValue) item.contextValue = node.contextValue;
+    return item;
+  }
+
+  async getChildren(): Promise<Node[]> {
+    const wsId = this.activeWorkspaceId();
+    if (!wsId) return [{ label: 'No active project', iconId: 'info' }];
+
+    const agents = await this.api.listAgents(wsId);
+    if (agents.length === 0) {
+      return [
+        { label: 'No agents hired yet', description: 'auto-hires when you brief', iconId: 'info' },
+        { label: 'Browse marketplace →', description: 'open Hire in Mission Control', iconId: 'arrow-right', contextValue: 'openMarketplace' },
+      ];
+    }
+    return agents.map((a): Node => ({
+      label: a.displayName,
+      description: a.role,
+      tooltip: `${a.displayName} (${a.role}) · status: ${a.status}`,
+      iconId: a.status === 'working' ? 'sync~spin' : a.status === 'retired' ? 'archive' : 'organization',
+      contextValue: 'agent',
+      agent: a,
+    }));
+  }
+}
