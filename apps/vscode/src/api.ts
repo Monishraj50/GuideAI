@@ -126,6 +126,61 @@ export class AtruneApi {
     }
   }
 
+  /** Zero-config workspace creation from a task title. Server generates the
+   *  slug + date suffix; client just supplies the human-readable task. */
+  async createAutoWorkspace(taskTitle: string, kind: 'auto-task' | 'project' = 'auto-task')
+  : Promise<{ ok: boolean; id?: string; name?: string; error?: string }> {
+    try {
+      const r = await fetch(`${base()}/api/workspaces/auto`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ taskTitle, kind }),
+      });
+      const j = await r.json() as any;
+      if (!r.ok) return { ok: false, error: j?.error ?? `http ${r.status}` };
+      return { ok: true, id: j.id, name: j.name };
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }
+
+  /** Global Claude integration — for the first-launch zero-config flow. */
+  async getGlobalClaude(): Promise<{ apiKeySet: boolean; cliConnected: boolean; ready: boolean } | null> {
+    try {
+      const r = await fetch(`${base()}/api/integrations/claude/global`);
+      if (!r.ok) return null;
+      return await r.json() as any;
+    } catch { return null; }
+  }
+
+  async setGlobalClaudeApiKey(apiKey: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const r = await fetch(`${base()}/api/integrations/claude/global/apikey`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ apiKey }),
+      });
+      if (!r.ok) {
+        const j = await r.json() as any;
+        return { ok: false, error: j?.error ?? `http ${r.status}` };
+      }
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }
+
+  async connectGlobalClaudeCli(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const r = await fetch(`${base()}/api/integrations/claude/global/cli/connect`, { method: 'POST' });
+      if (!r.ok) {
+        const j = await r.json() as any;
+        return { ok: false, error: j?.error ?? `http ${r.status}` };
+      }
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }
+
   /** Public base URL the webview iframes should load (host's port). */
   webBase(): string {
     const port = vscode.workspace.getConfiguration('atrune').get<number>('webPort', 3000);

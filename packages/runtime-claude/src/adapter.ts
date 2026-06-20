@@ -109,15 +109,33 @@ export async function killAllClaudeAgents(opts: { hardTimeoutMs?: number } = {})
 // needed for the CLI to find itself; everything else is opt-in via SpawnOpts.env.
 const BASE_ENV_ALLOWED = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TERM', 'USER'];
 
-function readStoredClaudeKey(): string | undefined {
+// Resolve the Anthropic key for a given workspace.
+//   1. integrations/claude.json#workspaces[workspaceId].apiKey  (override)
+//   2. integrations/claude.json#global.apiKey                   (zero-config default)
+//   3. integrations/claude.json#users[*].apiKey                 (legacy migration)
+//   4. undefined → caller falls back to process.env.ANTHROPIC_API_KEY
+function readStoredClaudeKey(workspaceId?: string): string | undefined {
   try {
     const home = process.env.GUIDEAI_HOME ?? path.join(os.homedir(), '.guideai');
-    const sess = JSON.parse(fs.readFileSync(path.join(home, 'session.json'), 'utf8'));
-    const username = typeof sess?.username === 'string' ? sess.username : null;
-    if (!username) return undefined;
-    const integ = JSON.parse(fs.readFileSync(path.join(home, 'integrations', 'claude.json'), 'utf8'));
-    const u = integ?.users?.[username];
-    if (typeof u?.apiKey === 'string' && u.apiKey.length > 0) return u.apiKey;
+    const integPath = path.join(home, 'integrations', 'claude.json');
+    if (!fs.existsSync(integPath)) return undefined;
+    const integ: any = JSON.parse(fs.readFileSync(integPath, 'utf8'));
+
+    // 1. Workspace-specific
+    if (workspaceId && typeof integ?.workspaces?.[workspaceId]?.apiKey === 'string') {
+      const k = integ.workspaces[workspaceId].apiKey;
+      if (k.length > 0) return k;
+    }
+    // 2. Global default
+    if (typeof integ?.global?.apiKey === 'string' && integ.global.apiKey.length > 0) {
+      return integ.global.apiKey;
+    }
+    // 3. Legacy: pick any user with a key
+    if (integ?.users && typeof integ.users === 'object') {
+      for (const u of Object.values(integ.users) as any[]) {
+        if (typeof u?.apiKey === 'string' && u.apiKey.length > 0) return u.apiKey;
+      }
+    }
   } catch {}
   return undefined;
 }
@@ -128,9 +146,9 @@ function buildEnv(extra?: Record<string, string>, opts?: SpawnOpts): NodeJS.Proc
     const v = process.env[k];
     if (v !== undefined) out[k] = v;
   }
-  // API key precedence: process env → integrations/claude.json. Deny-by-default
-  // for any other secret env var.
-  const apiKey = process.env.ANTHROPIC_API_KEY ?? readStoredClaudeKey();
+  // API key precedence: process env → integrations/claude.json (workspace
+  // override > global default > legacy). Deny-by-default for any other secret.
+  const apiKey = process.env.ANTHROPIC_API_KEY ?? readStoredClaudeKey(opts?.workspaceId);
   if (apiKey) out.ANTHROPIC_API_KEY = apiKey;
   // Tell the hook where to phone home + which workspace/agent it's running for.
   out.GUIDEAI_PERMISSIONS_URL = PERMISSIONS_URL;

@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import {
-  readIntegration, writeIntegration, workspaceConsent, setWorkspaceConsent,
+  readIntegration, writeIntegration,
+  workspaceConsent, setWorkspaceConsent,
+  globalConsent, setGlobalConsent,
   type OpenAIWorkspaceConsent,
 } from '@guideai/runtime-openai';
 
@@ -8,6 +10,18 @@ function publicState(workspaceId: string) {
   const w = workspaceConsent(readIntegration(), workspaceId);
   return {
     workspaceId,
+    apiKeySet: !!w.apiKey,
+    apiKeyHint: w.apiKey ? `…${w.apiKey.slice(-4)}` : undefined,
+    apiKeySavedAt: w.apiKeySavedAt,
+    modelOverrides: w.modelOverrides ?? {},
+    ready: !!w.apiKey,
+  };
+}
+
+function publicGlobalState() {
+  const w = globalConsent(readIntegration());
+  return {
+    scope: 'global',
     apiKeySet: !!w.apiKey,
     apiKeyHint: w.apiKey ? `…${w.apiKey.slice(-4)}` : undefined,
     apiKeySavedAt: w.apiKeySavedAt,
@@ -53,5 +67,41 @@ export function registerOpenAIIntegrationRoutes(app: FastifyInstance) {
     delete cur.apiKeySavedAt;
     writeIntegration(setWorkspaceConsent(integ, req.params.id, cur));
     return publicState(req.params.id);
+  });
+
+  // ─── Global default routes (zero-config first-launch path) ───────────────
+  app.get('/api/integrations/openai/global', async () => publicGlobalState());
+
+  app.put<{
+    Body: { apiKey?: string; modelOverrides?: OpenAIWorkspaceConsent['modelOverrides'] };
+  }>('/api/integrations/openai/global', async (req, reply) => {
+    const integ = readIntegration();
+    const cur = globalConsent(integ);
+    const next: OpenAIWorkspaceConsent = { ...cur };
+    if (req.body?.apiKey !== undefined) {
+      const k = req.body.apiKey.toString().trim();
+      if (!k) { reply.code(400); return { error: 'apiKey cannot be empty (use DELETE to clear)' }; }
+      next.apiKey = k;
+      next.apiKeySavedAt = Date.now();
+    }
+    if (req.body?.modelOverrides !== undefined) {
+      const o = req.body.modelOverrides;
+      next.modelOverrides = {
+        haiku:  o?.haiku?.toString().trim() || undefined,
+        sonnet: o?.sonnet?.toString().trim() || undefined,
+        opus:   o?.opus?.toString().trim() || undefined,
+      };
+    }
+    writeIntegration(setGlobalConsent(integ, next));
+    return publicGlobalState();
+  });
+
+  app.delete('/api/integrations/openai/global', async () => {
+    const integ = readIntegration();
+    const cur = globalConsent(integ);
+    delete cur.apiKey;
+    delete cur.apiKeySavedAt;
+    writeIntegration(setGlobalConsent(integ, cur));
+    return publicGlobalState();
   });
 }

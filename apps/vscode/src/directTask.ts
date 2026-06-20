@@ -16,11 +16,26 @@ export async function askOneAgent(
   api: AtruneApi,
   activeWorkspaceId: () => string | null,
   preselectedPrompt?: string,
+  setActiveWorkspaceId?: (id: string) => void,
 ): Promise<void> {
-  const wsId = activeWorkspaceId();
+  let wsId = activeWorkspaceId();
   if (!wsId) {
-    vscode.window.showWarningMessage('No active Atrune project. Open one in Mission Control first.');
-    return;
+    // Zero-config: prompt for the task first, auto-create a workspace named
+    // from it. User goes straight from intent → working agent.
+    const provisionalPrompt = preselectedPrompt ?? await vscode.window.showInputBox({
+      prompt: 'What should the agent do? (a workspace will be created from this title)',
+      ignoreFocusOut: true,
+      placeHolder: 'e.g. add input validation to the /shorten endpoint',
+    });
+    if (!provisionalPrompt?.trim()) return;
+    const created = await api.createAutoWorkspace(provisionalPrompt.trim());
+    if (!created.ok || !created.id) {
+      vscode.window.showErrorMessage(`Could not create workspace: ${created.error}`);
+      return;
+    }
+    wsId = created.id;
+    setActiveWorkspaceId?.(wsId);
+    preselectedPrompt = provisionalPrompt;
   }
 
   // Pick an agent from the roster (or offer to open the marketplace).
@@ -75,12 +90,9 @@ export async function autoFix(
   api: AtruneApi,
   activeWorkspaceId: () => string | null,
   preselectedDescription?: string,
+  setActiveWorkspaceId?: (id: string) => void,
 ): Promise<void> {
-  const wsId = activeWorkspaceId();
-  if (!wsId) {
-    vscode.window.showWarningMessage('No active Atrune project. Open one in Mission Control first.');
-    return;
-  }
+  let wsId = activeWorkspaceId();
 
   const description = await vscode.window.showInputBox({
     prompt: 'What should we fix or build?',
@@ -89,6 +101,18 @@ export async function autoFix(
     placeHolder: 'e.g. add input validation to the /shorten endpoint',
   });
   if (!description?.trim()) return;
+
+  // Zero-config: if no active workspace, create one from the task title.
+  if (!wsId) {
+    const created = await api.createAutoWorkspace(description.trim());
+    if (!created.ok || !created.id) {
+      vscode.window.showErrorMessage(`Could not create workspace: ${created.error}`);
+      return;
+    }
+    wsId = created.id;
+    setActiveWorkspaceId?.(wsId);
+    vscode.window.setStatusBarMessage(`Atrune · created project "${created.name}"`, 3000);
+  }
 
   // Cost preview — auto-fix runs an abbreviated 3-phase pipeline.
   const fixForecast = forecastBrief(description, 2);
@@ -171,6 +195,7 @@ export async function quickAskChooser(
   api: AtruneApi,
   activeWorkspaceId: () => string | null,
   contextPrompt?: string,
+  setActiveWorkspaceId?: (id: string) => void,
 ): Promise<void> {
   const items: Array<vscode.QuickPickItem & { mode: 'auto' | 'one' }> = [
     {
@@ -186,6 +211,6 @@ export async function quickAskChooser(
   ];
   const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Quick ask — how do you want to dispatch this?' });
   if (!pick) return;
-  if (pick.mode === 'auto') return autoFix(api, activeWorkspaceId, contextPrompt);
-  return askOneAgent(api, activeWorkspaceId, contextPrompt);
+  if (pick.mode === 'auto') return autoFix(api, activeWorkspaceId, contextPrompt, setActiveWorkspaceId);
+  return askOneAgent(api, activeWorkspaceId, contextPrompt, setActiveWorkspaceId);
 }

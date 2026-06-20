@@ -15,6 +15,39 @@ function slugify(input: string): string {
   return s || `ws-${randomUUID().slice(0, 6)}`;
 }
 
+// Zero-config workspace name derived from the user's task title.
+// Caps the slug at 50 chars and suffixes with YYYY-MM-DD for uniqueness.
+function slugFromTaskTitle(title: string): string {
+  const truncated = title.slice(0, 50).trim();
+  const slug = slugify(truncated);
+  const date = new Date().toISOString().slice(0, 10);
+  return `${slug}-${date}`;
+}
+
+// Standard subfolder layout for every workspace. Briefs, docs, reports, and
+// slides each get their own home so the user can find artifacts by type.
+// meta.json captures the originating task + kind so we can tell auto-created
+// task workspaces apart from user-created project workspaces later.
+function scaffoldWorkspaceDir(id: string, meta: {
+  originatingTask?: string;
+  kind?: 'project' | 'auto-task';
+}): void {
+  const wsRoot = path.join(paths.workspaces, id);
+  for (const sub of ['briefs', 'docs', 'reports', 'slides', 'code']) {
+    fs.mkdirSync(path.join(wsRoot, sub), { recursive: true });
+  }
+  fs.writeFileSync(
+    path.join(wsRoot, 'meta.json'),
+    JSON.stringify({
+      id,
+      createdAt: Date.now(),
+      kind: meta.kind ?? 'project',
+      originatingTask: meta.originatingTask ?? null,
+    }, null, 2),
+    'utf-8',
+  );
+}
+
 export function registerWorkspaceRoutes(app: FastifyInstance) {
   // List workspaces with rich summaries for the /projects view.
   // Archived workspaces are hidden by default; pass ?includeArchived=1 to
@@ -99,11 +132,55 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
       createdAt: Date.now(),
     }).run();
 
-    // Pre-create the on-disk workspace dir so writes don't race on first event.
-    fs.mkdirSync(path.join(paths.workspaces, id), { recursive: true });
+    // Standard subfolder layout: briefs/, docs/, reports/, slides/, code/, meta.json.
+    scaffoldWorkspaceDir(id, { kind: 'project' });
 
     return { id, name };
   });
+
+  // Zero-config workspace creation from a task title.
+  //
+  // POST /api/workspaces/auto  Body: { taskTitle, kind? }
+  //   - Slugifies the task title + dates it for uniqueness
+  //   - Creates the workspace silently (no name conflict UX needed)
+  //   - Scaffolds the standard subfolder layout
+  //   - Returns { id, name } for the caller to use immediately
+  //
+  // Designed for the VS Code right-click → Auto-fix flow where the user
+  // hasn't picked a workspace; we make one for them named from the task.
+  app.post<{ Body: { taskTitle: string; kind?: 'project' | 'auto-task' } }>(
+    '/api/workspaces/auto', async (req, reply) => {
+      const taskTitle = (req.body?.taskTitle ?? '').toString().trim();
+      if (!taskTitle) { reply.code(400); return { error: 'taskTitle is required' }; }
+      const kind = req.body?.kind ?? 'auto-task';
+
+      const base = slugFromTaskTitle(taskTitle);
+      const db = getDb();
+      const rowFor = (slug: string) =>
+        db.select().from(schema.workspaces).where(eq(schema.workspaces.id, slug)).all()[0];
+
+      // Walk a suffix counter if the same task is dispatched multiple times today.
+      let id = base;
+      let n = 2;
+      while (rowFor(id)) {
+        id = `${base}-${n++}`;
+        if (n > 100) { reply.code(409); return { error: 'too many workspaces for this task today' }; }
+      }
+
+      // Human-readable name = first 60 chars of the task title.
+      const name = taskTitle.length > 60 ? taskTitle.slice(0, 57) + '…' : taskTitle;
+
+      db.insert(schema.workspaces).values({
+        id, name,
+        autonomyMode: 'approval-gated',
+        createdAt: Date.now(),
+      }).run();
+
+      scaffoldWorkspaceDir(id, { kind, originatingTask: taskTitle });
+
+      return { id, name };
+    },
+  );
 
   // Archive a workspace (soft delete — data on disk + DB rows are preserved).
   app.delete<{ Params: { id: string } }>('/api/workspaces/:id', async (req, reply) => {

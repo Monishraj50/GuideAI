@@ -196,6 +196,10 @@
       {
         "command": "atrune.showWalkthrough",
         "title": "Atrune: Show me around"
+      },
+      {
+        "command": "atrune.resetFirstLaunch",
+        "title": "Atrune: Re-connect Claude (reset first-launch)"
       }
     ],
     "menus": {

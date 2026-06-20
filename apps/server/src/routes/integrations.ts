@@ -20,8 +20,11 @@ interface WorkspaceConsent {
 }
 
 interface ClaudeIntegration {
+  /** Zero-config default — applies to every workspace that doesn't override.
+   *  Set once via the first-launch flow; auto-created workspaces inherit. */
+  global?: WorkspaceConsent;
   workspaces?: Record<string, WorkspaceConsent>;
-  /** Legacy per-user shape. Migrated on first read. */
+  /** Legacy per-user shape. Migrated to `global` on first read. */
   users?: Record<string, WorkspaceConsent>;
   /** Older legacy single-user shape (cliConnected/apiKey at top level). */
   cliConnected?: boolean;
@@ -34,9 +37,10 @@ const FILE = path.join(paths.home, 'integrations', 'claude.json');
 
 function migrateLegacy(j: any): ClaudeIntegration {
   if (!j || typeof j !== 'object') return { workspaces: {} };
-  if (j.workspaces) return j as ClaudeIntegration;
+  // Already in new shape — pass through.
+  if (j.global || j.workspaces) return j as ClaudeIntegration;
 
-  // Old shape #1: keyed by username under `users[*]`. Fold into __default__.
+  // Old shape #1: keyed by username under `users[*]`. Fold into `global`.
   if (j.users) {
     const merged: WorkspaceConsent = {};
     for (const u of Object.values(j.users as Record<string, WorkspaceConsent>)) {
@@ -49,19 +53,18 @@ function migrateLegacy(j: any): ClaudeIntegration {
         merged.cliConnectedVersion = u.cliConnectedVersion;
       }
     }
-    return { workspaces: { __default__: merged } };
+    return { global: merged, workspaces: {} };
   }
 
-  // Old shape #2: single top-level user. Fold into __default__.
+  // Old shape #2: single top-level user. Fold into `global`.
   if (j.cliConnected !== undefined || j.apiKey !== undefined) {
     return {
-      workspaces: {
-        __default__: {
-          cliConnectedAt: j.cliConnected ? (j.cliConnectedAt ?? Date.now()) : undefined,
-          apiKey: j.apiKey,
-          apiKeySavedAt: j.apiKeySavedAt,
-        },
+      global: {
+        cliConnectedAt: j.cliConnected ? (j.cliConnectedAt ?? Date.now()) : undefined,
+        apiKey: j.apiKey,
+        apiKeySavedAt: j.apiKeySavedAt,
       },
+      workspaces: {},
     };
   }
 
@@ -77,18 +80,36 @@ function readFileSafe(): ClaudeIntegration {
 function writeFileSafe(s: ClaudeIntegration) {
   fs.mkdirSync(path.dirname(FILE), { recursive: true });
   // Strip legacy keys on write — file becomes clean post-migration.
-  const clean: ClaudeIntegration = { workspaces: s.workspaces ?? {} };
+  const clean: ClaudeIntegration = {
+    global: s.global,
+    workspaces: s.workspaces ?? {},
+  };
   fs.writeFileSync(FILE, JSON.stringify(clean, null, 2), { mode: 0o600 });
 }
 
+/**
+ * Resolve the active consent for a workspace.
+ *
+ * Precedence:
+ *   1. Workspace-specific override (set via the per-workspace settings UI)
+ *   2. Global default (set once via the first-launch flow)
+ *   3. Empty (nothing connected)
+ *
+ * Auto-created workspaces have no per-workspace key, so they inherit the
+ * global default automatically.
+ */
 function consentOf(integ: ClaudeIntegration, workspaceId: string): WorkspaceConsent {
-  return integ.workspaces?.[workspaceId] ?? {};
+  return integ.workspaces?.[workspaceId] ?? integ.global ?? {};
 }
 function setConsent(integ: ClaudeIntegration, workspaceId: string, patch: WorkspaceConsent | null): ClaudeIntegration {
   const workspaces = { ...(integ.workspaces ?? {}) };
   if (patch === null) delete workspaces[workspaceId];
   else workspaces[workspaceId] = patch;
   return { ...integ, workspaces };
+}
+function setGlobal(integ: ClaudeIntegration, patch: WorkspaceConsent | null): ClaudeIntegration {
+  if (patch === null) return { ...integ, global: undefined };
+  return { ...integ, global: patch };
 }
 
 function detectCli(): { detected: boolean; version?: string; binaryPath?: string } {
@@ -223,5 +244,78 @@ export function registerIntegrationRoutes(app: FastifyInstance) {
     delete cur.apiKeySavedAt;
     writeFileSafe(setConsent(integ, req.params.id, cur));
     return publicState(readFileSafe(), req.params.id);
+  });
+
+  // ─── Global default routes (zero-config first-launch path) ───────────────
+  //
+  // GET    /api/integrations/claude/global          — current global state
+  // POST   /api/integrations/claude/global/cli/connect    — bind the CLI globally
+  // POST   /api/integrations/claude/global/cli/disconnect — unbind
+  // PUT    /api/integrations/claude/global/apikey   — store an Anthropic key globally
+  // DELETE /api/integrations/claude/global/apikey   — remove the global key
+
+  function publicGlobalState(integ: ClaudeIntegration) {
+    const cli = detectCli();
+    const w = integ.global ?? {};
+    const cliConnected = !!w.cliConnectedAt && cli.detected;
+    return {
+      scope: 'global',
+      cliDetected: cli.detected,
+      cliVersion: cli.version,
+      cliBinaryPath: cli.binaryPath,
+      cliConnected,
+      cliConnectedAt: w.cliConnectedAt,
+      cliConnectedVersion: w.cliConnectedVersion,
+      details: cliConnected ? gatherCliDetails(cli.binaryPath) : undefined,
+      apiKeySet: !!w.apiKey,
+      apiKeyHint: w.apiKey ? `…${w.apiKey.slice(-4)}` : undefined,
+      apiKeySavedAt: w.apiKeySavedAt,
+      ready: cliConnected || !!w.apiKey,
+    };
+  }
+
+  app.get('/api/integrations/claude/global', async () => {
+    return publicGlobalState(readFileSafe());
+  });
+
+  app.post('/api/integrations/claude/global/cli/connect', async (_req, reply) => {
+    const cli = detectCli();
+    if (!cli.detected) { reply.code(400); return { error: 'Claude CLI not detected on this machine.' }; }
+    const integ = readFileSafe();
+    const existing = integ.global ?? {};
+    const next: WorkspaceConsent = {
+      ...existing,
+      cliConnectedAt: existing.cliConnectedAt ?? Date.now(),
+      cliConnectedVersion: cli.version,
+    };
+    writeFileSafe(setGlobal(integ, next));
+    return publicGlobalState(readFileSafe());
+  });
+
+  app.post('/api/integrations/claude/global/cli/disconnect', async () => {
+    const integ = readFileSafe();
+    const cur = { ...(integ.global ?? {}) };
+    delete cur.cliConnectedAt;
+    delete cur.cliConnectedVersion;
+    writeFileSafe(setGlobal(integ, cur));
+    return publicGlobalState(readFileSafe());
+  });
+
+  app.put<{ Body: { apiKey?: string } }>('/api/integrations/claude/global/apikey', async (req, reply) => {
+    const key = (req.body?.apiKey ?? '').toString().trim();
+    if (!key) { reply.code(400); return { error: 'apiKey is required' }; }
+    const integ = readFileSafe();
+    const cur = { ...(integ.global ?? {}) };
+    writeFileSafe(setGlobal(integ, { ...cur, apiKey: key, apiKeySavedAt: Date.now() }));
+    return publicGlobalState(readFileSafe());
+  });
+
+  app.delete('/api/integrations/claude/global/apikey', async () => {
+    const integ = readFileSafe();
+    const cur = { ...(integ.global ?? {}) };
+    delete cur.apiKey;
+    delete cur.apiKeySavedAt;
+    writeFileSafe(setGlobal(integ, cur));
+    return publicGlobalState(readFileSafe());
   });
 }

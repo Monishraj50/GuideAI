@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import {
-  detectGhCli, readIntegration, writeIntegration, workspaceConsent, setWorkspaceConsent,
+  detectGhCli, readIntegration, writeIntegration,
+  workspaceConsent, setWorkspaceConsent,
+  globalConsent, setGlobalConsent,
   type GitHubWorkspaceConsent,
 } from '@guideai/orchestrator/github';
 
@@ -86,5 +88,76 @@ export function registerGithubIntegrationRoutes(app: FastifyInstance) {
     delete cur.patSavedAt;
     writeIntegration(setWorkspaceConsent(integ, req.params.id, cur));
     return publicState(req.params.id);
+  });
+
+  // ─── Global default routes (zero-config first-launch path) ───────────────
+
+  function publicGlobalState() {
+    const integ = readIntegration();
+    const w = globalConsent(integ);
+    const cli = detectGhCli();
+    const ghConnected = !!w.ghCliConnectedAt && cli.detected && cli.authenticated;
+    return {
+      scope: 'global',
+      ghCliDetected: cli.detected,
+      ghCliVersion: cli.version,
+      ghCliAuthenticated: !!cli.authenticated,
+      ghCliLoggedInUser: cli.loggedInUser,
+      ghConnected,
+      ghConnectedAt: w.ghCliConnectedAt,
+      patSet: !!w.pat,
+      patHint: w.pat ? `…${w.pat.slice(-4)}` : undefined,
+      patSavedAt: w.patSavedAt,
+      defaultOwner: w.defaultOwner,
+      ready: ghConnected || !!w.pat,
+    };
+  }
+
+  app.get('/api/integrations/github/global', async () => publicGlobalState());
+
+  app.post('/api/integrations/github/global/cli/connect', async (_req, reply) => {
+    const cli = detectGhCli();
+    if (!cli.detected) { reply.code(400); return { error: 'gh CLI not detected.' }; }
+    if (!cli.authenticated) {
+      reply.code(400);
+      return { error: `gh CLI is installed but not logged in. Run \`gh auth login\` first.${cli.authError ? ' · ' + cli.authError : ''}` };
+    }
+    const integ = readIntegration();
+    const cur = globalConsent(integ);
+    writeIntegration(setGlobalConsent(integ, {
+      ...cur,
+      ghCliConnectedAt: cur.ghCliConnectedAt ?? Date.now(),
+      ghCliVersion: cli.version,
+    }));
+    return publicGlobalState();
+  });
+
+  app.put<{ Body: { pat?: string; defaultOwner?: string } }>(
+    '/api/integrations/github/global/pat', async (req, reply) => {
+      const integ = readIntegration();
+      const cur = globalConsent(integ);
+      const next: GitHubWorkspaceConsent = { ...cur };
+      if (req.body?.pat !== undefined) {
+        const pat = req.body.pat.toString().trim();
+        if (!pat) { reply.code(400); return { error: 'pat cannot be empty (use DELETE to clear)' }; }
+        next.pat = pat;
+        next.patSavedAt = Date.now();
+      }
+      if (req.body?.defaultOwner !== undefined) {
+        const o = req.body.defaultOwner.toString().trim();
+        next.defaultOwner = o || undefined;
+      }
+      writeIntegration(setGlobalConsent(integ, next));
+      return publicGlobalState();
+    },
+  );
+
+  app.delete('/api/integrations/github/global/pat', async () => {
+    const integ = readIntegration();
+    const cur = globalConsent(integ);
+    delete cur.pat;
+    delete cur.patSavedAt;
+    writeIntegration(setGlobalConsent(integ, cur));
+    return publicGlobalState();
   });
 }

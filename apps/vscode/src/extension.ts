@@ -19,6 +19,7 @@ import { openBriefComposer } from './webviews/briefComposer';
 import { quickAskChooser, askOneAgent, autoFix } from './directTask';
 import { AtruneStatusBar } from './statusBar';
 import { checkNewApprovals } from './approvals';
+import { maybePromptFirstLaunch, resetFirstLaunch } from './firstLaunch';
 
 let server: AtruneServer | undefined;
 let pollHandle: NodeJS.Timeout | undefined;
@@ -30,9 +31,8 @@ export async function activate(ctx: vscode.ExtensionContext) {
 
   const api = new AtruneApi();
 
-  // Active workspace tracking — for now, default to the first workspace the
-  // server knows about. Phase 2 will add an explicit picker tied to the open
-  // VS Code folder.
+  // Active workspace tracking. Zero-config flow: if the user invokes a
+  // direct task with no workspace, one is auto-created and we adopt it.
   let activeWorkspaceId: string | null = null;
   async function refreshActiveWorkspace() {
     const list = await api.listWorkspaces();
@@ -40,6 +40,10 @@ export async function activate(ctx: vscode.ExtensionContext) {
     if (!activeWorkspaceId || !list.find((w) => w.id === activeWorkspaceId)) {
       activeWorkspaceId = list[0]?.id ?? null;
     }
+  }
+  function setActiveWorkspaceId(id: string) {
+    activeWorkspaceId = id;
+    refreshAll();
   }
 
   // Bring the server up before wiring views (so the first poll doesn't 404).
@@ -88,6 +92,10 @@ export async function activate(ctx: vscode.ExtensionContext) {
   // Prime the status bar immediately so users don't see "connecting…" for 5s.
   void tick();
 
+  // Zero-config first launch: one popup asking for Claude credentials, then
+  // silent forever. Auto-created workspaces inherit the global default.
+  void maybePromptFirstLaunch(ctx, api);
+
   // 5s poll cadence — cheap, predictable, replaces SSE for v1.
   pollHandle = setInterval(() => { void tick(); }, 5000);
   ctx.subscriptions.push({ dispose: () => { if (pollHandle) clearInterval(pollHandle); } });
@@ -110,17 +118,17 @@ export async function activate(ctx: vscode.ExtensionContext) {
       await openBriefComposer(ctx, api, () => activeWorkspaceId, () => refreshAll());
     }),
     vscode.commands.registerCommand('atrune.quickAsk', async () => {
-      await quickAskChooser(api, () => activeWorkspaceId);
+      await quickAskChooser(api, () => activeWorkspaceId, undefined, setActiveWorkspaceId);
     }),
     vscode.commands.registerCommand('atrune.askOneAgent', async () => {
-      await askOneAgent(api, () => activeWorkspaceId);
+      await askOneAgent(api, () => activeWorkspaceId, undefined, setActiveWorkspaceId);
     }),
     vscode.commands.registerCommand('atrune.autoFixThisFile', async (uri?: vscode.Uri) => {
       // Editor context-menu / explorer-context entry. If a URI was passed
       // (right-click in the file explorer), include the file path in the prompt.
       const filePath = uri?.fsPath ?? vscode.window.activeTextEditor?.document.uri.fsPath;
       const fileHint = filePath ? `(file: ${filePath}) ` : '';
-      await autoFix(api, () => activeWorkspaceId, `${fileHint}`.trim() || undefined);
+      await autoFix(api, () => activeWorkspaceId, `${fileHint}`.trim() || undefined, setActiveWorkspaceId);
     }),
     vscode.commands.registerCommand('atrune.askAgentAboutSelection', async () => {
       const ed = vscode.window.activeTextEditor;
@@ -128,7 +136,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
       const contextPrompt = sel?.trim()
         ? `Here is a code selection from ${ed?.document.uri.fsPath ?? 'this file'}:\n\n\`\`\`\n${sel}\n\`\`\`\n\nWhat I want: `
         : undefined;
-      await askOneAgent(api, () => activeWorkspaceId, contextPrompt);
+      await askOneAgent(api, () => activeWorkspaceId, contextPrompt, setActiveWorkspaceId);
     }),
     vscode.commands.registerCommand('atrune.switchWorkspace', async () => {
       const list = await api.listWorkspaces();
@@ -164,6 +172,10 @@ export async function activate(ctx: vscode.ExtensionContext) {
         { category: `${ctx.extension.id}#atrune.welcome` },
         false,
       );
+    }),
+    vscode.commands.registerCommand('atrune.resetFirstLaunch', async () => {
+      await resetFirstLaunch(ctx);
+      await maybePromptFirstLaunch(ctx, api);
     }),
   );
 

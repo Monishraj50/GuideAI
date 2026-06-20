@@ -19,16 +19,18 @@ export interface OpenAIWorkspaceConsent {
 export type OpenAIUserConsent = OpenAIWorkspaceConsent;
 
 export interface OpenAIIntegration {
+  /** Zero-config global default. Inherited by workspaces without overrides. */
+  global?: OpenAIWorkspaceConsent;
   workspaces?: Record<string, OpenAIWorkspaceConsent>;
-  /** Legacy per-user shape; migrated into workspaces on first read. */
+  /** Legacy per-user shape; migrated into `global` on first read. */
   users?: Record<string, OpenAIWorkspaceConsent>;
 }
 
-/** One-shot migration: fold legacy `users[*]` blocks into a single default
- *  workspace bucket so nothing is lost on the auth strip. The first non-legacy
- *  username's data wins if there are multiple. */
+/** One-shot migration: fold legacy `users[*]` blocks into `global` so nothing
+ *  is lost. The first non-legacy username's data wins if there are multiple. */
 function migrateLegacy(integ: OpenAIIntegration): OpenAIIntegration {
-  if (!integ.users || integ.workspaces) return integ;
+  if (integ.global || integ.workspaces) return integ;
+  if (!integ.users) return { workspaces: {} };
   const merged: OpenAIWorkspaceConsent = {};
   for (const u of Object.values(integ.users)) {
     if (u?.apiKey && !merged.apiKey) merged.apiKey = u.apiKey;
@@ -37,7 +39,7 @@ function migrateLegacy(integ: OpenAIIntegration): OpenAIIntegration {
     }
     if (u?.modelOverrides && !merged.modelOverrides) merged.modelOverrides = u.modelOverrides;
   }
-  return { workspaces: { __default__: merged } };
+  return { global: merged, workspaces: {} };
 }
 
 export function readIntegration(): OpenAIIntegration {
@@ -51,12 +53,13 @@ export function readIntegration(): OpenAIIntegration {
 export function writeIntegration(s: OpenAIIntegration): void {
   fs.mkdirSync(path.dirname(INTEG_FILE), { recursive: true });
   // Strip legacy `users` on write so the file is clean post-migration.
-  const clean: OpenAIIntegration = { workspaces: s.workspaces ?? {} };
+  const clean: OpenAIIntegration = { global: s.global, workspaces: s.workspaces ?? {} };
   fs.writeFileSync(INTEG_FILE, JSON.stringify(clean, null, 2), { mode: 0o600 });
 }
 
+/** Workspace-specific consent → global default → empty. */
 export function workspaceConsent(integ: OpenAIIntegration, workspaceId: string): OpenAIWorkspaceConsent {
-  return integ.workspaces?.[workspaceId] ?? {};
+  return integ.workspaces?.[workspaceId] ?? integ.global ?? {};
 }
 
 export function setWorkspaceConsent(
@@ -66,6 +69,16 @@ export function setWorkspaceConsent(
   if (patch === null) delete workspaces[workspaceId];
   else workspaces[workspaceId] = patch;
   return { ...integ, workspaces };
+}
+
+export function globalConsent(integ: OpenAIIntegration): OpenAIWorkspaceConsent {
+  return integ.global ?? {};
+}
+
+export function setGlobalConsent(
+  integ: OpenAIIntegration, patch: OpenAIWorkspaceConsent | null,
+): OpenAIIntegration {
+  return { ...integ, global: patch === null ? undefined : patch };
 }
 
 // Back-compat shims so older callers (still importing `userConsent`/`setUserConsent`)

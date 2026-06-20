@@ -40,13 +40,16 @@ export interface GitHubWorkspaceConsent {
 export type GitHubUserConsent = GitHubWorkspaceConsent;
 
 export interface GitHubIntegration {
+  /** Zero-config global default. Inherited by workspaces without overrides. */
+  global?: GitHubWorkspaceConsent;
   workspaces?: Record<string, GitHubWorkspaceConsent>;
-  /** Legacy per-user shape; folded into `workspaces.__default__` on first read. */
+  /** Legacy per-user shape; folded into `global` on first read. */
   users?: Record<string, GitHubWorkspaceConsent>;
 }
 
 function migrateLegacy(integ: GitHubIntegration): GitHubIntegration {
-  if (!integ.users || integ.workspaces) return integ;
+  if (integ.global || integ.workspaces) return integ;
+  if (!integ.users) return { workspaces: {} };
   const merged: GitHubWorkspaceConsent = {};
   for (const u of Object.values(integ.users)) {
     if (u?.pat && !merged.pat) merged.pat = u.pat;
@@ -57,7 +60,7 @@ function migrateLegacy(integ: GitHubIntegration): GitHubIntegration {
     }
     if (u?.defaultOwner && !merged.defaultOwner) merged.defaultOwner = u.defaultOwner;
   }
-  return { workspaces: { __default__: merged } };
+  return { global: merged, workspaces: {} };
 }
 
 export function readIntegration(): GitHubIntegration {
@@ -69,11 +72,12 @@ export function readIntegration(): GitHubIntegration {
 }
 export function writeIntegration(s: GitHubIntegration): void {
   fs.mkdirSync(path.dirname(INTEG_FILE), { recursive: true });
-  const clean: GitHubIntegration = { workspaces: s.workspaces ?? {} };
+  const clean: GitHubIntegration = { global: s.global, workspaces: s.workspaces ?? {} };
   fs.writeFileSync(INTEG_FILE, JSON.stringify(clean, null, 2), { mode: 0o600 });
 }
+/** Workspace-specific consent → global default → empty. */
 export function workspaceConsent(integ: GitHubIntegration, workspaceId: string): GitHubWorkspaceConsent {
-  return integ.workspaces?.[workspaceId] ?? {};
+  return integ.workspaces?.[workspaceId] ?? integ.global ?? {};
 }
 export function setWorkspaceConsent(
   integ: GitHubIntegration, workspaceId: string, patch: GitHubWorkspaceConsent | null,
@@ -82,6 +86,14 @@ export function setWorkspaceConsent(
   if (patch === null) delete workspaces[workspaceId];
   else workspaces[workspaceId] = patch;
   return { ...integ, workspaces };
+}
+export function globalConsent(integ: GitHubIntegration): GitHubWorkspaceConsent {
+  return integ.global ?? {};
+}
+export function setGlobalConsent(
+  integ: GitHubIntegration, patch: GitHubWorkspaceConsent | null,
+): GitHubIntegration {
+  return { ...integ, global: patch === null ? undefined : patch };
 }
 // Back-compat shims so older callers keep compiling during the transition.
 export const userConsent = workspaceConsent;
