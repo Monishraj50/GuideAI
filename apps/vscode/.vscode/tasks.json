@@ -1,0 +1,23 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "shell",
+      "label": "watch",
+      "command": "../../node_modules/.bin/tsc",
+      "args": ["-w", "-p", "tsconfig.json"],
+      "isBackground": true,
+      "problemMatcher": "$tsc-watch",
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "silent", "panel": "dedicated" }
+    },
+    {
+      "type": "shell",
+      "label": "build",
+      "command": "../../node_modules/.bin/tsc",
+      "args": ["-p", "tsconfig.json"],
+      "problemMatcher": "$tsc",
+      "group": "build"
+    }
+  ]
+}

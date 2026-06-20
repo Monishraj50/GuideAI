@@ -69,23 +69,64 @@
     },
     "commands": [
       {
+        "command": "atrium.newBrief",
+        "title": "Atrium: New brief…",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "atrium.quickAsk",
+        "title": "Atrium: Quick ask…",
+        "icon": "$(zap)"
+      },
+      {
         "command": "atrium.openMissionControl",
-        "title": "Atrium: Open Mission Control"
+        "title": "Atrium: Open Mission Control",
+        "icon": "$(window)"
+      },
+      {
+        "command": "atrium.openSettings",
+        "title": "Atrium: Open Settings",
+        "icon": "$(gear)"
       },
       {
         "command": "atrium.refresh",
-        "title": "Atrium: Refresh sidebar"
+        "title": "Atrium: Refresh sidebar",
+        "icon": "$(refresh)"
       },
       {
         "command": "atrium.restartServer",
         "title": "Atrium: Restart server"
+      },
+      {
+        "command": "atrium.switchWorkspace",
+        "title": "Atrium: Switch project…"
       }
     ],
     "menus": {
       "view/title": [
         {
+          "command": "atrium.newBrief",
+          "when": "view == atrium.activeWork",
+          "group": "navigation@1"
+        },
+        {
+          "command": "atrium.quickAsk",
+          "when": "view == atrium.activeWork",
+          "group": "navigation@2"
+        },
+        {
+          "command": "atrium.openMissionControl",
+          "when": "view == atrium.activeWork",
+          "group": "navigation@3"
+        },
+        {
+          "command": "atrium.openSettings",
+          "when": "view == atrium.activeWork",
+          "group": "navigation@4"
+        },
+        {
           "command": "atrium.refresh",
-          "when": "view == atrium.activeWork || view == atrium.pending || view == atrium.team",
+          "when": "view == atrium.pending || view == atrium.team",
           "group": "navigation"
         }
       ]

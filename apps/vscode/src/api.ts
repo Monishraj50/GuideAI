@@ -84,4 +84,41 @@ export class AtriumApi {
     });
     return r.ok;
   }
+
+  async submitBrief(args: { workspaceId: string; body: string; securityTagged?: boolean }): Promise<{ ok: boolean; briefId?: string; error?: string }> {
+    try {
+      const r = await fetch(`${base()}/api/workspaces/${args.workspaceId}/briefs`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ body: args.body, securityTagged: !!args.securityTagged }),
+      });
+      const j = await r.json() as any;
+      if (!r.ok) return { ok: false, error: j?.error ?? `http ${r.status}` };
+      return { ok: true, briefId: j.briefId };
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }
+
+  async createWorkspace(name: string): Promise<{ ok: boolean; id?: string; error?: string }> {
+    try {
+      const r = await fetch(`${base()}/api/workspaces`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const j = await r.json() as any;
+      if (!r.ok) return { ok: false, error: j?.error ?? `http ${r.status}` };
+      return { ok: true, id: j.id };
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }
+
+  /** Public base URL the webview iframes should load (host's port). */
+  webBase(): string {
+    const port = vscode.workspace.getConfiguration('atrium').get<number>('webPort', 3000);
+    return `http://localhost:${port}`;
+  }
+  serverBase(): string {
+    return base();
+  }
 }

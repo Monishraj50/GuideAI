@@ -14,6 +14,8 @@ import { AtriumApi } from './api';
 import { ActiveWorkProvider } from './views/activeWork';
 import { PendingProvider } from './views/pending';
 import { TeamProvider } from './views/team';
+import { openMissionControl } from './webviews/missionControl';
+import { openBriefComposer } from './webviews/briefComposer';
 
 let server: AtriumServer | undefined;
 let pollHandle: NodeJS.Timeout | undefined;
@@ -73,8 +75,44 @@ export async function activate(ctx: vscode.ExtensionContext) {
   // Commands.
   ctx.subscriptions.push(
     vscode.commands.registerCommand('atrium.openMissionControl', async () => {
-      const port = vscode.workspace.getConfiguration('atrium').get<number>('webPort', 3000);
-      vscode.env.openExternal(vscode.Uri.parse(`http://localhost:${port}/`));
+      openMissionControl(ctx);
+    }),
+    vscode.commands.registerCommand('atrium.openSettings', async () => {
+      // Open VS Code's own settings filtered to Atrium configuration.
+      // Settings page inside Mission Control is reachable via the
+      // openMissionControl({route:'/settings'}) variant if the user prefers.
+      await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:atrium-ai.atrium-ai');
+      // Fallback for unpublished installs where the publisher isn't right yet
+      // — open generic settings filtered by keyword:
+      await vscode.commands.executeCommand('workbench.action.openSettings', 'atrium');
+    }),
+    vscode.commands.registerCommand('atrium.newBrief', async () => {
+      await openBriefComposer(ctx, api, () => activeWorkspaceId, () => refreshAll());
+    }),
+    vscode.commands.registerCommand('atrium.quickAsk', async () => {
+      // Direct-task mode lives in Phase 3. Surface a friendly placeholder
+      // so the toolbar shape is final from Phase 2 onwards.
+      const pick = await vscode.window.showInformationMessage(
+        'Quick ask (single-agent / auto-fix) lands in Phase 3 — coming soon.',
+        'Open Mission Control instead',
+      );
+      if (pick === 'Open Mission Control instead') openMissionControl(ctx);
+    }),
+    vscode.commands.registerCommand('atrium.switchWorkspace', async () => {
+      const list = await api.listWorkspaces();
+      if (list.length === 0) {
+        vscode.window.showInformationMessage('No projects yet — create one in Mission Control.');
+        return;
+      }
+      const pick = await vscode.window.showQuickPick(
+        list.map((w) => ({ label: w.name, description: w.id, detail: `${w.agents} agents · ${w.totalBriefs} briefs · ${w.pendingApprovals} pending` })),
+        { placeHolder: 'Switch active Atrium project' },
+      );
+      if (pick) {
+        activeWorkspaceId = pick.description!;
+        refreshAll();
+        vscode.window.showInformationMessage(`Active project: ${pick.label}`);
+      }
     }),
     vscode.commands.registerCommand('atrium.refresh', async () => {
       await refreshActiveWorkspace();
