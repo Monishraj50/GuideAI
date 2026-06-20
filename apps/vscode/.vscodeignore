@@ -8,6 +8,9 @@ vsc-extension-quickstart.md
 **/.eslintrc.json
 **/*.map
 **/*.ts
+!dist/**/*.d.ts
 node_modules/**
 !node_modules/@guideai/**
 pnpm-lock.yaml
+**/.DS_Store
+**/*.tsbuildinfo

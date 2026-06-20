@@ -1,12 +1,38 @@
 {
-  "name": "@guideai/vscode",
+  "name": "atruneai",
   "displayName": "AtruneAI",
-  "description": "Your AI workplace, inside VS Code. Brief your team, watch the pipeline, ship faster.",
+  "description": "Your AI workplace, inside VS Code. Brief your team, watch a 5-phase pipeline run, ship.",
   "version": "0.1.0",
   "publisher": "atrune-ai",
-  "private": true,
   "license": "AGPL-3.0",
   "main": "./dist/extension.js",
+  "icon": "images/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Monishraj50/GuideAI.git",
+    "directory": "apps/vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/Monishraj50/GuideAI/issues"
+  },
+  "homepage": "https://github.com/Monishraj50/GuideAI#readme",
+  "keywords": [
+    "ai",
+    "agents",
+    "multi-agent",
+    "claude",
+    "openai",
+    "workspace",
+    "atruneai",
+    "atrune",
+    "founder",
+    "no-code",
+    "pipeline"
+  ],
+  "galleryBanner": {
+    "color": "#0F2A4F",
+    "theme": "dark"
+  },
   "engines": {
     "vscode": "^1.85.0",
     "node": ">=20"
