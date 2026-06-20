@@ -17,9 +17,12 @@ import { TeamProvider } from './views/team';
 import { openMissionControl } from './webviews/missionControl';
 import { openBriefComposer } from './webviews/briefComposer';
 import { quickAskChooser, askOneAgent, autoFix } from './directTask';
+import { AtruneStatusBar } from './statusBar';
+import { checkNewApprovals } from './approvals';
 
 let server: AtruneServer | undefined;
 let pollHandle: NodeJS.Timeout | undefined;
+let statusBar: AtruneStatusBar | undefined;
 
 export async function activate(ctx: vscode.ExtensionContext) {
   server = new AtruneServer();
@@ -66,11 +69,27 @@ export async function activate(ctx: vscode.ExtensionContext) {
     team.refresh();
   }
 
-  // 5s poll cadence — cheap, predictable, replaces SSE for v1.
-  pollHandle = setInterval(async () => {
+  // Phase 4 — status bar + native approval popups.
+  statusBar = new AtruneStatusBar();
+  ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
+
+  async function tick() {
     await refreshActiveWorkspace();
     refreshAll();
-  }, 5000);
+    if (activeWorkspaceId) {
+      const plan = await api.getPlan(activeWorkspaceId);
+      statusBar?.update(plan);
+      await checkNewApprovals(api, plan, activeWorkspaceId, () => refreshAll());
+    } else {
+      statusBar?.update(null);
+    }
+  }
+
+  // Prime the status bar immediately so users don't see "connecting…" for 5s.
+  void tick();
+
+  // 5s poll cadence — cheap, predictable, replaces SSE for v1.
+  pollHandle = setInterval(() => { void tick(); }, 5000);
   ctx.subscriptions.push({ dispose: () => { if (pollHandle) clearInterval(pollHandle); } });
 
   // Commands.
