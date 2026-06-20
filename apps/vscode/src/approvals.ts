@@ -8,6 +8,7 @@
 
 import * as vscode from 'vscode';
 import { AtruneApi, type PlanResp } from './api';
+import { translateTool } from './founderMode';
 
 const SEEN = new Set<string>();
 
@@ -79,7 +80,7 @@ function formatApproval(tool: string, args: Record<string, unknown>): string {
   if (tool === 'WebFetch' && typeof args.url === 'string') {
     return `Atrune wants to fetch: ${truncate(args.url, 80)}`;
   }
-  return `Atrune wants to use ${tool}`;
+  return `Atrune wants to ${translateTool(tool)}`;
 }
 
 function shortPath(p: string): string {

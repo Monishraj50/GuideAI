@@ -10,6 +10,7 @@
 
 import * as vscode from 'vscode';
 import { AtruneApi, type DirectTaskRun } from './api';
+import { confirmCost, forecastBrief } from './costPreview';
 
 export async function askOneAgent(
   api: AtruneApi,
@@ -55,6 +56,12 @@ export async function askOneAgent(
   });
   if (!prompt?.trim()) return;
 
+  // Cost preview — direct tasks are cheaper than briefs (1 agent, no pipeline).
+  const askForecast = forecastBrief(prompt, 1);
+  askForecast.usd *= 0.4;
+  askForecast.minutes = Math.max(1, askForecast.minutes * 0.3);
+  if (!(await confirmCost(askForecast, `Asking ${picked.label}`))) return;
+
   await runWithProgress(`${picked.label} working…`, async () => {
     const r = await api.directTask({
       workspaceId: wsId, agentId: picked.agentId, prompt: prompt.trim(),
@@ -82,6 +89,12 @@ export async function autoFix(
     placeHolder: 'e.g. add input validation to the /shorten endpoint',
   });
   if (!description?.trim()) return;
+
+  // Cost preview — auto-fix runs an abbreviated 3-phase pipeline.
+  const fixForecast = forecastBrief(description, 2);
+  fixForecast.usd *= 0.6;
+  fixForecast.minutes = Math.max(2, fixForecast.minutes * 0.6);
+  if (!(await confirmCost(fixForecast, 'Auto-fixing this'))) return;
 
   await runWithProgress('Auto-fix · picking an agent…', async () => {
     const r = await api.autoFix({

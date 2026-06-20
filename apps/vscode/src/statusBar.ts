@@ -9,6 +9,7 @@
 import * as vscode from 'vscode';
 import type { PlanResp } from './api';
 import { narrate } from './narrator';
+import { translateNarrator } from './founderMode';
 
 export class AtruneStatusBar {
   private item: vscode.StatusBarItem;
@@ -30,7 +31,7 @@ export class AtruneStatusBar {
     }
 
     const dot = this.healthDot(plan);
-    const sentence = narrate(plan);
+    const sentence = translateNarrator(narrate(plan));
     const budget = `$${plan.usd.toFixed(2)}`;
     const pendingSlot =
       plan.pendingApprovals.length > 0

@@ -1,0 +1,46 @@
+{
+  "templates": [
+    {
+      "id": "build-website",
+      "label": "Build a website",
+      "icon": "globe",
+      "description": "Marketing site with hero, features, pricing, contact",
+      "body": "Build a marketing website with:\n- Hero section with a clear value proposition\n- Three feature sections\n- A pricing page with three tiers\n- A contact form that emails me on submit\n- Mobile-responsive\n\nStack: Next.js + Tailwind. Deploy target: Vercel."
+    },
+    {
+      "id": "build-api",
+      "label": "Build an API",
+      "icon": "server",
+      "description": "REST or GraphQL API with auth + persistence",
+      "body": "Build a REST API for a [describe the domain] with:\n- CRUD endpoints for the main resource\n- Token-based authentication\n- Persistence layer (SQLite via Drizzle)\n- OpenAPI spec generated\n- Tests for every endpoint\n\nStack: Fastify + Drizzle + Vitest."
+    },
+    {
+      "id": "write-docs",
+      "label": "Write technical documentation",
+      "icon": "book",
+      "description": "Architecture docs, API docs, or user guides",
+      "body": "Document this codebase with:\n- A README that explains what it does in 3 paragraphs\n- An ARCHITECTURE.md describing the major components and how they talk\n- API reference for every public function\n- A 'getting started' section with a working example\n\nTone: technical but warm. Audience: developers who'll inherit this."
+    },
+    {
+      "id": "audit-security",
+      "label": "Audit security",
+      "icon": "shield",
+      "description": "Review for OWASP top 10 + auth weaknesses + secret leaks",
+      "body": "Audit this codebase for security issues. Specifically:\n- OWASP top 10 — find any instances\n- Secrets accidentally committed to history\n- Auth/session weaknesses\n- Input validation gaps\n- Dependency vulnerabilities\n\nDeliver a markdown report with severity ratings and concrete fixes."
+    },
+    {
+      "id": "design-ui",
+      "label": "Design a UI",
+      "icon": "paintcan",
+      "description": "Mockups + Tailwind/CSS implementation",
+      "body": "Design a UI for [describe the screen / feature]. I want:\n- Two layout options to choose from\n- One with a sidebar, one without\n- Light + dark mode support\n- Accessible (WCAG AA contrast)\n- Implemented in React + Tailwind so I can copy-paste\n\nDeliverable: a Storybook page with both options."
+    },
+    {
+      "id": "refactor-code",
+      "label": "Refactor existing code",
+      "icon": "wand",
+      "description": "Improve structure without changing behavior",
+      "body": "Refactor [describe the module / file] for:\n- Better separation of concerns\n- Smaller functions (target: <30 lines each)\n- Improved naming\n- Test coverage where missing\n\nConstraint: zero behavior changes. Every existing test must still pass."
+    }
+  ]
+}

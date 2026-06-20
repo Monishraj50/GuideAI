@@ -7,6 +7,8 @@
 
 import * as vscode from 'vscode';
 import { AtruneApi, type WorkspaceSummary } from '../api';
+import { pickTemplate } from '../templates';
+import { confirmCost, forecastBrief } from '../costPreview';
 
 let panel: vscode.WebviewPanel | undefined;
 
@@ -18,6 +20,11 @@ export async function openBriefComposer(
 ) {
   if (panel) { panel.reveal(vscode.ViewColumn.Two); return; }
 
+  // Phase 5 (P2) — template picker first.
+  const picked = await pickTemplate(ctx);
+  if (picked === null) return; // user cancelled
+  const prefill = picked === 'blank' ? '' : picked.body;
+
   panel = vscode.window.createWebviewPanel(
     'atrune.briefComposer',
     'Atrune · New brief',
@@ -28,7 +35,7 @@ export async function openBriefComposer(
 
   const workspaces = await api.listWorkspaces();
   const active = activeWorkspaceId();
-  panel.webview.html = renderHtml(workspaces, active);
+  panel.webview.html = renderHtml(workspaces, active, prefill);
 
   panel.webview.onDidReceiveMessage(async (msg) => {
     if (!msg || typeof msg !== 'object') return;
@@ -41,6 +48,13 @@ export async function openBriefComposer(
           panel?.webview.postMessage({ type: 'error', error: 'workspace + brief body are required' });
           return;
         }
+        // Phase 5 (P3) — cost preview before dispatch.
+        const forecast = forecastBrief(body, /* agentCount */ 3);
+        const confirmed = await confirmCost(forecast, 'This brief');
+        if (!confirmed) {
+          panel?.webview.postMessage({ type: 'idle' });
+          return;
+        }
         panel?.webview.postMessage({ type: 'submitting' });
         const r = await api.submitBrief({ workspaceId: wsId, body, securityTagged });
         if (r.ok) {
@@ -48,7 +62,6 @@ export async function openBriefComposer(
           onDispatched();
           vscode.window.showInformationMessage(`Brief dispatched · ${r.briefId}`, 'Open Mission Control')
             .then((p) => { if (p === 'Open Mission Control') vscode.commands.executeCommand('atrune.openMissionControl'); });
-          // Close the composer after a short delay so the success badge is visible
           setTimeout(() => panel?.dispose(), 1200);
         } else {
           panel?.webview.postMessage({ type: 'error', error: r.error });
@@ -61,11 +74,12 @@ export async function openBriefComposer(
   panel.onDidDispose(() => { panel = undefined; }, null, ctx.subscriptions);
 }
 
-function renderHtml(workspaces: WorkspaceSummary[], active: string | null): string {
+function renderHtml(workspaces: WorkspaceSummary[], active: string | null, prefill: string): string {
   const options = workspaces
     .map((w) => `<option value="${w.id}"${w.id === active ? ' selected' : ''}>${escapeHtml(w.name)}</option>`)
     .join('');
   const hasWorkspaces = workspaces.length > 0;
+  const prefillText = escapeHtml(prefill);
   return `<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8" />
@@ -120,7 +134,7 @@ function renderHtml(workspaces: WorkspaceSummary[], active: string | null): stri
     <select id="workspace" required>${options}</select>
 
     <label for="body">Goal</label>
-    <textarea id="body" placeholder="e.g. Build a tiny URL-shortener API with a POST /shorten endpoint that persists to SQLite." required></textarea>
+    <textarea id="body" placeholder="e.g. Build a tiny URL-shortener API with a POST /shorten endpoint that persists to SQLite." required>${prefillText}</textarea>
 
     <div class="checkbox-row">
       <input type="checkbox" id="security" />
@@ -163,6 +177,7 @@ function renderHtml(workspaces: WorkspaceSummary[], active: string | null): stri
       if (m.type === 'submitting') { submit.disabled = true; statusEl.textContent = 'Dispatching…'; statusEl.className = 'status'; }
       if (m.type === 'success')    { statusEl.textContent = 'Dispatched · ' + (m.briefId || ''); statusEl.className = 'status ok'; }
       if (m.type === 'error')      { submit.disabled = false; statusEl.textContent = 'Error: ' + m.error; statusEl.className = 'status error'; }
+      if (m.type === 'idle')       { submit.disabled = false; statusEl.textContent = ''; statusEl.className = 'status'; }
     });
   </script>
 </body></html>`;

@@ -64,9 +64,60 @@
           "type": "string",
           "default": "",
           "description": "Path to the Atrune monorepo root (auto-detected; override if running from a different location)."
+        },
+        "atrune.founderMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Plain-English labels: status bar narrator and approval popups use friendlier words. Same data, different mood."
+        },
+        "atrune.showCostPreview": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a cost-and-time preview popup before dispatching a brief. Turn off if you trust the budget caps."
         }
       }
     },
+    "walkthroughs": [
+      {
+        "id": "atrune.welcome",
+        "title": "Welcome to AtruneAI",
+        "description": "A 5-minute tour: brief your team, watch them work, ship.",
+        "steps": [
+          {
+            "id": "welcome",
+            "title": "Welcome",
+            "description": "Meet your AI workplace.",
+            "media": { "markdown": "walkthrough/01-welcome.md" }
+          },
+          {
+            "id": "sidebar",
+            "title": "The sidebar",
+            "description": "Three views, four buttons — the whole interface.",
+            "media": { "markdown": "walkthrough/02-sidebar.md" }
+          },
+          {
+            "id": "first-brief",
+            "title": "Your first brief",
+            "description": "Pick a template or write your own; watch the pipeline run.",
+            "media": { "markdown": "walkthrough/03-first-brief.md" },
+            "completionEvents": ["onCommand:atrune.newBrief"]
+          },
+          {
+            "id": "direct-task",
+            "title": "Quick ask & auto-fix",
+            "description": "Skip the pipeline; ask one agent or fix one file.",
+            "media": { "markdown": "walkthrough/04-direct-task.md" },
+            "completionEvents": ["onCommand:atrune.quickAsk", "onCommand:atrune.autoFixThisFile"]
+          },
+          {
+            "id": "founder-mode",
+            "title": "Founder mode",
+            "description": "Plain English if technical words aren't your daily vocab.",
+            "media": { "markdown": "walkthrough/05-founder-mode.md" }
+          }
+        ]
+      }
+    ],
     "commands": [
       {
         "command": "atrune.newBrief",
@@ -115,6 +166,10 @@
         "command": "atrune.askAgentAboutSelection",
         "title": "Atrune: Ask agent about this selection",
         "icon": "$(comment-add)"
+      },
+      {
+        "command": "atrune.showWalkthrough",
+        "title": "Atrune: Show me around"
       }
     ],
     "menus": {

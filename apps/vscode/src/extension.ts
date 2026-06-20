@@ -158,6 +158,13 @@ export async function activate(ctx: vscode.ExtensionContext) {
       if (r.ok) vscode.window.showInformationMessage('Atrune server is back up.');
       else      vscode.window.showWarningMessage(`Restart failed: ${r.reason}`);
     }),
+    vscode.commands.registerCommand('atrune.showWalkthrough', async () => {
+      await vscode.commands.executeCommand(
+        'workbench.action.openWalkthrough',
+        { category: `${ctx.extension.id}#atrune.welcome` },
+        false,
+      );
+    }),
   );
 
   server.log('Atrune extension activated.');
