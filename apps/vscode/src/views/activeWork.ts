@@ -10,6 +10,7 @@ interface Node {
   iconId?: string;
   contextValue?: string;
   children?: Node[];
+  command?: vscode.Command;
 }
 
 const PHASE_ORDER = ['research', 'plan', 'implement', 'review', 'verify'] as const;
@@ -35,6 +36,7 @@ export class ActiveWorkProvider implements vscode.TreeDataProvider<Node> {
     if (node.tooltip)     item.tooltip = node.tooltip;
     if (node.iconId)      item.iconPath = new vscode.ThemeIcon(node.iconId);
     if (node.contextValue) item.contextValue = node.contextValue;
+    if (node.command)     item.command = node.command;
     return item;
   }
 
@@ -62,9 +64,14 @@ export class ActiveWorkProvider implements vscode.TreeDataProvider<Node> {
         ...(plan.briefs.recent.length > 0
           ? [{
               label: `View all briefs (${plan.briefs.total}) →`,
-              description: 'opens Mission Control',
+              description: 'opens in browser',
               iconId: 'arrow-right',
               contextValue: 'openMissionControl',
+              command: {
+                command: 'atrune.openMissionControl',
+                title: 'Open Mission Control',
+                arguments: [{}],
+              },
             }]
           : []),
       ];

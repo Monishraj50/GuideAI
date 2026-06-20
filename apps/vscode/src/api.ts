@@ -50,6 +50,19 @@ export class AtruneApi {
     } catch { return false; }
   }
 
+  /** Probe the Next.js dev server. Any HTTP response counts as "alive enough"
+   *  for the Mission Control iframe to load. */
+  async isWebAlive(): Promise<boolean> {
+    try {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 1500);
+      const port = vscode.workspace.getConfiguration('atrune').get<number>('webPort', 3000);
+      const r = await fetch(`http://localhost:${port}`, { signal: ctl.signal, redirect: 'manual' });
+      clearTimeout(t);
+      return r.status > 0;
+    } catch { return false; }
+  }
+
   async listWorkspaces(): Promise<WorkspaceSummary[]> {
     const r = await fetch(`${base()}/api/workspaces`);
     if (!r.ok) return [];

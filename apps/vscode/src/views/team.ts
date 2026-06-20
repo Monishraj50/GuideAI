@@ -10,6 +10,7 @@ interface Node {
   iconId?: string;
   contextValue?: string;
   agent?: Agent;
+  command?: vscode.Command;
 }
 
 export class TeamProvider implements vscode.TreeDataProvider<Node> {
@@ -28,6 +29,7 @@ export class TeamProvider implements vscode.TreeDataProvider<Node> {
     if (node.tooltip)     item.tooltip = node.tooltip;
     if (node.iconId)      item.iconPath = new vscode.ThemeIcon(node.iconId);
     if (node.contextValue) item.contextValue = node.contextValue;
+    if (node.command)     item.command = node.command;
     return item;
   }
 
@@ -39,7 +41,17 @@ export class TeamProvider implements vscode.TreeDataProvider<Node> {
     if (agents.length === 0) {
       return [
         { label: 'No agents hired yet', description: 'auto-hires when you brief', iconId: 'info' },
-        { label: 'Browse marketplace →', description: 'open Hire in Mission Control', iconId: 'arrow-right', contextValue: 'openMarketplace' },
+        {
+          label: 'Browse marketplace →',
+          description: 'opens Hire in your browser',
+          iconId: 'arrow-right',
+          contextValue: 'openMarketplace',
+          command: {
+            command: 'atrune.openMissionControl',
+            title: 'Open marketplace',
+            arguments: [{ route: '/hire' }],
+          },
+        },
       ];
     }
     return agents.map((a): Node => ({

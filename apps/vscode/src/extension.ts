@@ -94,8 +94,8 @@ export async function activate(ctx: vscode.ExtensionContext) {
 
   // Commands.
   ctx.subscriptions.push(
-    vscode.commands.registerCommand('atrune.openMissionControl', async () => {
-      openMissionControl(ctx);
+    vscode.commands.registerCommand('atrune.openMissionControl', async (opts?: { route?: string }) => {
+      await openMissionControl(ctx, opts);
     }),
     vscode.commands.registerCommand('atrune.openSettings', async () => {
       // Open VS Code's own settings filtered to Atrune configuration.

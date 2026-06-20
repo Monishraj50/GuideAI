@@ -87,17 +87,34 @@ export class AtruneServer {
 
     this.weOwnProcesses = true;
 
-    // Wait up to 10s for the server to come alive.
+    // Wait up to 10s for the API server. Web (Next.js dev) takes longer to
+    // boot but we don't block on it here — Mission Control probes it itself
+    // and shows a friendly loading/retry overlay if it isn't ready yet.
     const deadline = Date.now() + 10_000;
     while (Date.now() < deadline) {
       if (await this.api.isAlive()) {
         this.log('Server is up.');
+        // Kick off a non-blocking web-port log so the user sees progress.
+        void this.logWebReady();
         return { ok: true, spawned: true };
       }
       await new Promise((r) => setTimeout(r, 250));
     }
     this.log('Timed out waiting for the server to come up after 10s.');
     return { ok: false, spawned: true, reason: 'timeout' };
+  }
+
+  /** Periodically log when the Next.js dev server becomes reachable. */
+  private async logWebReady(): Promise<void> {
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      if (await this.api.isWebAlive()) {
+        this.log('Web (Next.js dev) is up.');
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    this.log('Web (Next.js dev) did not respond within 60s.');
   }
 
   private pipe(label: string, proc: ChildProcess) {
