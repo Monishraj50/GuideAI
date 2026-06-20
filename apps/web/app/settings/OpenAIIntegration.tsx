@@ -131,7 +131,7 @@ export function OpenAIIntegration() {
           ))}
         </div>
         <div className="text-dim2 text-[10px] mb-3">
-          Leave blank to fall back to the Atrium defaults (mini for haiku, full for sonnet/opus).
+          Leave blank to fall back to the Atrune defaults (mini for haiku, full for sonnet/opus).
         </div>
 
         <div className="flex items-center gap-2 justify-end">

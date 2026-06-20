@@ -1,7 +1,7 @@
 // 👥 Team — hired roster for the active project.
 
 import * as vscode from 'vscode';
-import { AtriumApi, type Agent } from '../api';
+import { AtruneApi, type Agent } from '../api';
 
 interface Node {
   label: string;
@@ -18,7 +18,7 @@ export class TeamProvider implements vscode.TreeDataProvider<Node> {
   refresh() { this._emit.fire(); }
 
   constructor(
-    private api: AtriumApi,
+    private api: AtruneApi,
     private activeWorkspaceId: () => string | null,
   ) {}
 

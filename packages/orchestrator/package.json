@@ -20,7 +20,8 @@
     "./validate": "./src/validate.ts",
     "./secondOpinion": "./src/secondOpinion.ts",
     "./memory": "./src/memory.ts",
-    "./designShotgun": "./src/designShotgun.ts"
+    "./designShotgun": "./src/designShotgun.ts",
+    "./directTask": "./src/directTask.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

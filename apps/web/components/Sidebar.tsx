@@ -6,7 +6,7 @@ import {
   HomeIcon, RadioTower, Hash, Network, Store, ScrollText,
   Settings as SettingsIcon, FolderTree, KanbanSquare,
 } from 'lucide-react';
-import { AtriumMark } from './AtriumMark';
+import { AtruneMark } from './AtruneMark';
 import { Killswitch } from './Killswitch';
 import { useWorkspaceId } from './WorkspaceProvider';
 import { cn } from '../lib/cn';
@@ -32,11 +32,11 @@ export function Sidebar() {
   return (
     <aside className="relative z-20 w-60 glass border-r border-line/70 flex flex-col text-sm shadow-soft">
       <div className="px-4 py-3 flex items-center gap-2 border-b border-line/70">
-        <div className="w-7 h-7 rounded-md bg-gradient-to-br from-accent to-sonnet flex items-center justify-center shadow-glow">
-          <AtriumMark size={15} className="text-bg" />
-        </div>
+        <AtruneMark size={32} />
         <div>
-          <div className="text-ink font-semibold tracking-tight leading-tight">Atrium.AI</div>
+          <div className="text-ink font-semibold tracking-tight leading-tight">
+            <span>Atrune</span><span className="text-accent">AI</span>
+          </div>
           <div className="text-dim text-[10px] tracking-wide uppercase">your AI workplace</div>
         </div>
       </div>

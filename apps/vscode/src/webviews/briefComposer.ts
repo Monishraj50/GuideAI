@@ -6,21 +6,21 @@
 // for the embedded BriefPane React component; for now native HTML is enough.
 
 import * as vscode from 'vscode';
-import { AtriumApi, type WorkspaceSummary } from '../api';
+import { AtruneApi, type WorkspaceSummary } from '../api';
 
 let panel: vscode.WebviewPanel | undefined;
 
 export async function openBriefComposer(
   ctx: vscode.ExtensionContext,
-  api: AtriumApi,
+  api: AtruneApi,
   activeWorkspaceId: () => string | null,
   onDispatched: () => void,
 ) {
   if (panel) { panel.reveal(vscode.ViewColumn.Two); return; }
 
   panel = vscode.window.createWebviewPanel(
-    'atrium.briefComposer',
-    'Atrium · New brief',
+    'atrune.briefComposer',
+    'Atrune · New brief',
     vscode.ViewColumn.Two,
     { enableScripts: true, retainContextWhenHidden: false },
   );
@@ -47,7 +47,7 @@ export async function openBriefComposer(
           panel?.webview.postMessage({ type: 'success', briefId: r.briefId });
           onDispatched();
           vscode.window.showInformationMessage(`Brief dispatched · ${r.briefId}`, 'Open Mission Control')
-            .then((p) => { if (p === 'Open Mission Control') vscode.commands.executeCommand('atrium.openMissionControl'); });
+            .then((p) => { if (p === 'Open Mission Control') vscode.commands.executeCommand('atrune.openMissionControl'); });
           // Close the composer after a short delay so the success badge is visible
           setTimeout(() => panel?.dispose(), 1200);
         } else {
@@ -70,7 +70,7 @@ function renderHtml(workspaces: WorkspaceSummary[], active: string | null): stri
 <html lang="en"><head>
 <meta charset="utf-8" />
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
-<title>Atrium · New brief</title>
+<title>Atrune · New brief</title>
 <style>
   :root {
     --bg: var(--vscode-editor-background, #0e1116);
@@ -112,7 +112,7 @@ function renderHtml(workspaces: WorkspaceSummary[], active: string | null): stri
 </head>
 <body>
   <h1>💬 New brief</h1>
-  <p class="sub">Describe what your team should do, in plain English. Atrium structures it for you.</p>
+  <p class="sub">Describe what your team should do, in plain English. Atrune structures it for you.</p>
 
   ${hasWorkspaces ? `
   <form id="form">

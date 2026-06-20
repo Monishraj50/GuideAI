@@ -1,4 +1,4 @@
-# Atrium.AI — User Guide
+# AtruneAI — User Guide
 
 A walk-through of every feature, what it does, where to find it, and how to use it. If the README is the reference, this is the teaching doc.
 
@@ -44,7 +44,7 @@ pnpm dev              # boots server (4000) + web (3000)
 
 Open <http://localhost:3000>. On the **sign-in page**, the easiest path is:
 
-> **Continue as guest** → no password, instant access. Atrium creates a guest user (`guest-<random>`) tied to your local machine.
+> **Continue as guest** → no password, instant access. Atrune creates a guest user (`guest-<random>`) tied to your local machine.
 
 > **Guest mode uses a deterministic mock adapter** — every feature works without an API key, but responses are fixtures. To use real Claude, go to *Settings → Claude integration* (see [§4](#4-authentication--accounts)).
 
@@ -54,9 +54,9 @@ Open <http://localhost:3000>. On the **sign-in page**, the easiest path is:
 
 Three things to remember:
 
-1. **You direct, AI executes.** You describe goals + constraints in plain language ("intake"). Atrium turns that into a structured plan, hires the right specialists, runs them through a 5-phase pipeline, and surfaces every step so you can intervene.
+1. **You direct, AI executes.** You describe goals + constraints in plain language ("intake"). Atrune turns that into a structured plan, hires the right specialists, runs them through a 5-phase pipeline, and surfaces every step so you can intervene.
 2. **Everything is gated.** Budget gate, critic gate, approval gate, hire gate — nothing dispatches silently. You can always force-override, but you'll see what you're overriding.
-3. **Local-first.** Your briefs, your work items, your slide decks — all on your machine at `~/.guideai/`. Atrium's web UI is just a window onto that local state.
+3. **Local-first.** Your briefs, your work items, your slide decks — all on your machine at `~/.guideai/`. Atrune's web UI is just a window onto that local state.
 
 ---
 
@@ -94,7 +94,7 @@ Click **Run discovery round-table**. Five specialists weigh in (Product Strategi
 
 ### Step 4 · Critic gate fires
 
-Atrium automatically runs the CEO + Eng critics on the synthesis. Two cards appear:
+Atrune automatically runs the CEO + Eng critics on the synthesis. Two cards appear:
 
 - **CEO critic** — scope/ROI/value questions
 - **Eng critic** — architecture/risk/staffing questions
@@ -135,7 +135,7 @@ Project page → **Deliverables** section. You get:
 
 ### Step 8 · (Optional) Push to GitHub
 
-Project page → **Repo** section → **link existing** repo or **create new** → click **Push deliverables**. Atrium writes:
+Project page → **Repo** section → **link existing** repo or **create new** → click **Push deliverables**. Atrune writes:
 
 ```
 README.md           (slide deck)
@@ -184,7 +184,7 @@ A workspace = one project. Briefs, intake, plans, work items, deliverables, repo
 - **TopBar workspace switcher** (top of every page) — fastest
 - **Projects grid** (`/projects`) — see all workspaces with stats per card
 
-**Archive**: Hover over a workspace card → archive icon. The workspace disappears from lists but **data stays on disk** (you can re-create with a same-name later — Atrium auto-suffixes to `acme-2`, `acme-3`, …).
+**Archive**: Hover over a workspace card → archive icon. The workspace disappears from lists but **data stays on disk** (you can re-create with a same-name later — Atrune auto-suffixes to `acme-2`, `acme-3`, …).
 
 **The currently-active workspace** is what every other section (Board, Ops, Hire, etc.) refers to. The active id is persisted in `localStorage` so refreshing keeps your context.
 
@@ -324,7 +324,7 @@ Three modes (set in intake):
 
 ### Role aliasing
 
-The panelists don't have to know every exact catalog ID. Atrium maps shorthand → canonical:
+The panelists don't have to know every exact catalog ID. Atrune maps shorthand → canonical:
 
 ```
 qa-engineer       → qa-expert
@@ -384,7 +384,7 @@ If your brief starts with `[security]` (or the `securityTagged` flag is set), **
 
 **Where**: project page → **Dashboard** section.
 
-When a plan dispatches, Atrium auto-seeds work items from the synthesis:
+When a plan dispatches, Atrune auto-seeds work items from the synthesis:
 
 - 1 research item + 1 implement item per recommended role (up to 8 roles)
 - 1 review item per risk flag (up to 5)
@@ -454,7 +454,7 @@ The per-project Dashboard ([§11](#11-work-breakdown--per-project-dashboard)) is
 
 **Where**: project page → **Deliverables** section.
 
-After every brief completes, Atrium auto-harvests three kinds of deliverables:
+After every brief completes, Atrune auto-harvests three kinds of deliverables:
 
 | Kind | What it is | How |
 |---|---|---|
@@ -539,9 +539,9 @@ pnpm exec playwright install chromium     # ~170MB
 
 ### Setup (in Settings → GitHub)
 
-Two paths (Atrium tries them in order):
+Two paths (Atrune tries them in order):
 
-1. **gh CLI** — install [`gh`](https://cli.github.com), run `gh auth login`, then in Settings click **connect gh CLI**. Atrium uses your existing login.
+1. **gh CLI** — install [`gh`](https://cli.github.com), run `gh auth login`, then in Settings click **connect gh CLI**. Atrune uses your existing login.
 2. **PAT** — paste a GitHub Personal Access Token (`repo` scope) into the PAT field. Stored at `~/.guideai/integrations/github.json` (`chmod 600`).
 
 You can set both. CLI is preferred when authenticated.
@@ -553,11 +553,11 @@ In the project's **Repo** section:
 - **Link existing**: owner + repo + visibility + default branch
 - **Create new**: name + description + private/public (creates under `/user/repos`)
 
-The binding is one repo per workspace. **Unlink** doesn't delete the repo on GitHub — it just removes the binding from Atrium.
+The binding is one repo per workspace. **Unlink** doesn't delete the repo on GitHub — it just removes the binding from Atrune.
 
 ### Push deliverables
 
-After the binding, click **Push deliverables**. Atrium writes (or updates):
+After the binding, click **Push deliverables**. Atrune writes (or updates):
 
 ```
 README.md           ← slide deck body
@@ -580,7 +580,7 @@ Click **Sync WBS → issues**:
 
 ### Two-way?
 
-GitHub → Atrium isn't automatic. If you close an issue on GitHub, Atrium doesn't know. The recommended path is **polling-based two-way sync** (every 5 min hit `GET /issues?since=<last>`), not webhooks (local-first apps can't receive webhooks). Not built today; see [README "What's not built"](../README.md#whats-not-built-yet).
+GitHub → Atrune isn't automatic. If you close an issue on GitHub, Atrune doesn't know. The recommended path is **polling-based two-way sync** (every 5 min hit `GET /issues?since=<last>`), not webhooks (local-first apps can't receive webhooks). Not built today; see [README "What's not built"](../README.md#whats-not-built-yet).
 
 ---
 
@@ -634,7 +634,7 @@ _cross-vendor: claude: 2/2 + openai: 1/1_
 
 ### No key on file
 
-The toggle is still on but no OpenAI key — Atrium uses a **mock OpenAI adapter** so the codepath stays exercised. Status pill in the toggle card turns warn-tinted.
+The toggle is still on but no OpenAI key — Atrune uses a **mock OpenAI adapter** so the codepath stays exercised. Status pill in the toggle card turns warn-tinted.
 
 ---
 
@@ -642,7 +642,7 @@ The toggle is still on but no OpenAI key — Atrium uses a **mock OpenAI adapter
 
 **Where**: project page → **Agent memory** section.
 
-Each role can accumulate **notes** that travel between projects. When a role runs anywhere, Atrium prepends matching notes to its system prompt.
+Each role can accumulate **notes** that travel between projects. When a role runs anywhere, Atrune prepends matching notes to its system prompt.
 
 ### Adding a note
 
@@ -663,7 +663,7 @@ Three modes (top of the section):
 | **read-only** | *(default)* Other projects can read; only this project can edit |
 | **deny** | Notes stay private to this project |
 
-When a role runs in workspace B, Atrium loads notes from B itself **and** every workspace whose share isn't `deny`. Newest first, capped at 6 to keep prompts lean.
+When a role runs in workspace B, Atrune loads notes from B itself **and** every workspace whose share isn't `deny`. Newest first, capped at 6 to keep prompts lean.
 
 ### What gets injected
 
@@ -690,7 +690,7 @@ The `_(from …)_` suffix tells the agent (and the user reading the artifact) wh
 - *"Our staging URL is X; test there before prod"*
 - *"Frontend uses Tailwind; don't suggest CSS-in-JS"*
 
-The memory layer is **manual** — Atrium doesn't auto-distill notes from traces. (Skill promotion handles the auto lane.)
+The memory layer is **manual** — Atrune doesn't auto-distill notes from traces. (Skill promotion handles the auto lane.)
 
 ---
 
@@ -719,7 +719,7 @@ Open the Deliverables grid → Design variants section → 4 cards visible → c
 
 ### Taste memory
 
-For the next design brief in the **same workspace**, Atrium prepends a taste-memory block to the implement prompt:
+For the next design brief in the **same workspace**, Atrune prepends a taste-memory block to the implement prompt:
 
 ```
 ## Taste memory — variants the user has picked before:
@@ -798,7 +798,7 @@ For token caps, **downgrade doesn't help** (a phase consumes about the same toke
 
 **Where**: Settings → Approval rules.
 
-When the pipeline runs and an agent tries to call a tool (`Read`, `Edit`, `Bash`, etc.), Atrium's PreToolUse hook intercepts and routes the call to the policy engine. The engine matches against your rules:
+When the pipeline runs and an agent tries to call a tool (`Read`, `Edit`, `Bash`, etc.), Atrune's PreToolUse hook intercepts and routes the call to the policy engine. The engine matches against your rules:
 
 ```jsonc
 {
@@ -823,7 +823,7 @@ When the pipeline runs and an agent tries to call a tool (`Read`, `Edit`, `Bash`
 
 ### Synthesizing a rule from a denied action
 
-In the approval tray, when you deny a tool call, you'll see a **"Don't ask me again about `pnpm test`"** prompt — click it and Atrium adds a matching auto-approve rule to your `policies.json`.
+In the approval tray, when you deny a tool call, you'll see a **"Don't ask me again about `pnpm test`"** prompt — click it and Atrune adds a matching auto-approve rule to your `policies.json`.
 
 ### Pending approvals
 
@@ -975,7 +975,7 @@ You're not signed in. The AuthGate is redirecting to `/signin`. Hit it and conti
 Either the critic gate or the budget gate blocked it. Look for a red/warn banner above the action buttons. Edit the synthesis or click force-dispatch.
 
 **Validation says `target_url origin not in allowlist`**
-The target URL's origin isn't in the allowlist. Two fixes: (1) re-save the target without an explicit allowlist (Atrium auto-adds the origin), or (2) add the origin manually.
+The target URL's origin isn't in the allowlist. Two fixes: (1) re-save the target without an explicit allowlist (Atrune auto-adds the origin), or (2) add the origin manually.
 
 **`/board` shows empty**
 The current workspace has no work items. Either dispatch a brief or click + add item.

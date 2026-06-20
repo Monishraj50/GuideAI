@@ -1,4 +1,4 @@
-// Auto-spawn the Atrium server + web (tsx watch + next dev) when the extension
+// Auto-spawn the Atrune server + web (tsx watch + next dev) when the extension
 // activates and they're not already running. Killed on deactivation if we own
 // them; if the user had `pnpm dev` going, we leave it alone.
 
@@ -6,31 +6,31 @@ import * as vscode from 'vscode';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { AtriumApi } from './api';
+import { AtruneApi } from './api';
 
 interface SpawnedProcs {
   server: ChildProcess | null;
   web: ChildProcess | null;
 }
 
-export class AtriumServer {
+export class AtruneServer {
   private procs: SpawnedProcs = { server: null, web: null };
   private channel: vscode.OutputChannel;
-  private api = new AtriumApi();
+  private api = new AtruneApi();
   /** True when WE spawned the processes (so we should kill them on deactivate). */
   private weOwnProcesses = false;
 
   constructor() {
-    this.channel = vscode.window.createOutputChannel('Atrium');
+    this.channel = vscode.window.createOutputChannel('Atrune');
   }
 
   show() { this.channel.show(true); }
   log(msg: string) { this.channel.appendLine(`[${new Date().toISOString()}] ${msg}`); }
 
-  /** Resolve the Atrium repo root. Try config first, then auto-detect from
+  /** Resolve the Atrune repo root. Try config first, then auto-detect from
    *  the open workspace folder, then walk up looking for pnpm-workspace.yaml. */
   private resolveRepoRoot(): string | null {
-    const cfg = vscode.workspace.getConfiguration('atrium').get<string>('repoRoot', '');
+    const cfg = vscode.workspace.getConfiguration('atrune').get<string>('repoRoot', '');
     if (cfg && fs.existsSync(path.join(cfg, 'pnpm-workspace.yaml'))) return cfg;
 
     const folders = vscode.workspace.workspaceFolders ?? [];
@@ -50,12 +50,12 @@ export class AtriumServer {
    *  detect and connect. Otherwise spawn it ourselves. */
   async ensureRunning(): Promise<{ ok: boolean; spawned: boolean; reason?: string }> {
     if (await this.api.isAlive()) {
-      this.log('Detected Atrium server already running — connecting without spawn.');
+      this.log('Detected Atrune server already running — connecting without spawn.');
       this.weOwnProcesses = false;
       return { ok: true, spawned: false };
     }
 
-    const autoSpawn = vscode.workspace.getConfiguration('atrium').get<boolean>('autoSpawn', true);
+    const autoSpawn = vscode.workspace.getConfiguration('atrune').get<boolean>('autoSpawn', true);
     if (!autoSpawn) {
       this.log('Server not running and autoSpawn is disabled — refusing to spawn.');
       return { ok: false, spawned: false, reason: 'autoSpawn disabled and no server detected' };
@@ -63,7 +63,7 @@ export class AtriumServer {
 
     const root = this.resolveRepoRoot();
     if (!root) {
-      this.log('Could not locate the Atrium monorepo (no pnpm-workspace.yaml found). Set `atrium.repoRoot` in settings.');
+      this.log('Could not locate the Atrune monorepo (no pnpm-workspace.yaml found). Set `atrune.repoRoot` in settings.');
       return { ok: false, spawned: false, reason: 'repo not found' };
     }
     this.log(`Repo root: ${root}`);
@@ -107,10 +107,10 @@ export class AtriumServer {
   }
 
   serverPort(): number {
-    return vscode.workspace.getConfiguration('atrium').get<number>('serverPort', 4000);
+    return vscode.workspace.getConfiguration('atrune').get<number>('serverPort', 4000);
   }
   webPort(): number {
-    return vscode.workspace.getConfiguration('atrium').get<number>('webPort', 3000);
+    return vscode.workspace.getConfiguration('atrune').get<number>('webPort', 3000);
   }
 
   async dispose(): Promise<void> {

@@ -1,7 +1,7 @@
 // ✅ Pending — tool approvals + queued hires. Interrupt-driven.
 
 import * as vscode from 'vscode';
-import { AtriumApi } from '../api';
+import { AtruneApi } from '../api';
 
 interface Node {
   label: string;
@@ -19,7 +19,7 @@ export class PendingProvider implements vscode.TreeDataProvider<Node> {
   refresh() { this._emit.fire(); }
 
   constructor(
-    private api: AtriumApi,
+    private api: AtruneApi,
     private activeWorkspaceId: () => string | null,
   ) {}
 

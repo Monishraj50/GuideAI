@@ -1,7 +1,7 @@
 // 🎯 Active work — currently-running brief shown as a phase tree.
 
 import * as vscode from 'vscode';
-import { AtriumApi, type PlanResp } from '../api';
+import { AtruneApi, type PlanResp } from '../api';
 
 interface Node {
   label: string;
@@ -20,7 +20,7 @@ export class ActiveWorkProvider implements vscode.TreeDataProvider<Node> {
   refresh() { this._emit.fire(); }
 
   constructor(
-    private api: AtriumApi,
+    private api: AtruneApi,
     private activeWorkspaceId: () => string | null,
   ) {}
 
@@ -48,7 +48,7 @@ export class ActiveWorkProvider implements vscode.TreeDataProvider<Node> {
 
     const plan = await this.api.getPlan(wsId);
     if (!plan) {
-      return [{ label: 'Server not reachable', description: 'check the Atrium output channel', iconId: 'warning' }];
+      return [{ label: 'Server not reachable', description: 'check the Atrune output channel', iconId: 'warning' }];
     }
 
     const active = plan.briefs.recent.find((b) => b.status === 'active');

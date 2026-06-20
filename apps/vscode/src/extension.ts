@@ -1,7 +1,7 @@
-// Atrium.AI VS Code extension — entry point.
+// AtruneAI VS Code extension — entry point.
 //
 // Phase 1 scope:
-//   - Activate on startup → auto-spawn Atrium server + web if not running
+//   - Activate on startup → auto-spawn Atrune server + web if not running
 //   - Three sidebar TreeViews: Active work · Pending · Team
 //   - Three commands: Open Mission Control · Refresh sidebar · Restart server
 //   - 5s polling refresh on all three views (cheap; replaces SSE for now)
@@ -9,22 +9,23 @@
 // Phases 2+ will add toolbar buttons, webview composer, status bar HUD, etc.
 
 import * as vscode from 'vscode';
-import { AtriumServer } from './server';
-import { AtriumApi } from './api';
+import { AtruneServer } from './server';
+import { AtruneApi } from './api';
 import { ActiveWorkProvider } from './views/activeWork';
 import { PendingProvider } from './views/pending';
 import { TeamProvider } from './views/team';
 import { openMissionControl } from './webviews/missionControl';
 import { openBriefComposer } from './webviews/briefComposer';
+import { quickAskChooser, askOneAgent, autoFix } from './directTask';
 
-let server: AtriumServer | undefined;
+let server: AtruneServer | undefined;
 let pollHandle: NodeJS.Timeout | undefined;
 
 export async function activate(ctx: vscode.ExtensionContext) {
-  server = new AtriumServer();
-  server.log('Atrium extension activating…');
+  server = new AtruneServer();
+  server.log('Atrune extension activating…');
 
-  const api = new AtriumApi();
+  const api = new AtruneApi();
 
   // Active workspace tracking — for now, default to the first workspace the
   // server knows about. Phase 2 will add an explicit picker tied to the open
@@ -42,7 +43,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
   const status = await server.ensureRunning();
   if (!status.ok) {
     vscode.window.showWarningMessage(
-      `Atrium server not reachable: ${status.reason ?? 'unknown'}. Open the Atrium output channel for details.`,
+      `Atrune server not reachable: ${status.reason ?? 'unknown'}. Open the Atrune output channel for details.`,
       'Open output',
     ).then((p) => { if (p === 'Open output') server?.show(); });
   }
@@ -54,9 +55,9 @@ export async function activate(ctx: vscode.ExtensionContext) {
   const team       = new TeamProvider(api, () => activeWorkspaceId);
 
   ctx.subscriptions.push(
-    vscode.window.registerTreeDataProvider('atrium.activeWork', activeWork),
-    vscode.window.registerTreeDataProvider('atrium.pending', pending),
-    vscode.window.registerTreeDataProvider('atrium.team', team),
+    vscode.window.registerTreeDataProvider('atrune.activeWork', activeWork),
+    vscode.window.registerTreeDataProvider('atrune.pending', pending),
+    vscode.window.registerTreeDataProvider('atrune.team', team),
   );
 
   function refreshAll() {
@@ -74,31 +75,43 @@ export async function activate(ctx: vscode.ExtensionContext) {
 
   // Commands.
   ctx.subscriptions.push(
-    vscode.commands.registerCommand('atrium.openMissionControl', async () => {
+    vscode.commands.registerCommand('atrune.openMissionControl', async () => {
       openMissionControl(ctx);
     }),
-    vscode.commands.registerCommand('atrium.openSettings', async () => {
-      // Open VS Code's own settings filtered to Atrium configuration.
+    vscode.commands.registerCommand('atrune.openSettings', async () => {
+      // Open VS Code's own settings filtered to Atrune configuration.
       // Settings page inside Mission Control is reachable via the
       // openMissionControl({route:'/settings'}) variant if the user prefers.
-      await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:atrium-ai.atrium-ai');
+      await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:atrune-ai.atrune-ai');
       // Fallback for unpublished installs where the publisher isn't right yet
       // — open generic settings filtered by keyword:
-      await vscode.commands.executeCommand('workbench.action.openSettings', 'atrium');
+      await vscode.commands.executeCommand('workbench.action.openSettings', 'atrune');
     }),
-    vscode.commands.registerCommand('atrium.newBrief', async () => {
+    vscode.commands.registerCommand('atrune.newBrief', async () => {
       await openBriefComposer(ctx, api, () => activeWorkspaceId, () => refreshAll());
     }),
-    vscode.commands.registerCommand('atrium.quickAsk', async () => {
-      // Direct-task mode lives in Phase 3. Surface a friendly placeholder
-      // so the toolbar shape is final from Phase 2 onwards.
-      const pick = await vscode.window.showInformationMessage(
-        'Quick ask (single-agent / auto-fix) lands in Phase 3 — coming soon.',
-        'Open Mission Control instead',
-      );
-      if (pick === 'Open Mission Control instead') openMissionControl(ctx);
+    vscode.commands.registerCommand('atrune.quickAsk', async () => {
+      await quickAskChooser(api, () => activeWorkspaceId);
     }),
-    vscode.commands.registerCommand('atrium.switchWorkspace', async () => {
+    vscode.commands.registerCommand('atrune.askOneAgent', async () => {
+      await askOneAgent(api, () => activeWorkspaceId);
+    }),
+    vscode.commands.registerCommand('atrune.autoFixThisFile', async (uri?: vscode.Uri) => {
+      // Editor context-menu / explorer-context entry. If a URI was passed
+      // (right-click in the file explorer), include the file path in the prompt.
+      const filePath = uri?.fsPath ?? vscode.window.activeTextEditor?.document.uri.fsPath;
+      const fileHint = filePath ? `(file: ${filePath}) ` : '';
+      await autoFix(api, () => activeWorkspaceId, `${fileHint}`.trim() || undefined);
+    }),
+    vscode.commands.registerCommand('atrune.askAgentAboutSelection', async () => {
+      const ed = vscode.window.activeTextEditor;
+      const sel = ed?.document.getText(ed.selection);
+      const contextPrompt = sel?.trim()
+        ? `Here is a code selection from ${ed?.document.uri.fsPath ?? 'this file'}:\n\n\`\`\`\n${sel}\n\`\`\`\n\nWhat I want: `
+        : undefined;
+      await askOneAgent(api, () => activeWorkspaceId, contextPrompt);
+    }),
+    vscode.commands.registerCommand('atrune.switchWorkspace', async () => {
       const list = await api.listWorkspaces();
       if (list.length === 0) {
         vscode.window.showInformationMessage('No projects yet — create one in Mission Control.');
@@ -106,7 +119,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
       }
       const pick = await vscode.window.showQuickPick(
         list.map((w) => ({ label: w.name, description: w.id, detail: `${w.agents} agents · ${w.totalBriefs} briefs · ${w.pendingApprovals} pending` })),
-        { placeHolder: 'Switch active Atrium project' },
+        { placeHolder: 'Switch active Atrune project' },
       );
       if (pick) {
         activeWorkspaceId = pick.description!;
@@ -114,21 +127,21 @@ export async function activate(ctx: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(`Active project: ${pick.label}`);
       }
     }),
-    vscode.commands.registerCommand('atrium.refresh', async () => {
+    vscode.commands.registerCommand('atrune.refresh', async () => {
       await refreshActiveWorkspace();
       refreshAll();
     }),
-    vscode.commands.registerCommand('atrium.restartServer', async () => {
-      vscode.window.showInformationMessage('Restarting Atrium server…');
+    vscode.commands.registerCommand('atrune.restartServer', async () => {
+      vscode.window.showInformationMessage('Restarting Atrune server…');
       await server?.dispose();
-      server = new AtriumServer();
+      server = new AtruneServer();
       const r = await server.ensureRunning();
-      if (r.ok) vscode.window.showInformationMessage('Atrium server is back up.');
+      if (r.ok) vscode.window.showInformationMessage('Atrune server is back up.');
       else      vscode.window.showWarningMessage(`Restart failed: ${r.reason}`);
     }),
   );
 
-  server.log('Atrium extension activated.');
+  server.log('Atrune extension activated.');
 }
 
 export async function deactivate() {

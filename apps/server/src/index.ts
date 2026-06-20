@@ -28,6 +28,7 @@ import { registerValidationRoutes } from './routes/validation.js';
 import { registerOpenAIIntegrationRoutes } from './routes/openaiIntegration.js';
 import { registerSecondOpinionRoutes } from './routes/secondOpinion.js';
 import { registerMemoryRoutes } from './routes/memory.js';
+import { registerDirectTaskRoutes } from './routes/directTask.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
 const app = Fastify({ logger: true });
@@ -67,6 +68,7 @@ registerValidationRoutes(app);
 registerOpenAIIntegrationRoutes(app);
 registerSecondOpinionRoutes(app);
 registerMemoryRoutes(app);
+registerDirectTaskRoutes(app);
 
 app.listen({ port: PORT, host: '0.0.0.0' })
   .then(() => app.log.info(`GuideAI server up on :${PORT} (state: ${paths.home})`))

@@ -1,4 +1,4 @@
-// Thin fetch wrapper over the existing Atrium HTTP API. Reuses every route
+// Thin fetch wrapper over the existing Atrune HTTP API. Reuses every route
 // the web app already calls; the extension is just another client.
 
 import * as vscode from 'vscode';
@@ -34,11 +34,11 @@ export interface Agent {
 }
 
 function base(): string {
-  const port = vscode.workspace.getConfiguration('atrium').get<number>('serverPort', 4000);
+  const port = vscode.workspace.getConfiguration('atrune').get<number>('serverPort', 4000);
   return `http://localhost:${port}`;
 }
 
-export class AtriumApi {
+export class AtruneApi {
   /** Cheap readiness probe — fast timeout, swallows errors. */
   async isAlive(): Promise<boolean> {
     try {
@@ -115,10 +115,60 @@ export class AtriumApi {
 
   /** Public base URL the webview iframes should load (host's port). */
   webBase(): string {
-    const port = vscode.workspace.getConfiguration('atrium').get<number>('webPort', 3000);
+    const port = vscode.workspace.getConfiguration('atrune').get<number>('webPort', 3000);
     return `http://localhost:${port}`;
   }
   serverBase(): string {
     return base();
   }
+
+  // ---------- direct-task (Phase 3) ----------
+
+  async directTask(args: {
+    workspaceId: string; agentId: string; prompt: string; cwd?: string;
+  }): Promise<{ ok: boolean; run?: DirectTaskRun; error?: string }> {
+    try {
+      const r = await fetch(`${base()}/api/workspaces/${args.workspaceId}/direct-task`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ agentId: args.agentId, prompt: args.prompt, cwd: args.cwd }),
+      });
+      const j = await r.json() as any;
+      if (!r.ok) return { ok: false, error: j?.error ?? `http ${r.status}` };
+      return { ok: true, run: j.run as DirectTaskRun };
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }
+
+  async autoFix(args: {
+    workspaceId: string; description: string; cwd?: string; hire?: boolean;
+  }): Promise<{ ok: boolean; run?: DirectTaskRun & { pickedAgentRole?: string }; error?: string }> {
+    try {
+      const r = await fetch(`${base()}/api/workspaces/${args.workspaceId}/auto-fix`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ description: args.description, cwd: args.cwd, hire: args.hire ?? true }),
+      });
+      const j = await r.json() as any;
+      if (!r.ok) return { ok: false, error: j?.error ?? `http ${r.status}` };
+      return { ok: true, run: j.run };
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }
+}
+
+export interface DirectTaskRun {
+  id: string;
+  workspaceId: string;
+  agentId: string;
+  prompt: string;
+  text: string;
+  tokensIn: number;
+  tokensOut: number;
+  costUsd: number;
+  durationMs: number;
+  cwd: string;
+  status: 'ok' | 'budget-blocked' | 'error';
+  error?: string;
+  pickedAgentRole?: string;
 }

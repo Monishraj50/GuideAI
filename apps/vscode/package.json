@@ -1,9 +1,9 @@
 {
   "name": "@guideai/vscode",
-  "displayName": "Atrium.AI",
+  "displayName": "AtruneAI",
   "description": "Your AI workplace, inside VS Code. Brief your team, watch the pipeline, ship faster.",
   "version": "0.1.0",
-  "publisher": "atrium-ai",
+  "publisher": "atrune-ai",
   "private": true,
   "license": "AGPL-3.0",
   "main": "./dist/extension.js",
@@ -17,117 +17,151 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "atrium",
-          "title": "Atrium.AI",
+          "id": "atrune",
+          "title": "AtruneAI",
           "icon": "images/icon.svg"
         }
       ]
     },
     "views": {
-      "atrium": [
+      "atrune": [
         {
-          "id": "atrium.activeWork",
+          "id": "atrune.activeWork",
           "name": "Active work",
           "icon": "$(target)"
         },
         {
-          "id": "atrium.pending",
+          "id": "atrune.pending",
           "name": "Pending",
           "icon": "$(check)"
         },
         {
-          "id": "atrium.team",
+          "id": "atrune.team",
           "name": "Team",
           "icon": "$(organization)"
         }
       ]
     },
     "configuration": {
-      "title": "Atrium.AI",
+      "title": "AtruneAI",
       "properties": {
-        "atrium.serverPort": {
+        "atrune.serverPort": {
           "type": "number",
           "default": 4000,
           "description": "Port the Fastify server listens on."
         },
-        "atrium.webPort": {
+        "atrune.webPort": {
           "type": "number",
           "default": 3000,
           "description": "Port the Next.js dev server listens on."
         },
-        "atrium.autoSpawn": {
+        "atrune.autoSpawn": {
           "type": "boolean",
           "default": true,
-          "description": "Auto-spawn the Atrium server + web on activation if they aren't already running."
+          "description": "Auto-spawn the Atrune server + web on activation if they aren't already running."
         },
-        "atrium.repoRoot": {
+        "atrune.repoRoot": {
           "type": "string",
           "default": "",
-          "description": "Path to the Atrium monorepo root (auto-detected; override if running from a different location)."
+          "description": "Path to the Atrune monorepo root (auto-detected; override if running from a different location)."
         }
       }
     },
     "commands": [
       {
-        "command": "atrium.newBrief",
-        "title": "Atrium: New brief…",
+        "command": "atrune.newBrief",
+        "title": "Atrune: New brief…",
         "icon": "$(comment-discussion)"
       },
       {
-        "command": "atrium.quickAsk",
-        "title": "Atrium: Quick ask…",
+        "command": "atrune.quickAsk",
+        "title": "Atrune: Quick ask…",
         "icon": "$(zap)"
       },
       {
-        "command": "atrium.openMissionControl",
-        "title": "Atrium: Open Mission Control",
+        "command": "atrune.openMissionControl",
+        "title": "Atrune: Open Mission Control",
         "icon": "$(window)"
       },
       {
-        "command": "atrium.openSettings",
-        "title": "Atrium: Open Settings",
+        "command": "atrune.openSettings",
+        "title": "Atrune: Open Settings",
         "icon": "$(gear)"
       },
       {
-        "command": "atrium.refresh",
-        "title": "Atrium: Refresh sidebar",
+        "command": "atrune.refresh",
+        "title": "Atrune: Refresh sidebar",
         "icon": "$(refresh)"
       },
       {
-        "command": "atrium.restartServer",
-        "title": "Atrium: Restart server"
+        "command": "atrune.restartServer",
+        "title": "Atrune: Restart server"
       },
       {
-        "command": "atrium.switchWorkspace",
-        "title": "Atrium: Switch project…"
+        "command": "atrune.switchWorkspace",
+        "title": "Atrune: Switch project…"
+      },
+      {
+        "command": "atrune.askOneAgent",
+        "title": "Atrune: Ask one agent…",
+        "icon": "$(person)"
+      },
+      {
+        "command": "atrune.autoFixThisFile",
+        "title": "Atrune: Auto-fix this…",
+        "icon": "$(wand)"
+      },
+      {
+        "command": "atrune.askAgentAboutSelection",
+        "title": "Atrune: Ask agent about this selection",
+        "icon": "$(comment-add)"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "atrium.newBrief",
-          "when": "view == atrium.activeWork",
+          "command": "atrune.newBrief",
+          "when": "view == atrune.activeWork",
           "group": "navigation@1"
         },
         {
-          "command": "atrium.quickAsk",
-          "when": "view == atrium.activeWork",
+          "command": "atrune.quickAsk",
+          "when": "view == atrune.activeWork",
           "group": "navigation@2"
         },
         {
-          "command": "atrium.openMissionControl",
-          "when": "view == atrium.activeWork",
+          "command": "atrune.openMissionControl",
+          "when": "view == atrune.activeWork",
           "group": "navigation@3"
         },
         {
-          "command": "atrium.openSettings",
-          "when": "view == atrium.activeWork",
+          "command": "atrune.openSettings",
+          "when": "view == atrune.activeWork",
           "group": "navigation@4"
         },
         {
-          "command": "atrium.refresh",
-          "when": "view == atrium.pending || view == atrium.team",
+          "command": "atrune.refresh",
+          "when": "view == atrune.pending || view == atrune.team",
           "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "atrune.autoFixThisFile",
+          "when": "resourceScheme == file",
+          "group": "atrune@1"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "atrune.askAgentAboutSelection",
+          "when": "editorHasSelection",
+          "group": "atrune@1"
+        },
+        {
+          "command": "atrune.autoFixThisFile",
+          "when": "editorIsOpen",
+          "group": "atrune@2"
         }
       ]
     }

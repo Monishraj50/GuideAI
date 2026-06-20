@@ -47,7 +47,7 @@ export function GithubIntegration() {
 
   async function connectCli() {
     if (!state?.ghCliDetected) return;
-    if (!confirm(`Connect Atrium to your local \`gh\` CLI session?\n\nVersion: ${state.ghCliVersion ?? 'detected'}\nLogged in as: ${state.ghCliLoggedInUser ?? 'unknown'}\n\nWorkspace repo operations will run as whoever is currently logged in via \`gh auth login\`.`)) return;
+    if (!confirm(`Connect Atrune to your local \`gh\` CLI session?\n\nVersion: ${state.ghCliVersion ?? 'detected'}\nLogged in as: ${state.ghCliLoggedInUser ?? 'unknown'}\n\nWorkspace repo operations will run as whoever is currently logged in via \`gh auth login\`.`)) return;
     setBusy('cli-connect');
     try {
       const r = await fetch(`${base}/cli/connect`, { method: 'POST' });

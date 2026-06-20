@@ -13,3 +13,4 @@ export * from './validate.js';
 export * from './secondOpinion.js';
 export * from './memory.js';
 export * from './designShotgun.js';
+export * from './directTask.js';

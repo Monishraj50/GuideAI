@@ -14,8 +14,8 @@ import * as vscode from 'vscode';
 let panel: vscode.WebviewPanel | undefined;
 
 export function openMissionControl(ctx: vscode.ExtensionContext, opts: { route?: string } = {}) {
-  const webPort = vscode.workspace.getConfiguration('atrium').get<number>('webPort', 3000);
-  const serverPort = vscode.workspace.getConfiguration('atrium').get<number>('serverPort', 4000);
+  const webPort = vscode.workspace.getConfiguration('atrune').get<number>('webPort', 3000);
+  const serverPort = vscode.workspace.getConfiguration('atrune').get<number>('serverPort', 4000);
   const route = opts.route ?? '';
   const iframeSrc = `http://localhost:${webPort}${route}?vscode=1`;
 
@@ -27,8 +27,8 @@ export function openMissionControl(ctx: vscode.ExtensionContext, opts: { route?:
   }
 
   panel = vscode.window.createWebviewPanel(
-    'atrium.missionControl',
-    'Atrium · Mission Control',
+    'atrune.missionControl',
+    'Atrune · Mission Control',
     vscode.ViewColumn.One,
     {
       enableScripts: true,
@@ -49,7 +49,7 @@ export function openMissionControl(ctx: vscode.ExtensionContext, opts: { route?:
   panel.webview.onDidReceiveMessage((msg) => {
     if (!msg || typeof msg !== 'object') return;
     switch (msg.type) {
-      case 'atrium:openInEditor': {
+      case 'atrune:openInEditor': {
         const uri = typeof msg.path === 'string' ? vscode.Uri.file(msg.path) : null;
         if (uri) vscode.window.showTextDocument(uri);
         return;
@@ -76,7 +76,7 @@ function renderHtml(iframeSrc: string, webPort: number, serverPort: number): str
 <head>
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
-  <title>Atrium · Mission Control</title>
+  <title>Atrune · Mission Control</title>
   <style>
     html, body { margin: 0; padding: 0; height: 100vh; width: 100vw; background: #0e1116; color: #e6e9ef; }
     iframe { width: 100%; height: 100%; border: 0; display: block; }
@@ -88,13 +88,13 @@ function renderHtml(iframeSrc: string, webPort: number, serverPort: number): str
   </style>
 </head>
 <body>
-  <iframe id="atrium-frame" src="${iframeSrc}"
+  <iframe id="atrune-frame" src="${iframeSrc}"
           sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-modals"
           allow="clipboard-write"></iframe>
   <script>
     // Bridge between the iframe and the VS Code extension host.
     const vscode = acquireVsCodeApi();
-    const frame = document.getElementById('atrium-frame');
+    const frame = document.getElementById('atrune-frame');
 
     // iframe → ext
     window.addEventListener('message', (e) => {

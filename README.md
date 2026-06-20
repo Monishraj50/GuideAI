@@ -1,8 +1,8 @@
-# Atrium.AI
+# AtruneAI
 
 > Your AI workplace. Brief your team. Review their work. Ship faster.
 
-Atrium.AI is a multi-agent platform where **you direct, AI executes**. Hire from a 154-agent marketplace, dispatch a brief, and watch a phase-gated pipeline (research → plan → implement → review → verify) run with budget caps, cross-vendor sanity-checks, browser validation, and live dashboards. Everything stays on your machine.
+AtruneAI is a multi-agent platform where **you direct, AI executes**. Hire from a 154-agent marketplace, dispatch a brief, and watch a phase-gated pipeline (research → plan → implement → review → verify) run with budget caps, cross-vendor sanity-checks, browser validation, and live dashboards. Everything stays on your machine.
 
 - **Local-first** — SQLite + filesystem at `~/.guideai/`. No backend service required.
 - **Per-user credentials** — Claude CLI / Anthropic key / OpenAI key / GitHub PAT all stored locally, `chmod 600`.
@@ -304,7 +304,7 @@ The server uses `tsx watch` so any change to `apps/server/**` or `packages/**` h
 
 These are documented limitations, not surprises:
 
-- **Two-way GitHub sync.** Atrium.AI → GitHub is automatic (push + issue create); GitHub → Atrium is not. Polling-based sync is the documented path; webhooks don't fit a local-first product.
+- **Two-way GitHub sync.** AtruneAI → GitHub is automatic (push + issue create); GitHub → Atrune is not. Polling-based sync is the documented path; webhooks don't fit a local-first product.
 - **Visual diff regressions.** Validation captures screenshots but doesn't compare them across runs. `expectScreenshotMatches` is the follow-up.
 - **Prompt-injection ML classifier.** Validation relies on the URL allowlist + restricted vocabulary; no ML guard yet.
 - **Streaming OpenAI adapter.** Cross-vendor is one-shot only (review pass@k). For streaming you'd need `send/onEvent` impls.
@@ -355,4 +355,4 @@ These are documented limitations, not surprises:
 
 ## License
 
-AGPL-3.0. Substantial code is lifted from `agent-teams-ai` (AGPL-3.0), so Atrium.AI ships AGPL-3.0.
+AGPL-3.0. Substantial code is lifted from `agent-teams-ai` (AGPL-3.0), so AtruneAI ships AGPL-3.0.
