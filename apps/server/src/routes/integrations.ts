@@ -2,63 +2,93 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { paths } from '@guideai/shared/paths';
 
-interface UserConsent {
-  /** When this user first granted CLI consent. Persists across sign-ins. */
+// Per-workspace Claude integration. After the Phase 0 auth strip, this file
+// is keyed by workspaceId instead of username. Legacy `users[*]` blocks fold
+// into `workspaces.__default__` on first read; new writes drop the legacy key.
+
+interface WorkspaceConsent {
+  /** When this workspace first granted CLI consent. */
   cliConnectedAt?: number;
   /** CLI version at consent time, for the UI history line. */
   cliConnectedVersion?: string;
-  /** This user's stored Anthropic API key (per-user, not shared). */
+  /** This workspace's stored Anthropic API key. */
   apiKey?: string;
   apiKeySavedAt?: number;
 }
 
 interface ClaudeIntegration {
-  /** Per-user consent records, keyed by username. */
-  users?: Record<string, UserConsent>;
+  workspaces?: Record<string, WorkspaceConsent>;
+  /** Legacy per-user shape. Migrated on first read. */
+  users?: Record<string, WorkspaceConsent>;
+  /** Older legacy single-user shape (cliConnected/apiKey at top level). */
+  cliConnected?: boolean;
+  cliConnectedAt?: number;
+  apiKey?: string;
+  apiKeySavedAt?: number;
 }
 
 const FILE = path.join(paths.home, 'integrations', 'claude.json');
-const SESSION_FILE = path.join(paths.home, 'session.json');
 
-function readFile(): ClaudeIntegration {
-  try {
-    if (!fs.existsSync(FILE)) return {};
-    const j = JSON.parse(fs.readFileSync(FILE, 'utf8'));
-    // Migrate legacy single-user shape → keyed-by-user shape.
-    if (j && (j.cliConnected !== undefined || j.apiKey !== undefined) && !j.users) {
-      return { users: { __legacy__: {
-        cliConnectedAt: j.cliConnected ? (j.cliConnectedAt ?? Date.now()) : undefined,
-        apiKey: j.apiKey,
-        apiKeySavedAt: j.apiKeySavedAt,
-      } } };
+function migrateLegacy(j: any): ClaudeIntegration {
+  if (!j || typeof j !== 'object') return { workspaces: {} };
+  if (j.workspaces) return j as ClaudeIntegration;
+
+  // Old shape #1: keyed by username under `users[*]`. Fold into __default__.
+  if (j.users) {
+    const merged: WorkspaceConsent = {};
+    for (const u of Object.values(j.users as Record<string, WorkspaceConsent>)) {
+      if (u?.apiKey && !merged.apiKey) merged.apiKey = u.apiKey;
+      if (u?.apiKeySavedAt && (!merged.apiKeySavedAt || u.apiKeySavedAt > merged.apiKeySavedAt)) {
+        merged.apiKeySavedAt = u.apiKeySavedAt;
+      }
+      if (u?.cliConnectedAt && (!merged.cliConnectedAt || u.cliConnectedAt > merged.cliConnectedAt)) {
+        merged.cliConnectedAt = u.cliConnectedAt;
+        merged.cliConnectedVersion = u.cliConnectedVersion;
+      }
     }
-    return j as ClaudeIntegration;
-  } catch { return {}; }
+    return { workspaces: { __default__: merged } };
+  }
+
+  // Old shape #2: single top-level user. Fold into __default__.
+  if (j.cliConnected !== undefined || j.apiKey !== undefined) {
+    return {
+      workspaces: {
+        __default__: {
+          cliConnectedAt: j.cliConnected ? (j.cliConnectedAt ?? Date.now()) : undefined,
+          apiKey: j.apiKey,
+          apiKeySavedAt: j.apiKeySavedAt,
+        },
+      },
+    };
+  }
+
+  return { workspaces: {} };
+}
+
+function readFileSafe(): ClaudeIntegration {
+  try {
+    if (!fs.existsSync(FILE)) return { workspaces: {} };
+    return migrateLegacy(JSON.parse(fs.readFileSync(FILE, 'utf8')));
+  } catch { return { workspaces: {} }; }
 }
 function writeFileSafe(s: ClaudeIntegration) {
   fs.mkdirSync(path.dirname(FILE), { recursive: true });
-  fs.writeFileSync(FILE, JSON.stringify(s, null, 2), { mode: 0o600 });
+  // Strip legacy keys on write — file becomes clean post-migration.
+  const clean: ClaudeIntegration = { workspaces: s.workspaces ?? {} };
+  fs.writeFileSync(FILE, JSON.stringify(clean, null, 2), { mode: 0o600 });
 }
 
-function currentUsername(): string | null {
-  try {
-    if (!fs.existsSync(SESSION_FILE)) return null;
-    const j = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
-    return typeof j?.username === 'string' ? j.username : null;
-  } catch { return null; }
+function consentOf(integ: ClaudeIntegration, workspaceId: string): WorkspaceConsent {
+  return integ.workspaces?.[workspaceId] ?? {};
 }
-
-function userOf(integ: ClaudeIntegration, username: string): UserConsent {
-  return integ.users?.[username] ?? {};
-}
-function setUser(integ: ClaudeIntegration, username: string, patch: UserConsent | null): ClaudeIntegration {
-  const users = { ...(integ.users ?? {}) };
-  if (patch === null) delete users[username];
-  else users[username] = patch;
-  return { ...integ, users };
+function setConsent(integ: ClaudeIntegration, workspaceId: string, patch: WorkspaceConsent | null): ClaudeIntegration {
+  const workspaces = { ...(integ.workspaces ?? {}) };
+  if (patch === null) delete workspaces[workspaceId];
+  else workspaces[workspaceId] = patch;
+  return { ...integ, workspaces };
 }
 
 function detectCli(): { detected: boolean; version?: string; binaryPath?: string } {
@@ -126,88 +156,72 @@ function gatherCliDetails(binaryPath?: string) {
   };
 }
 
-function publicState(integ: ClaudeIntegration, username: string | null) {
+function publicState(integ: ClaudeIntegration, workspaceId: string) {
   const cli = detectCli();
-  const u = username ? userOf(integ, username) : {};
-  const cliConnected = !!u.cliConnectedAt && cli.detected;
+  const w = consentOf(integ, workspaceId);
+  const cliConnected = !!w.cliConnectedAt && cli.detected;
   return {
-    username,
+    workspaceId,
     cliDetected: cli.detected,
     cliVersion: cli.version,
     cliBinaryPath: cli.binaryPath,
     cliConnected,
-    cliConnectedAt: u.cliConnectedAt,
-    cliConnectedVersion: u.cliConnectedVersion,
+    cliConnectedAt: w.cliConnectedAt,
+    cliConnectedVersion: w.cliConnectedVersion,
     details: cliConnected ? gatherCliDetails(cli.binaryPath) : undefined,
-    apiKeySet: !!u.apiKey,
-    apiKeyHint: u.apiKey ? `…${u.apiKey.slice(-4)}` : undefined,
-    apiKeySavedAt: u.apiKeySavedAt,
-    ready: cliConnected || !!u.apiKey,
+    apiKeySet: !!w.apiKey,
+    apiKeyHint: w.apiKey ? `…${w.apiKey.slice(-4)}` : undefined,
+    apiKeySavedAt: w.apiKeySavedAt,
+    ready: cliConnected || !!w.apiKey,
   };
 }
 
-function requireUser(reply: any): string | null {
-  const u = currentUsername();
-  if (!u) { reply.code(401); return null; }
-  return u;
-}
-
 export function registerIntegrationRoutes(app: FastifyInstance) {
-  app.get('/api/integrations/claude', async (req: FastifyRequest, reply) => {
-    const u = currentUsername();
-    if (!u) { reply.code(401); return { error: 'sign-in required' }; }
-    return publicState(readFile(), u);
+  app.get<{ Params: { id: string } }>('/api/workspaces/:id/integrations/claude', async (req) => {
+    return publicState(readFileSafe(), req.params.id);
   });
 
-  app.post('/api/integrations/claude/cli/connect', async (_req, reply) => {
-    const username = requireUser(reply);
-    if (!username) return { error: 'sign-in required' };
+  app.post<{ Params: { id: string } }>('/api/workspaces/:id/integrations/claude/cli/connect', async (req, reply) => {
     const cli = detectCli();
     if (!cli.detected) { reply.code(400); return { error: 'Claude CLI not detected on this machine.' }; }
-    const integ = readFile();
-    const existing = userOf(integ, username);
-    const next: UserConsent = {
+    const integ = readFileSafe();
+    const existing = consentOf(integ, req.params.id);
+    const next: WorkspaceConsent = {
       ...existing,
       cliConnectedAt: existing.cliConnectedAt ?? Date.now(),
       cliConnectedVersion: cli.version,
     };
-    writeFileSafe(setUser(integ, username, next));
-    return publicState(readFile(), username);
+    writeFileSafe(setConsent(integ, req.params.id, next));
+    return publicState(readFileSafe(), req.params.id);
   });
 
-  app.post('/api/integrations/claude/cli/disconnect', async (_req, reply) => {
-    const username = requireUser(reply);
-    if (!username) return { error: 'sign-in required' };
-    const integ = readFile();
-    const cur = userOf(integ, username);
+  app.post<{ Params: { id: string } }>('/api/workspaces/:id/integrations/claude/cli/disconnect', async (req) => {
+    const integ = readFileSafe();
+    const cur = consentOf(integ, req.params.id);
     delete cur.cliConnectedAt;
     delete cur.cliConnectedVersion;
-    writeFileSafe(setUser(integ, username, cur));
-    return publicState(readFile(), username);
+    writeFileSafe(setConsent(integ, req.params.id, cur));
+    return publicState(readFileSafe(), req.params.id);
   });
 
-  app.put<{ Body: { apiKey?: string } }>(
-    '/api/integrations/claude/apikey',
+  app.put<{ Params: { id: string }; Body: { apiKey?: string } }>(
+    '/api/workspaces/:id/integrations/claude/apikey',
     async (req, reply) => {
-      const username = requireUser(reply);
-      if (!username) return { error: 'sign-in required' };
       const key = (req.body?.apiKey ?? '').toString().trim();
       if (!key) { reply.code(400); return { error: 'apiKey is required' }; }
-      const integ = readFile();
-      const cur = userOf(integ, username);
-      writeFileSafe(setUser(integ, username, { ...cur, apiKey: key, apiKeySavedAt: Date.now() }));
-      return publicState(readFile(), username);
+      const integ = readFileSafe();
+      const cur = consentOf(integ, req.params.id);
+      writeFileSafe(setConsent(integ, req.params.id, { ...cur, apiKey: key, apiKeySavedAt: Date.now() }));
+      return publicState(readFileSafe(), req.params.id);
     },
   );
 
-  app.delete('/api/integrations/claude/apikey', async (_req, reply) => {
-    const username = requireUser(reply);
-    if (!username) return { error: 'sign-in required' };
-    const integ = readFile();
-    const cur = userOf(integ, username);
+  app.delete<{ Params: { id: string } }>('/api/workspaces/:id/integrations/claude/apikey', async (req) => {
+    const integ = readFileSafe();
+    const cur = consentOf(integ, req.params.id);
     delete cur.apiKey;
     delete cur.apiKeySavedAt;
-    writeFileSafe(setUser(integ, username, cur));
-    return publicState(readFile(), username);
+    writeFileSafe(setConsent(integ, req.params.id, cur));
+    return publicState(readFileSafe(), req.params.id);
   });
 }

@@ -4,8 +4,6 @@ import { Inter, JetBrains_Mono } from 'next/font/google';
 import { ToastHost } from '../components/Toast';
 import { CommandPalette } from '../components/CommandPalette';
 import { WorkspaceProvider } from '../components/WorkspaceProvider';
-import { AuthProvider } from '../components/AuthProvider';
-import { AuthGate } from '../components/AuthGate';
 import { AppShell } from '../components/AppShell';
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter', display: 'swap' });
@@ -20,15 +18,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${inter.variable} ${mono.variable}`}>
       <body className="antialiased">
-        <AuthProvider>
-          <WorkspaceProvider>
-            <AuthGate>
-              <AppShell>{children}</AppShell>
-            </AuthGate>
-            <ToastHost />
-            <CommandPalette />
-          </WorkspaceProvider>
-        </AuthProvider>
+        <WorkspaceProvider>
+          <AppShell>{children}</AppShell>
+          <ToastHost />
+          <CommandPalette />
+        </WorkspaceProvider>
       </body>
     </html>
   );

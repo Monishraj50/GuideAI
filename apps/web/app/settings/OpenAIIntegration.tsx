@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import {
   KeyRound, Save, Trash2, RefreshCw, CheckCircle2, Sparkles,
 } from 'lucide-react';
-import { useAuth } from '../../components/AuthProvider';
+import { useWorkspaceId } from '../../components/WorkspaceProvider';
 import { toast } from '../../components/Toast';
 import { cn } from '../../lib/cn';
 
@@ -18,15 +18,16 @@ interface OpenAIState {
 }
 
 export function OpenAIIntegration() {
-  const { state: auth } = useAuth();
+  const workspaceId = useWorkspaceId();
   const [state, setState] = useState<OpenAIState | null>(null);
   const [keyDraft, setKeyDraft] = useState('');
   const [overrides, setOverrides] = useState({ haiku: '', sonnet: '', opus: '' });
   const [busy, setBusy] = useState<string | null>(null);
-  const isGuest = !!auth?.user?.isGuest;
+  const base = `/api/workspaces/${workspaceId}/integrations/openai`;
 
   async function refresh() {
-    const r = await fetch('/api/integrations/openai');
+    if (!workspaceId) return;
+    const r = await fetch(base);
     if (r.ok) {
       const j = await r.json();
       setState(j);
@@ -37,7 +38,7 @@ export function OpenAIIntegration() {
       });
     }
   }
-  useEffect(() => { refresh(); const t = setInterval(refresh, 6000); return () => clearInterval(t); }, []);
+  useEffect(() => { refresh(); const t = setInterval(refresh, 6000); return () => clearInterval(t); }, [workspaceId]);
 
   async function save() {
     setBusy('save');
@@ -49,7 +50,7 @@ export function OpenAIIntegration() {
         sonnet: overrides.sonnet.trim() || undefined,
         opus:   overrides.opus.trim()  || undefined,
       };
-      const r = await fetch('/api/integrations/openai', {
+      const r = await fetch(base, {
         method: 'PUT', headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
       });
@@ -62,26 +63,16 @@ export function OpenAIIntegration() {
   }
 
   async function clearKey() {
-    if (!confirm('Clear your stored OpenAI API key?')) return;
+    if (!confirm('Clear the stored OpenAI API key for this project?')) return;
     setBusy('clear');
     try {
-      const r = await fetch('/api/integrations/openai', { method: 'DELETE' });
+      const r = await fetch(base, { method: 'DELETE' });
       const j = await r.json();
       setState(j);
       toast({ title: 'API key cleared', variant: 'warn' });
     } finally { setBusy(null); }
   }
 
-  if (isGuest) {
-    return (
-      <section>
-        <Header />
-        <div className="border border-line/70 rounded-lg p-4 text-dim text-xs italic bg-surface2/50">
-          Cross-vendor review is per-user. Sign in to configure your OpenAI key.
-        </div>
-      </section>
-    );
-  }
   if (!state) {
     return (
       <section>

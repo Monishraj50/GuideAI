@@ -25,39 +25,67 @@ import {
 } from './deliverables.js';
 import { listWorkItems, updateWorkItem, type WorkItem } from './wbs.js';
 
-// ---------- integration storage (per-user, ~/.guideai/integrations/github.json) ----------
+// ---------- integration storage (per-workspace, ~/.guideai/integrations/github.json) ----------
 
 const INTEG_FILE = path.join(paths.home, 'integrations', 'github.json');
 
-export interface GitHubUserConsent {
+export interface GitHubWorkspaceConsent {
   ghCliConnectedAt?: number;
   ghCliVersion?: string;
   pat?: string;
   patSavedAt?: number;
   defaultOwner?: string;
 }
+/** Legacy alias — shape unchanged. */
+export type GitHubUserConsent = GitHubWorkspaceConsent;
 
-export interface GitHubIntegration { users?: Record<string, GitHubUserConsent> }
+export interface GitHubIntegration {
+  workspaces?: Record<string, GitHubWorkspaceConsent>;
+  /** Legacy per-user shape; folded into `workspaces.__default__` on first read. */
+  users?: Record<string, GitHubWorkspaceConsent>;
+}
+
+function migrateLegacy(integ: GitHubIntegration): GitHubIntegration {
+  if (!integ.users || integ.workspaces) return integ;
+  const merged: GitHubWorkspaceConsent = {};
+  for (const u of Object.values(integ.users)) {
+    if (u?.pat && !merged.pat) merged.pat = u.pat;
+    if (u?.patSavedAt && (!merged.patSavedAt || u.patSavedAt > merged.patSavedAt)) merged.patSavedAt = u.patSavedAt;
+    if (u?.ghCliConnectedAt && (!merged.ghCliConnectedAt || u.ghCliConnectedAt > merged.ghCliConnectedAt)) {
+      merged.ghCliConnectedAt = u.ghCliConnectedAt;
+      merged.ghCliVersion = u.ghCliVersion;
+    }
+    if (u?.defaultOwner && !merged.defaultOwner) merged.defaultOwner = u.defaultOwner;
+  }
+  return { workspaces: { __default__: merged } };
+}
 
 export function readIntegration(): GitHubIntegration {
   try {
-    if (!fs.existsSync(INTEG_FILE)) return {};
-    return JSON.parse(fs.readFileSync(INTEG_FILE, 'utf8')) as GitHubIntegration;
-  } catch { return {}; }
+    if (!fs.existsSync(INTEG_FILE)) return { workspaces: {} };
+    const raw = JSON.parse(fs.readFileSync(INTEG_FILE, 'utf8')) as GitHubIntegration;
+    return migrateLegacy(raw);
+  } catch { return { workspaces: {} }; }
 }
 export function writeIntegration(s: GitHubIntegration): void {
   fs.mkdirSync(path.dirname(INTEG_FILE), { recursive: true });
-  fs.writeFileSync(INTEG_FILE, JSON.stringify(s, null, 2), { mode: 0o600 });
+  const clean: GitHubIntegration = { workspaces: s.workspaces ?? {} };
+  fs.writeFileSync(INTEG_FILE, JSON.stringify(clean, null, 2), { mode: 0o600 });
 }
-export function userConsent(integ: GitHubIntegration, username: string): GitHubUserConsent {
-  return integ.users?.[username] ?? {};
+export function workspaceConsent(integ: GitHubIntegration, workspaceId: string): GitHubWorkspaceConsent {
+  return integ.workspaces?.[workspaceId] ?? {};
 }
-export function setUserConsent(integ: GitHubIntegration, username: string, patch: GitHubUserConsent | null): GitHubIntegration {
-  const users = { ...(integ.users ?? {}) };
-  if (patch === null) delete users[username];
-  else users[username] = patch;
-  return { ...integ, users };
+export function setWorkspaceConsent(
+  integ: GitHubIntegration, workspaceId: string, patch: GitHubWorkspaceConsent | null,
+): GitHubIntegration {
+  const workspaces = { ...(integ.workspaces ?? {}) };
+  if (patch === null) delete workspaces[workspaceId];
+  else workspaces[workspaceId] = patch;
+  return { ...integ, workspaces };
 }
+// Back-compat shims so older callers keep compiling during the transition.
+export const userConsent = workspaceConsent;
+export const setUserConsent = setWorkspaceConsent;
 
 // ---------- gh CLI detection ----------
 
@@ -107,16 +135,23 @@ export interface GitHubAuth {
   pat?: string;
 }
 
-/** Pick the best auth mode for a given user. Throws if none is usable. */
-export function resolveAuth(username: string): GitHubAuth {
+/** Pick the best auth mode for a given workspace. Throws if none is usable. */
+export function resolveAuth(workspaceId: string): GitHubAuth {
   const integ = readIntegration();
-  const u = userConsent(integ, username);
+  const w = workspaceConsent(integ, workspaceId);
   const cli = detectGhCli();
-  if (cli.detected && cli.authenticated) {
+  // gh-cli wins when authenticated AND this workspace has connected it
+  // (consent is per-workspace so different projects can opt in independently).
+  if (cli.detected && cli.authenticated && w.ghCliConnectedAt) {
     return { mode: 'gh-cli' };
   }
-  if (u.pat) {
-    return { mode: 'pat', pat: u.pat };
+  if (w.pat) {
+    return { mode: 'pat', pat: w.pat };
+  }
+  // Fall back: if the workspace hasn't explicitly connected the CLI but the CLI
+  // is logged in machine-wide, allow it. Lower friction for the common case.
+  if (cli.detected && cli.authenticated) {
+    return { mode: 'gh-cli' };
   }
   throw new Error(
     `no GitHub auth available — either run \`gh auth login\` or save a PAT in Settings → GitHub`,
@@ -257,9 +292,8 @@ export function unlinkRepo(workspaceId: string): { ok: true } {
 
 export async function createRepo(args: {
   workspaceId: string; name: string; description?: string; private?: boolean;
-  username: string;
 }): Promise<WorkspaceRepo> {
-  const auth = resolveAuth(args.username);
+  const auth = resolveAuth(args.workspaceId);
   const body = {
     name: args.name,
     description: args.description ?? `GuideAI workspace: ${args.workspaceId}`,
@@ -328,11 +362,11 @@ export interface PushResult {
  * Idempotent — uses Contents API with sha lookup so re-pushes update in place.
  */
 export async function pushDeliverables(args: {
-  workspaceId: string; briefId?: string; username: string;
+  workspaceId: string; briefId?: string;
 }): Promise<PushResult> {
   const repo = getWorkspaceRepo(args.workspaceId);
   if (!repo) throw new Error('workspace is not linked to a repo');
-  const auth = resolveAuth(args.username);
+  const auth = resolveAuth(args.workspaceId);
 
   const all = listDeliverables(args.workspaceId, args.briefId ? { briefId: args.briefId } : undefined);
   const deck      = pickFirst(all, 'slide-deck');
@@ -416,11 +450,11 @@ export interface IssueSyncResult {
  * the work item's status (close on done/cancelled, reopen otherwise).
  */
 export async function syncWorkItemsToIssues(args: {
-  workspaceId: string; briefId?: string; username: string;
+  workspaceId: string; briefId?: string;
 }): Promise<IssueSyncResult> {
   const repo = getWorkspaceRepo(args.workspaceId);
   if (!repo) throw new Error('workspace is not linked to a repo');
-  const auth = resolveAuth(args.username);
+  const auth = resolveAuth(args.workspaceId);
   const items = listWorkItems(args.workspaceId, args.briefId ? { briefId: args.briefId } : undefined);
 
   const out: IssueSyncResult = { created: [], updated: [], skipped: [], errors: [] };

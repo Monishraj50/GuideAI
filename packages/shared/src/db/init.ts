@@ -80,17 +80,6 @@ CREATE TABLE IF NOT EXISTS metric_snapshots (
   usd_spent REAL NOT NULL DEFAULT 0
 );
 
-CREATE TABLE IF NOT EXISTS users (
-  id TEXT PRIMARY KEY,
-  username TEXT NOT NULL UNIQUE,
-  password_hash TEXT NOT NULL,
-  salt TEXT NOT NULL,
-  display_name TEXT,
-  created_at INTEGER NOT NULL,
-  last_login_at INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
-
 CREATE TABLE IF NOT EXISTS usage_log (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,

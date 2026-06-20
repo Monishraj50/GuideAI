@@ -1,27 +1,8 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { paths } from '@guideai/shared/paths';
 import {
   getWorkspaceRepo, linkRepo, unlinkRepo, createRepo,
   pushDeliverables, syncWorkItemsToIssues,
 } from '@guideai/orchestrator/github';
-
-const SESSION_FILE = path.join(paths.home, 'session.json');
-
-function currentUsername(): string | null {
-  try {
-    if (!fs.existsSync(SESSION_FILE)) return null;
-    const j = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
-    return typeof j?.username === 'string' ? j.username : null;
-  } catch { return null; }
-}
-
-function requireUser(reply: any): string | null {
-  const u = currentUsername();
-  if (!u) { reply.code(401); return null; }
-  return u;
-}
 
 export function registerWorkspaceRepoRoutes(app: FastifyInstance) {
   app.get<{ Params: { id: string } }>('/api/workspaces/:id/repo', async (req) => {
@@ -56,13 +37,11 @@ export function registerWorkspaceRepoRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  // Create a new repo under the authed user and link it.
+  // Create a new repo under the auth'd account (workspace-scoped credentials).
   app.post<{
     Params: { id: string };
     Body: { name: string; description?: string; private?: boolean };
   }>('/api/workspaces/:id/repo/create', async (req, reply) => {
-    const username = requireUser(reply);
-    if (!username) return { error: 'sign-in required' };
     try {
       const body = req.body ?? ({} as any);
       if (!body.name?.trim()) { reply.code(400); return { error: 'name is required' }; }
@@ -71,7 +50,6 @@ export function registerWorkspaceRepoRoutes(app: FastifyInstance) {
         name: body.name,
         description: body.description,
         private: body.private,
-        username,
       });
       return { repo };
     } catch (err: any) {
@@ -83,11 +61,9 @@ export function registerWorkspaceRepoRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string }; Body?: { briefId?: string } }>(
     '/api/workspaces/:id/repo/push',
     async (req, reply) => {
-      const username = requireUser(reply);
-      if (!username) return { error: 'sign-in required' };
       try {
         const result = await pushDeliverables({
-          workspaceId: req.params.id, briefId: req.body?.briefId, username,
+          workspaceId: req.params.id, briefId: req.body?.briefId,
         });
         return result;
       } catch (err: any) {
@@ -100,11 +76,9 @@ export function registerWorkspaceRepoRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string }; Body?: { briefId?: string } }>(
     '/api/workspaces/:id/repo/sync-issues',
     async (req, reply) => {
-      const username = requireUser(reply);
-      if (!username) return { error: 'sign-in required' };
       try {
         const result = await syncWorkItemsToIssues({
-          workspaceId: req.params.id, briefId: req.body?.briefId, username,
+          workspaceId: req.params.id, briefId: req.body?.briefId,
         });
         return result;
       } catch (err: any) {

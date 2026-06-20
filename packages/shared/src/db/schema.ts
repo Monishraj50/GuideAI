@@ -116,16 +116,6 @@ export const metricSnapshots = sqliteTable('metric_snapshots', {
   usdSpent: real('usd_spent').notNull().default(0),
 });
 
-export const users = sqliteTable('users', {
-  id: text('id').primaryKey(),
-  username: text('username').notNull().unique(),
-  passwordHash: text('password_hash').notNull(),
-  salt: text('salt').notNull(),
-  displayName: text('display_name'),
-  createdAt: integer('created_at').notNull(),
-  lastLoginAt: integer('last_login_at'),
-});
-
 export const usageLog = sqliteTable('usage_log', {
   id: text('id').primaryKey(),
   workspaceId: text('workspace_id').notNull(),

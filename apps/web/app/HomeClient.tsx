@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import { Sparkles, Play, RadioTower, Store, Network, Settings as SettingsIcon, ArrowRight, FolderTree } from 'lucide-react';
 import { useWorkspaceId, useWorkspace } from '../components/WorkspaceProvider';
-import { useAuth } from '../components/AuthProvider';
 import { toast } from '../components/Toast';
 import { cn } from '../lib/cn';
 
@@ -17,10 +16,9 @@ interface Digest {
 export function Home() {
   const workspaceId = useWorkspaceId();
   const { workspaces } = useWorkspace();
-  const { state: auth } = useAuth();
   const active = workspaces.find((w) => w.id === workspaceId);
-  // Greet by user's display name (or fall back to username, then a friendly default).
-  const userName = auth?.user?.displayName?.trim() || auth?.user?.username || 'there';
+  // Single-user app — greet by the active project name (or a friendly default).
+  const userName = active?.name?.trim() || 'there';
   const [digest, setDigest] = useState<Digest | null>(null);
   const [busy, setBusy] = useState(false);
   const [greeting, setGreeting] = useState('Hello');

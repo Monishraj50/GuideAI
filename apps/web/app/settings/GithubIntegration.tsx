@@ -5,7 +5,7 @@ import {
   GitBranch as Github, KeyRound, CheckCircle2, AlertTriangle, Save, Trash2, RefreshCw,
   Link2, Link2Off, Terminal, User,
 } from 'lucide-react';
-import { useAuth } from '../../components/AuthProvider';
+import { useWorkspaceId } from '../../components/WorkspaceProvider';
 import { toast } from '../../components/Toast';
 import { cn } from '../../lib/cn';
 
@@ -27,29 +27,30 @@ interface GithubState {
 }
 
 export function GithubIntegration() {
-  const { state: auth } = useAuth();
+  const workspaceId = useWorkspaceId();
   const [state, setState] = useState<GithubState | null>(null);
   const [patDraft, setPatDraft] = useState('');
   const [ownerDraft, setOwnerDraft] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
-  const isGuest = !!auth?.user?.isGuest;
+  const base = `/api/workspaces/${workspaceId}/integrations/github`;
 
   async function refresh() {
-    const r = await fetch('/api/integrations/github');
+    if (!workspaceId) return;
+    const r = await fetch(base);
     if (r.ok) {
       const j = await r.json();
       setState(j);
       setOwnerDraft(j.defaultOwner ?? '');
     }
   }
-  useEffect(() => { refresh(); const t = setInterval(refresh, 6000); return () => clearInterval(t); }, []);
+  useEffect(() => { refresh(); const t = setInterval(refresh, 6000); return () => clearInterval(t); }, [workspaceId]);
 
   async function connectCli() {
     if (!state?.ghCliDetected) return;
     if (!confirm(`Connect Atrium to your local \`gh\` CLI session?\n\nVersion: ${state.ghCliVersion ?? 'detected'}\nLogged in as: ${state.ghCliLoggedInUser ?? 'unknown'}\n\nWorkspace repo operations will run as whoever is currently logged in via \`gh auth login\`.`)) return;
     setBusy('cli-connect');
     try {
-      const r = await fetch('/api/integrations/github/cli/connect', { method: 'POST' });
+      const r = await fetch(`${base}/cli/connect`, { method: 'POST' });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error ?? `http ${r.status}`);
       setState(j);
@@ -62,7 +63,7 @@ export function GithubIntegration() {
     if (!confirm('Disconnect from the gh CLI session? Repo operations will fall back to PAT (if set) or fail.')) return;
     setBusy('cli-disconnect');
     try {
-      const r = await fetch('/api/integrations/github/cli/disconnect', { method: 'POST' });
+      const r = await fetch(`${base}/cli/disconnect`, { method: 'POST' });
       const j = await r.json();
       setState(j);
       toast({ title: 'gh CLI disconnected', variant: 'warn' });
@@ -76,7 +77,7 @@ export function GithubIntegration() {
       const body: any = {};
       if (patDraft.trim()) body.pat = patDraft.trim();
       if (ownerDraft !== (state?.defaultOwner ?? '')) body.defaultOwner = ownerDraft.trim();
-      const r = await fetch('/api/integrations/github/pat', {
+      const r = await fetch(`${base}/pat`, {
         method: 'PUT', headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
       });
@@ -92,22 +93,11 @@ export function GithubIntegration() {
     if (!confirm('Remove your stored GitHub PAT?')) return;
     setBusy('pat-clear');
     try {
-      const r = await fetch('/api/integrations/github/pat', { method: 'DELETE' });
+      const r = await fetch(`${base}/pat`, { method: 'DELETE' });
       const j = await r.json();
       setState(j);
       toast({ title: 'PAT cleared', variant: 'warn' });
     } finally { setBusy(null); }
-  }
-
-  if (isGuest) {
-    return (
-      <section>
-        <SectionHeader icon={<Github size={14} className="text-dim" />} title="GitHub" />
-        <div className="border border-line/70 rounded-lg p-4 text-dim text-xs italic bg-surface2/50">
-          GitHub integration is per-user. Sign in to connect a repo.
-        </div>
-      </section>
-    );
   }
 
   if (!state) {

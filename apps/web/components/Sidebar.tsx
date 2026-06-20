@@ -9,7 +9,6 @@ import {
 import { AtriumMark } from './AtriumMark';
 import { Killswitch } from './Killswitch';
 import { useWorkspaceId } from './WorkspaceProvider';
-import { useAuth } from './AuthProvider';
 import { cn } from '../lib/cn';
 
 const TABS = [
@@ -27,7 +26,6 @@ const TABS = [
 export function Sidebar() {
   const pathname = usePathname() ?? '/';
   const workspaceId = useWorkspaceId();
-  const { state: auth } = useAuth();
   const isActive = (href: string) =>
     href === '/' ? pathname === '/' : pathname.startsWith(href);
 
@@ -74,22 +72,6 @@ export function Sidebar() {
       </nav>
       <div className="mt-auto px-2 pb-2 space-y-2">
         <Killswitch workspaceId={workspaceId} />
-        {auth?.user && (
-          <Link
-            href="/settings"
-            className="flex items-center gap-2 px-2 py-1.5 rounded-md border border-line/60 hover:border-line2 hover:bg-line/30 transition-colors"
-          >
-            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-accent/60 to-sonnet/60 flex items-center justify-center text-bg text-[10px] font-semibold">
-              {(auth.user.displayName ?? auth.user.username).slice(0, 1).toUpperCase()}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-ink text-xs truncate">{auth.user.displayName ?? auth.user.username}</div>
-              <div className="text-dim2 text-[10px]">
-                {auth.user.isGuest ? 'guest mode' : '@' + auth.user.username}
-              </div>
-            </div>
-          </Link>
-        )}
       </div>
     </aside>
   );

@@ -5,7 +5,7 @@ import {
   Terminal, KeyRound, CheckCircle2, AlertTriangle, Save, Trash2, RefreshCw,
   ExternalLink, Link2, Link2Off, Plug, Cpu, FolderTree, Users, ScrollText, Lock, Puzzle,
 } from 'lucide-react';
-import { useAuth } from '../../components/AuthProvider';
+import { useWorkspaceId } from '../../components/WorkspaceProvider';
 import { toast } from '../../components/Toast';
 import { cn } from '../../lib/cn';
 
@@ -40,17 +40,18 @@ interface ClaudeState {
 }
 
 export function ClaudeIntegration() {
-  const { state: auth } = useAuth();
+  const workspaceId = useWorkspaceId();
   const [state, setState] = useState<ClaudeState | null>(null);
   const [keyDraft, setKeyDraft] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
-  const isGuest = !!auth?.user?.isGuest;
+  const base = `/api/workspaces/${workspaceId}/integrations/claude`;
 
   async function refresh() {
-    const r = await fetch('/api/integrations/claude');
+    if (!workspaceId) return;
+    const r = await fetch(base);
     if (r.ok) setState(await r.json());
   }
-  useEffect(() => { refresh(); const t = setInterval(refresh, 5000); return () => clearInterval(t); }, []);
+  useEffect(() => { refresh(); const t = setInterval(refresh, 5000); return () => clearInterval(t); }, [workspaceId]);
 
   async function connectCli() {
     if (!state?.cliDetected) return;
@@ -59,7 +60,7 @@ export function ClaudeIntegration() {
     )) return;
     setBusy('cli-connect');
     try {
-      const r = await fetch('/api/integrations/claude/cli/connect', { method: 'POST' });
+      const r = await fetch(`${base}/cli/connect`, { method: 'POST' });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error ?? `http ${r.status}`);
       setState(j);
@@ -72,7 +73,7 @@ export function ClaudeIntegration() {
     if (!confirm('Disconnect from the Claude CLI session? Briefs will fail until you connect the CLI again or save an API key.')) return;
     setBusy('cli-disconnect');
     try {
-      const r = await fetch('/api/integrations/claude/cli/disconnect', { method: 'POST' });
+      const r = await fetch(`${base}/cli/disconnect`, { method: 'POST' });
       const j = await r.json();
       setState(j);
       toast({ title: 'CLI disconnected', variant: 'warn' });
@@ -84,7 +85,7 @@ export function ClaudeIntegration() {
     if (!confirm('Save this Anthropic API key? It will be stored locally and forwarded to the Claude CLI as ANTHROPIC_API_KEY for every brief.')) return;
     setBusy('save');
     try {
-      const r = await fetch('/api/integrations/claude/apikey', {
+      const r = await fetch(`${base}/apikey`, {
         method: 'PUT', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ apiKey: keyDraft.trim() }),
       });
@@ -101,7 +102,7 @@ export function ClaudeIntegration() {
     if (!confirm('Remove stored Anthropic API key? Atrium will fall back to the connected CLI session if any.')) return;
     setBusy('clear');
     try {
-      const r = await fetch('/api/integrations/claude/apikey', { method: 'DELETE' });
+      const r = await fetch(`${base}/apikey`, { method: 'DELETE' });
       const j = await r.json();
       setState(j);
       toast({ title: 'API key cleared', variant: 'warn' });
@@ -119,41 +120,27 @@ export function ClaudeIntegration() {
       <div className="flex items-center gap-2 mb-3">
         <Plug size={14} className={state?.ready ? 'text-accent' : 'text-warn'} />
         <span className="text-ink font-medium text-sm">Claude integration</span>
-        {!isGuest && state?.ready && (
-          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full border border-accent/40 text-accent bg-accent/10">connected</span>
-        )}
-        {!isGuest && !state?.ready && (
-          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full border border-warn/40 text-warn bg-warn/10">not connected</span>
-        )}
-        {isGuest && (
-          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full border border-sonnet/40 text-sonnet bg-sonnet/10">guest · mock adapter</span>
-        )}
+        {state?.ready
+          ? <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full border border-accent/40 text-accent bg-accent/10">connected</span>
+          : <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full border border-warn/40 text-warn bg-warn/10">not connected</span>}
+        <span className="text-dim2 text-[10px] font-mono ml-1">project · {workspaceId}</span>
         <button onClick={refresh} className="ml-auto text-dim2 hover:text-ink text-xs flex items-center gap-1"><RefreshCw size={11} /> refresh</button>
       </div>
 
-      {!isGuest && !state?.ready && (
+      {!state?.ready && (
         <div className="mb-3 flex items-start gap-2 px-3 py-2 rounded-md border border-warn/40 bg-warn/[0.06] text-xs">
           <AlertTriangle size={12} className="text-warn mt-0.5" />
           <div className="flex-1 text-dim">
-            <span className="text-warn">No integration is connected for <span className="font-mono text-ink">@{state?.username ?? auth?.user?.username ?? '?'}</span>.</span> Briefs will fail until you either connect the detected Claude CLI session or save an Anthropic API key below — your choice. <span className="text-dim2">Consent persists across your future sign-ins.</span>
+            <span className="text-warn">No integration is connected for this project.</span> Briefs will fail until you either connect the detected Claude CLI session or save an Anthropic API key below — your choice. <span className="text-dim2">Each project keeps its own integration, so different work can use different keys.</span>
           </div>
         </div>
       )}
 
-      {!isGuest && state?.cliConnected && state?.cliConnectedAt && (
+      {state?.cliConnected && state?.cliConnectedAt && (
         <div className="mb-3 flex items-start gap-2 px-3 py-2 rounded-md border border-accent/40 bg-accent/[0.06] text-xs">
           <CheckCircle2 size={12} className="text-accent mt-0.5" />
           <div className="flex-1 text-dim">
-            <span className="text-accent">CLI consent on file</span> for <span className="font-mono text-ink">@{state.username}</span> since <span className="text-ink">{new Date(state.cliConnectedAt).toLocaleString()}</span>{state.cliConnectedVersion ? <> · CLI <span className="font-mono text-ink">{state.cliConnectedVersion}</span></> : null}. <span className="text-dim2">You won&apos;t be re-prompted on future sign-ins.</span>
-          </div>
-        </div>
-      )}
-
-      {isGuest && (
-        <div className="mb-3 flex items-start gap-2 px-3 py-2 rounded-md border border-sonnet/40 bg-sonnet/[0.06] text-xs">
-          <AlertTriangle size={12} className="text-sonnet mt-0.5" />
-          <div className="flex-1 text-dim">
-            Guest mode uses the local mock adapter. The integration settings below are saved on disk but only take effect after you convert to a real account.
+            <span className="text-accent">CLI consent on file</span> for this project since <span className="text-ink">{new Date(state.cliConnectedAt).toLocaleString()}</span>{state.cliConnectedVersion ? <> · CLI <span className="font-mono text-ink">{state.cliConnectedVersion}</span></> : null}.
           </div>
         </div>
       )}

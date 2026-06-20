@@ -2,29 +2,16 @@
 //
 // During the security-tagged review phase, mix one OpenAI attempt into the
 // pass@k pool so the verdict reflects agreement across model families, not
-// just within Claude. Off by default; per-user OpenAI key + per-workspace
+// just within Claude. Off by default; per-workspace OpenAI key + per-workspace
 // toggle both required.
 
-import fs from 'node:fs';
-import path from 'node:path';
 import { eq } from 'drizzle-orm';
 import type { RuntimeAdapter } from '@guideai/runtime-core';
 import { getDb, schema } from '@guideai/shared/db';
-import { paths } from '@guideai/shared/paths';
 import {
   makeOpenAIAdapter, MockOpenAIAdapter,
-  readIntegration, userConsent,
+  readIntegration, workspaceConsent,
 } from '@guideai/runtime-openai';
-
-const SESSION_FILE = path.join(paths.home, 'session.json');
-
-function currentSessionUsername(): string | null {
-  try {
-    if (!fs.existsSync(SESSION_FILE)) return null;
-    const j = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
-    return typeof j?.username === 'string' ? j.username : null;
-  } catch { return null; }
-}
 
 export interface CrossVendorContext {
   /** Adapter to use when an attempt index is in `crossVendorIdx`. */
@@ -58,16 +45,14 @@ export function setupCrossVendor(args: {
     .where(eq(schema.workspaces.id, args.workspaceId)).all()[0];
   if (!ws || !(ws as any).secondOpinionEnabled) return null;
 
-  const username = currentSessionUsername();
-  if (!username) return null;
   const integ = readIntegration();
-  const u = userConsent(integ, username);
+  const w = workspaceConsent(integ, args.workspaceId);
   const idx = new Set<number>([args.k - 1]);
 
-  if (u.apiKey) {
+  if (w.apiKey) {
     const adapter = makeOpenAIAdapter({
-      apiKey: () => u.apiKey ?? null,
-      overrides: () => u.modelOverrides,
+      apiKey: () => w.apiKey ?? null,
+      overrides: () => w.modelOverrides,
     });
     return {
       adapter, crossVendorIdx: idx, mock: false,
@@ -75,8 +60,8 @@ export function setupCrossVendor(args: {
     };
   }
 
-  // No real key — use the deterministic mock so the codepath stays exercised
-  // in guest mode + dev environments. Only kicks in for explicitly-enabled
+  // No real key on this workspace — use the deterministic mock so the codepath
+  // stays exercised in dev environments. Only kicks in for explicitly-enabled
   // workspaces, so this isn't surprising silent behaviour.
   return {
     adapter: MockOpenAIAdapter, crossVendorIdx: idx, mock: true,
