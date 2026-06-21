@@ -143,6 +143,21 @@ export class AtruneApi {
     } catch { return { count: 0, suggestions: [] }; }
   }
 
+  /** Read workspace meta.json (targetFolder, kind, originatingTask). */
+  async getWorkspaceMeta(workspaceId: string): Promise<{
+    id: string;
+    createdAt: number;
+    kind: 'project' | 'auto-task';
+    originatingTask: string | null;
+    targetFolder: string | null;
+  } | null> {
+    try {
+      const r = await fetch(`${base()}/api/workspaces/${workspaceId}/meta`);
+      if (!r.ok) return null;
+      return await r.json() as any;
+    } catch { return null; }
+  }
+
   /** List work items for a workspace, optionally filtered by brief. */
   async listWorkItems(workspaceId: string, briefId?: string): Promise<WorkItem[]> {
     try {
@@ -232,6 +247,31 @@ export class AtruneApi {
     }
   }
 
+  /** Global OpenAI integration — used by the Codex card on the connect screen. */
+  async getGlobalOpenAI(): Promise<{ apiKeySet: boolean; ready: boolean } | null> {
+    try {
+      const r = await fetch(`${base()}/api/integrations/openai/global`);
+      if (!r.ok) return null;
+      return await r.json() as any;
+    } catch { return null; }
+  }
+
+  async setGlobalOpenAIApiKey(apiKey: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const r = await fetch(`${base()}/api/integrations/openai/global`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ apiKey }),
+      });
+      if (!r.ok) {
+        const j = await r.json() as any;
+        return { ok: false, error: j?.error ?? `http ${r.status}` };
+      }
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }
+
   async connectGlobalClaudeCli(): Promise<{ ok: boolean; error?: string }> {
     try {
       const r = await fetch(`${base()}/api/integrations/claude/global/cli/connect`, { method: 'POST' });
@@ -239,6 +279,31 @@ export class AtruneApi {
         const j = await r.json() as any;
         return { ok: false, error: j?.error ?? `http ${r.status}` };
       }
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }
+
+  /** Disconnect the global Claude integration — clears both the API key
+   *  and the CLI binding. Used by the "Disconnect" button. */
+  async disconnectGlobalClaude(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      await Promise.all([
+        fetch(`${base()}/api/integrations/claude/global/apikey`, { method: 'DELETE' }),
+        fetch(`${base()}/api/integrations/claude/global/cli/disconnect`, { method: 'POST' }),
+      ]);
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }
+
+  /** Disconnect the global OpenAI / Codex integration. */
+  async disconnectGlobalOpenAI(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const r = await fetch(`${base()}/api/integrations/openai/global`, { method: 'DELETE' });
+      if (!r.ok) return { ok: false, error: `http ${r.status}` };
       return { ok: true };
     } catch (err: any) {
       return { ok: false, error: String(err?.message ?? err) };

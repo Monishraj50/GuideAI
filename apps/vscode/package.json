@@ -52,22 +52,36 @@
     "views": {
       "atrune": [
         {
-          "id": "atrune.activeWork",
-          "name": "Active work",
-          "icon": "$(target)"
+          "id": "atrune.welcome",
+          "name": "Get started",
+          "when": "!atrune.connected"
         },
         {
-          "id": "atrune.pending",
-          "name": "Pending",
-          "icon": "$(check)"
+          "id": "atrune.activeWork",
+          "name": "Active work",
+          "icon": "$(target)",
+          "when": "atrune.connected"
+        },
+        {
+          "id": "atrune.progress",
+          "name": "Progress tracker",
+          "icon": "$(checklist)",
+          "when": "atrune.connected"
         },
         {
           "id": "atrune.team",
           "name": "Team",
-          "icon": "$(organization)"
+          "icon": "$(organization)",
+          "when": "atrune.connected"
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "atrune.welcome",
+        "contents": "Welcome to **AtruneAI**.\n\nYour AI workplace. Connect a coding subscription to activate your team.\n\n[$(plug) Connect a subscription](command:atrune.connectSubscription)\n\nClaude · Copilot · Codex\n\n---\n\n[Show me around](command:atrune.showWalkthrough)"
+      }
+    ],
     "configuration": {
       "title": "AtruneAI",
       "properties": {
@@ -204,6 +218,11 @@
       {
         "command": "atrune.setRepoRoot",
         "title": "Atrune: Set monorepo folder…"
+      },
+      {
+        "command": "atrune.connectSubscription",
+        "title": "Atrune: Connect a subscription…",
+        "icon": "$(plug)"
       }
     ],
     "menus": {
@@ -229,8 +248,13 @@
           "group": "navigation@4"
         },
         {
+          "command": "atrune.connectSubscription",
+          "when": "view == atrune.activeWork || view == atrune.welcome",
+          "group": "navigation@5"
+        },
+        {
           "command": "atrune.refresh",
-          "when": "view == atrune.pending || view == atrune.team",
+          "when": "view == atrune.progress || view == atrune.team",
           "group": "navigation"
         }
       ],

@@ -12,7 +12,7 @@ import * as vscode from 'vscode';
 import { AtruneServer } from './server';
 import { AtruneApi } from './api';
 import { ActiveWorkProvider } from './views/activeWork';
-import { PendingProvider } from './views/pending';
+import { ProgressProvider } from './views/progress';
 import { TeamProvider } from './views/team';
 import { openMissionControl } from './webviews/missionControl';
 import { openBriefComposer } from './webviews/briefComposer';
@@ -20,6 +20,7 @@ import { quickAskChooser, askOneAgent, autoFix } from './directTask';
 import { AtruneStatusBar } from './statusBar';
 import { checkNewApprovals } from './approvals';
 import { maybePromptFirstLaunch, resetFirstLaunch } from './firstLaunch';
+import { openConnectSubscription } from './webviews/connectSubscription';
 
 let server: AtruneServer | undefined;
 let pollHandle: NodeJS.Timeout | undefined;
@@ -38,6 +39,18 @@ export async function activate(ctx: vscode.ExtensionContext) {
   function setActiveWorkspaceId(id: string) {
     activeWorkspaceId = id;
     refreshAll();
+  }
+
+  // Connection state — drives the `atrune.connected` context key. Sidebar
+  // TreeViews are hidden until this is true. Set on activate + after any
+  // provider connection succeeds.
+  async function checkConnectionAndSetContext(): Promise<boolean> {
+    const claude = await api.getGlobalClaude();
+    const openai = await api.getGlobalOpenAI();
+    const copilotInstalled = !!vscode.extensions.getExtension('GitHub.copilot');
+    const connected = !!(claude?.ready || openai?.apiKeySet || copilotInstalled);
+    await vscode.commands.executeCommand('setContext', 'atrune.connected', connected);
+    return connected;
   }
   async function refreshActiveWorkspace() {
     const list = await api.listWorkspaces();
@@ -146,7 +159,24 @@ export async function activate(ctx: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('atrune.resetFirstLaunch', async () => {
       await resetFirstLaunch(ctx);
-      await maybePromptFirstLaunch(ctx, api);
+      await maybePromptFirstLaunch(ctx, api, async () => { await checkConnectionAndSetContext(); });
+    }),
+    vscode.commands.registerCommand('atrune.connectSubscription', async () => {
+      await openConnectSubscription(ctx, api, async () => { await checkConnectionAndSetContext(); });
+    }),
+    vscode.commands.registerCommand('atrune.switchToWorkspace', async (workspaceId?: string) => {
+      if (typeof workspaceId !== 'string' || !workspaceId.trim()) return;
+      setActiveWorkspaceId(workspaceId);
+      vscode.window.setStatusBarMessage(`Atrune · active project: ${workspaceId}`, 3000);
+    }),
+    vscode.commands.registerCommand('atrune.openBriefInMissionControl', async (args?: {
+      workspaceId?: string; briefId?: string;
+    }) => {
+      if (!args?.workspaceId) return;
+      const route = args.briefId
+        ? `/projects/${args.workspaceId}#brief-${args.briefId}`
+        : `/projects/${args.workspaceId}`;
+      await vscode.commands.executeCommand('atrune.openMissionControl', { route });
     }),
     vscode.commands.registerCommand('atrune.showAgentWork', async (args?: {
       workspaceId: string; agentId: string; role: string; displayName: string;
@@ -202,18 +232,28 @@ export async function activate(ctx: vscode.ExtensionContext) {
 
   // ── TREE VIEWS + STATUS BAR — also synchronous ─────────────────────────
   const activeWork = new ActiveWorkProvider(api, () => activeWorkspaceId);
-  const pending    = new PendingProvider(api, () => activeWorkspaceId);
+  const progress   = new ProgressProvider(api, () => activeWorkspaceId);
   const team       = new TeamProvider(api, () => activeWorkspaceId);
 
+  // No-op provider for the welcome view — it's filled by `viewsWelcome` in
+  // package.json (shown when `!atrune.connected`). VS Code still needs a
+  // registered data provider for the view to exist.
+  const welcomeProvider: vscode.TreeDataProvider<never> = {
+    onDidChangeTreeData: undefined,
+    getTreeItem: () => new vscode.TreeItem('', vscode.TreeItemCollapsibleState.None),
+    getChildren: () => [],
+  };
+
   ctx.subscriptions.push(
+    vscode.window.registerTreeDataProvider('atrune.welcome', welcomeProvider),
     vscode.window.registerTreeDataProvider('atrune.activeWork', activeWork),
-    vscode.window.registerTreeDataProvider('atrune.pending', pending),
+    vscode.window.registerTreeDataProvider('atrune.progress', progress),
     vscode.window.registerTreeDataProvider('atrune.team', team),
   );
 
   refreshAll = () => {
     activeWork.refresh();
-    pending.refresh();
+    progress.refresh();
     team.refresh();
   };
 
@@ -231,6 +271,11 @@ export async function activate(ctx: vscode.ExtensionContext) {
       statusBar?.update(null);
     }
   }
+
+  // Set the initial connection-context BEFORE the async startup so the
+  // sidebar's welcome view (`!atrune.connected`) renders immediately on
+  // first activation. We re-check after the server is up.
+  void checkConnectionAndSetContext();
 
   // ── ASYNC STARTUP — runs in the background, doesn't block command use ──
   (async () => {
@@ -269,7 +314,14 @@ export async function activate(ctx: vscode.ExtensionContext) {
     }
     await refreshActiveWorkspace();
     void tick();
-    void maybePromptFirstLaunch(ctx, api);
+    // Re-check after server is up (now that we can hit /api/integrations/*)
+    // and prompt first-launch if no provider is connected.
+    void (async () => {
+      await checkConnectionAndSetContext();
+      await maybePromptFirstLaunch(ctx, api, async () => {
+        await checkConnectionAndSetContext();
+      });
+    })();
     pollHandle = setInterval(() => { void tick(); }, 5000);
   })();
 

@@ -1,23 +1,22 @@
-// 🎯 Active work — currently-running brief shown as a phase tree with tasks.
+// 🎯 Active work — Projects in the current folder, with their briefs.
 //
-// Layout when a brief is active:
-//   <brief title>
-//     research · ✓ 3 done
-//       ↳ task 1 · done · backend-developer
-//       ↳ task 2 · done · qa-engineer
-//     plan · ⏳ 2/5 in progress
-//       ↳ task 1 · done · tech-lead
-//       ↳ task 2 · in_progress · frontend-developer
-//       ↳ task 3 · todo
-//     implement · pending
-//     review · pending
-//     verify · pending
+// Layout:
+//   📂 Projects in /home/me/myrepo
+//     📁 habitloop          ← workspace
+//       🚀 Build the signup flow      brief-7a2c4b · active
+//       ✓ Push to GitHub               brief-3a1b0c · done
+//     📁 quicklink-test
+//       ✓ Initial scaffold              brief-9d1e8f · done
 //
-// When no brief is running, shows a friendly empty state with a link to
-// Mission Control to view past briefs.
+// "Current folder" = the first VS Code workspaceFolder. We match workspaces
+// by their meta.json#targetFolder. If no targetFolder is set anywhere, we
+// fall back to listing ALL workspaces (zero-config case).
+//
+// Click a brief → fires `atrune.openBriefInMissionControl` → opens
+// Mission Control to /projects/<workspaceId> in the browser.
 
 import * as vscode from 'vscode';
-import { AtruneApi, type WorkItem } from '../api';
+import { AtruneApi, type WorkspaceSummary } from '../api';
 
 interface Node {
   label: string;
@@ -28,17 +27,6 @@ interface Node {
   children?: Node[];
   command?: vscode.Command;
 }
-
-const PHASE_ORDER = ['research', 'plan', 'implement', 'review', 'verify'] as const;
-type Phase = typeof PHASE_ORDER[number];
-
-const STATUS_ICON: Record<WorkItem['status'], string> = {
-  todo: 'circle-outline',
-  in_progress: 'sync~spin',
-  blocked: 'warning',
-  done: 'check',
-  cancelled: 'circle-slash',
-};
 
 export class ActiveWorkProvider implements vscode.TreeDataProvider<Node> {
   private _emit = new vscode.EventEmitter<Node | undefined | void>();
@@ -68,111 +56,91 @@ export class ActiveWorkProvider implements vscode.TreeDataProvider<Node> {
   async getChildren(parent?: Node): Promise<Node[]> {
     if (parent) return parent.children ?? [];
 
-    const wsId = this.activeWorkspaceId();
-    if (!wsId) {
-      return [{ label: 'No active project', description: 'Open a folder to select one', iconId: 'info' }];
-    }
-
-    const plan = await this.api.getPlan(wsId);
-    if (!plan) {
-      return [{ label: 'Server not reachable', description: 'check the Atrune output channel', iconId: 'warning' }];
-    }
-
-    const active = plan.briefs.recent.find((b) => b.status === 'active');
-    if (!active) {
+    const all = await this.api.listWorkspaces();
+    if (all.length === 0) {
       return [
-        { label: 'No brief running', description: 'click + to start one', iconId: 'info' },
-        ...(plan.briefs.recent.length > 0
-          ? [{
-              label: `View all briefs (${plan.briefs.total}) →`,
-              description: 'opens in browser',
-              iconId: 'arrow-right',
-              contextValue: 'openMissionControl',
-              command: {
-                command: 'atrune.openMissionControl',
-                title: 'Open Mission Control',
-                arguments: [{}],
-              },
-            }]
-          : []),
+        { label: 'No projects yet', description: 'click + to create one', iconId: 'info' },
+        {
+          label: 'Open Mission Control →',
+          description: 'create a project there',
+          iconId: 'arrow-right',
+          command: {
+            command: 'atrune.openMissionControl',
+            title: 'Open Mission Control',
+            arguments: [{}],
+          },
+        },
       ];
     }
 
-    // Fetch work items for this brief; group by phase.
-    const items = await this.api.listWorkItems(wsId, active.id);
-    const byPhase = new Map<Phase | 'other', WorkItem[]>();
-    for (const p of PHASE_ORDER) byPhase.set(p, []);
-    byPhase.set('other', []);
-    for (const it of items) {
-      const ph = (PHASE_ORDER as readonly string[]).includes(it.phase ?? '')
-        ? (it.phase as Phase) : 'other';
-      byPhase.get(ph)?.push(it);
+    // Filter workspaces by the open folder, if any.
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
+    let matching: WorkspaceSummary[] = all;
+    if (cwd) {
+      const annotated = await Promise.all(all.map(async (w) => {
+        const meta = await this.api.getWorkspaceMeta(w.id);
+        const folder = meta?.targetFolder ?? null;
+        const matches = !!folder && (folder === cwd || folder.startsWith(cwd + '/') || cwd.startsWith(folder + '/'));
+        return { ws: w, matches };
+      }));
+      const filtered = annotated.filter((a) => a.matches).map((a) => a.ws);
+      // If at least one workspace has a folder binding to here, show only
+      // those. Otherwise (nothing bound), show all so the user isn't blank.
+      matching = filtered.length > 0 ? filtered : all;
     }
 
-    const phaseNodes: Node[] = PHASE_ORDER.map((p): Node => {
-      const taskList = byPhase.get(p) ?? [];
-      const done = taskList.filter((t) => t.status === 'done').length;
-      const inProgress = taskList.filter((t) => t.status === 'in_progress').length;
-      const blocked = taskList.filter((t) => t.status === 'blocked').length;
-      const total = taskList.length;
-
-      const summary = total === 0
-        ? 'pending'
-        : done === total
-          ? `✓ ${done} done`
-          : inProgress > 0
-            ? `⏳ ${done}/${total} · ${inProgress} running`
-            : blocked > 0
-              ? `⚠ ${blocked} blocked`
-              : `${done}/${total}`;
-
-      const phaseIcon = total === 0
-        ? 'circle-outline'
-        : done === total
-          ? 'check'
-          : inProgress > 0
-            ? 'sync~spin'
-            : blocked > 0
-              ? 'warning'
-              : 'circle-outline';
-
-      return {
-        label: p,
-        description: summary,
-        iconId: phaseIcon,
-        children: taskList.map((t): Node => ({
-          label: t.title,
-          description: t.assignedRole ? `· ${t.assignedRole}` : undefined,
-          tooltip: t.description ?? t.title,
-          iconId: STATUS_ICON[t.status],
-        })),
-      };
-    });
-
-    // Tasks not bound to a known phase land in 'other' — only show the bucket if non-empty.
-    const otherList = byPhase.get('other') ?? [];
-    if (otherList.length > 0) {
-      phaseNodes.push({
-        label: 'other',
-        description: `${otherList.length}`,
-        iconId: 'list-unordered',
-        children: otherList.map((t): Node => ({
-          label: t.title,
-          description: t.assignedRole ? `· ${t.assignedRole}` : undefined,
-          iconId: STATUS_ICON[t.status],
-        })),
+    // For each workspace, list its briefs (top 5, most recent).
+    const projectNodes = await Promise.all(matching.map(async (w): Promise<Node> => {
+      const plan = await this.api.getPlan(w.id);
+      const briefs = plan?.briefs.recent ?? [];
+      const briefNodes: Node[] = briefs.slice(0, 8).map((b): Node => {
+        const title = (b.body.split('\n')[0] ?? b.id).slice(0, 60);
+        return {
+          label: title,
+          description: `${b.id.slice(-6)} · ${b.status}`,
+          tooltip: b.body,
+          iconId: briefIconFor(b.status),
+          command: {
+            command: 'atrune.openBriefInMissionControl',
+            title: 'Open brief in Mission Control',
+            arguments: [{ workspaceId: w.id, briefId: b.id }],
+          },
+        };
       });
-    }
 
-    return [
-      {
-        label: active.body.split('\n')[0]?.slice(0, 60) ?? active.id,
-        description: active.id,
-        tooltip: active.body,
-        iconId: 'rocket',
-        children: phaseNodes,
-        contextValue: 'activeBrief',
-      },
-    ];
+      if (briefNodes.length === 0) {
+        briefNodes.push({
+          label: 'No briefs yet',
+          description: 'dispatch one to start',
+          iconId: 'dash',
+        });
+      }
+
+      const isActive = w.id === this.activeWorkspaceId();
+      return {
+        label: w.name + (isActive ? '  •' : ''),
+        description: `${w.totalBriefs} brief${w.totalBriefs !== 1 ? 's' : ''} · ${w.agents} agent${w.agents !== 1 ? 's' : ''}`,
+        tooltip: `Workspace: ${w.id}${isActive ? ' (active)' : ''}`,
+        iconId: isActive ? 'folder-active' : 'folder',
+        children: briefNodes,
+        command: {
+          command: 'atrune.switchToWorkspace',
+          title: 'Make this the active project',
+          arguments: [w.id],
+        },
+      };
+    }));
+
+    return projectNodes;
+  }
+}
+
+function briefIconFor(status: string): string {
+  switch (status) {
+    case 'active':    return 'rocket';
+    case 'done':      return 'check';
+    case 'failed':    return 'error';
+    case 'archived':  return 'archive';
+    default:          return 'circle-outline';
   }
 }
