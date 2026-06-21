@@ -1,12 +1,12 @@
 // AtruneAI VS Code extension — entry point.
 //
-// Phase 1 scope:
-//   - Activate on startup → auto-spawn Atrune server + web if not running
-//   - Three sidebar TreeViews: Active work · Pending · Team
-//   - Three commands: Open Mission Control · Refresh sidebar · Restart server
-//   - 5s polling refresh on all three views (cheap; replaces SSE for now)
-//
-// Phases 2+ will add toolbar buttons, webview composer, status bar HUD, etc.
+// IMPORTANT activation order:
+//   1. Commands are registered SYNCHRONOUSLY at the top of activate(), before
+//      any `await`. Otherwise a user clicking a button while the server is
+//      still spawning gets "command not found".
+//   2. TreeViews + status bar are wired next.
+//   3. Async server startup, first-launch prompt, and the poll loop kick off
+//      LAST — they happen in the background after activate() returns.
 
 import * as vscode from 'vscode';
 import { AtruneServer } from './server';
@@ -31,9 +31,14 @@ export async function activate(ctx: vscode.ExtensionContext) {
 
   const api = new AtruneApi();
 
-  // Active workspace tracking. Zero-config flow: if the user invokes a
-  // direct task with no workspace, one is auto-created and we adopt it.
+  // Active workspace tracking. Synchronous declarations only — handlers below
+  // close over these and use them at click-time.
   let activeWorkspaceId: string | null = null;
+  let refreshAll: () => void = () => {};
+  function setActiveWorkspaceId(id: string) {
+    activeWorkspaceId = id;
+    refreshAll();
+  }
   async function refreshActiveWorkspace() {
     const list = await api.listWorkspaces();
     if (list.length === 0) { activeWorkspaceId = null; return; }
@@ -41,81 +46,49 @@ export async function activate(ctx: vscode.ExtensionContext) {
       activeWorkspaceId = list[0]?.id ?? null;
     }
   }
-  function setActiveWorkspaceId(id: string) {
-    activeWorkspaceId = id;
-    refreshAll();
-  }
-
-  // Bring the server up before wiring views (so the first poll doesn't 404).
-  const status = await server.ensureRunning();
-  if (!status.ok) {
-    vscode.window.showWarningMessage(
-      `Atrune server not reachable: ${status.reason ?? 'unknown'}. Open the Atrune output channel for details.`,
-      'Open output',
-    ).then((p) => { if (p === 'Open output') server?.show(); });
-  }
-  await refreshActiveWorkspace();
-
-  // Three TreeViews.
-  const activeWork = new ActiveWorkProvider(api, () => activeWorkspaceId);
-  const pending    = new PendingProvider(api, () => activeWorkspaceId);
-  const team       = new TeamProvider(api, () => activeWorkspaceId);
-
-  ctx.subscriptions.push(
-    vscode.window.registerTreeDataProvider('atrune.activeWork', activeWork),
-    vscode.window.registerTreeDataProvider('atrune.pending', pending),
-    vscode.window.registerTreeDataProvider('atrune.team', team),
-  );
-
-  function refreshAll() {
-    activeWork.refresh();
-    pending.refresh();
-    team.refresh();
-  }
-
-  // Phase 4 — status bar + native approval popups.
-  statusBar = new AtruneStatusBar();
-  ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
-
-  async function tick() {
+  /** Force an immediate poll cycle — used after dispatch so sidebars don't
+   *  wait 5s to show the new brief / tasks / status. */
+  async function refreshActiveWorkspaceImmediate() {
     await refreshActiveWorkspace();
-    refreshAll();
     if (activeWorkspaceId) {
       const plan = await api.getPlan(activeWorkspaceId);
       statusBar?.update(plan);
-      await checkNewApprovals(api, plan, activeWorkspaceId, () => refreshAll());
-    } else {
-      statusBar?.update(null);
     }
   }
 
-  // Prime the status bar immediately so users don't see "connecting…" for 5s.
-  void tick();
-
-  // Zero-config first launch: one popup asking for Claude credentials, then
-  // silent forever. Auto-created workspaces inherit the global default.
-  void maybePromptFirstLaunch(ctx, api);
-
-  // 5s poll cadence — cheap, predictable, replaces SSE for v1.
-  pollHandle = setInterval(() => { void tick(); }, 5000);
-  ctx.subscriptions.push({ dispose: () => { if (pollHandle) clearInterval(pollHandle); } });
-
-  // Commands.
+  // ── COMMANDS — register synchronously, BEFORE any await ─────────────────
   ctx.subscriptions.push(
     vscode.commands.registerCommand('atrune.openMissionControl', async (opts?: { route?: string }) => {
       await openMissionControl(ctx, opts);
     }),
     vscode.commands.registerCommand('atrune.openSettings', async () => {
-      // Open VS Code's own settings filtered to Atrune configuration.
-      // Settings page inside Mission Control is reachable via the
-      // openMissionControl({route:'/settings'}) variant if the user prefers.
-      await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:atrune-ai.atrune-ai');
-      // Fallback for unpublished installs where the publisher isn't right yet
-      // — open generic settings filtered by keyword:
+      await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:atrune-ai.atruneai');
       await vscode.commands.executeCommand('workbench.action.openSettings', 'atrune');
     }),
     vscode.commands.registerCommand('atrune.newBrief', async () => {
-      await openBriefComposer(ctx, api, () => activeWorkspaceId, () => refreshAll());
+      // After a brief is dispatched, force an immediate poll cycle (faster
+      // than waiting for the 5s tick) so sidebars + status bar pick up the
+      // new brief, then nudge the user to the project view in their browser.
+      await openBriefComposer(
+        ctx, api, () => activeWorkspaceId,
+        async (info?: { workspaceId?: string; briefId?: string }) => {
+          await refreshActiveWorkspaceImmediate();
+          refreshAll();
+          if (info?.workspaceId) {
+            vscode.window.showInformationMessage(
+              'Brief dispatched. Watch tasks appear in the sidebar, or open the project view.',
+              'Open project view',
+              'Open Kanban board',
+            ).then((p) => {
+              if (p === 'Open project view') {
+                vscode.commands.executeCommand('atrune.openMissionControl', { route: `/projects/${info.workspaceId}` });
+              } else if (p === 'Open Kanban board') {
+                vscode.commands.executeCommand('atrune.openMissionControl', { route: '/board' });
+              }
+            });
+          }
+        },
+      );
     }),
     vscode.commands.registerCommand('atrune.quickAsk', async () => {
       await quickAskChooser(api, () => activeWorkspaceId, undefined, setActiveWorkspaceId);
@@ -124,8 +97,6 @@ export async function activate(ctx: vscode.ExtensionContext) {
       await askOneAgent(api, () => activeWorkspaceId, undefined, setActiveWorkspaceId);
     }),
     vscode.commands.registerCommand('atrune.autoFixThisFile', async (uri?: vscode.Uri) => {
-      // Editor context-menu / explorer-context entry. If a URI was passed
-      // (right-click in the file explorer), include the file path in the prompt.
       const filePath = uri?.fsPath ?? vscode.window.activeTextEditor?.document.uri.fsPath;
       const fileHint = filePath ? `(file: ${filePath}) ` : '';
       await autoFix(api, () => activeWorkspaceId, `${fileHint}`.trim() || undefined, setActiveWorkspaceId);
@@ -177,7 +148,132 @@ export async function activate(ctx: vscode.ExtensionContext) {
       await resetFirstLaunch(ctx);
       await maybePromptFirstLaunch(ctx, api);
     }),
+    vscode.commands.registerCommand('atrune.showAgentWork', async (args?: {
+      workspaceId: string; agentId: string; role: string; displayName: string;
+    }) => {
+      if (!args?.workspaceId || !args?.role) return;
+      const items = await api.listAgentWork(args.workspaceId, args.role);
+      if (items.length === 0) {
+        const pick = await vscode.window.showInformationMessage(
+          `${args.displayName} has no assigned work right now.`,
+          'View in Mission Control',
+        );
+        if (pick === 'View in Mission Control') {
+          vscode.commands.executeCommand('atrune.openMissionControl', { route: '/org' });
+        }
+        return;
+      }
+      const STATUS_GLYPH: Record<string, string> = {
+        todo: '$(circle-outline)',
+        in_progress: '$(sync~spin)',
+        blocked: '$(warning)',
+        done: '$(check)',
+        cancelled: '$(circle-slash)',
+      };
+      const pick = await vscode.window.showQuickPick(
+        items.map((it) => ({
+          label: `${STATUS_GLYPH[it.status] ?? ''} ${it.title}`,
+          description: it.status,
+          detail: [it.phase, it.priority, it.description ?? '']
+            .filter(Boolean).join(' · '),
+          item: it,
+        })),
+        { placeHolder: `${args.displayName} · ${items.length} task${items.length > 1 ? 's' : ''} assigned` },
+      );
+      if (pick) {
+        vscode.commands.executeCommand('atrune.openMissionControl', { route: '/board' });
+      }
+    }),
+    vscode.commands.registerCommand('atrune.setRepoRoot', async () => {
+      const picked = await vscode.window.showOpenDialog({
+        canSelectFiles: false, canSelectFolders: true, canSelectMany: false,
+        openLabel: 'Use as Atrune monorepo',
+      });
+      if (!picked || !picked[0]) return;
+      await server?.setRepoRoot(picked[0].fsPath);
+      vscode.window.showInformationMessage('Atrune monorepo set. Restarting server…');
+      await server?.dispose();
+      server = new AtruneServer();
+      const r = await server.ensureRunning();
+      if (r.ok) vscode.window.showInformationMessage('Atrune server is up.');
+      else      vscode.window.showWarningMessage(`Still can't start: ${r.reason}`);
+    }),
   );
+
+  // ── TREE VIEWS + STATUS BAR — also synchronous ─────────────────────────
+  const activeWork = new ActiveWorkProvider(api, () => activeWorkspaceId);
+  const pending    = new PendingProvider(api, () => activeWorkspaceId);
+  const team       = new TeamProvider(api, () => activeWorkspaceId);
+
+  ctx.subscriptions.push(
+    vscode.window.registerTreeDataProvider('atrune.activeWork', activeWork),
+    vscode.window.registerTreeDataProvider('atrune.pending', pending),
+    vscode.window.registerTreeDataProvider('atrune.team', team),
+  );
+
+  refreshAll = () => {
+    activeWork.refresh();
+    pending.refresh();
+    team.refresh();
+  };
+
+  statusBar = new AtruneStatusBar();
+  ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
+
+  async function tick() {
+    await refreshActiveWorkspace();
+    refreshAll();
+    if (activeWorkspaceId) {
+      const plan = await api.getPlan(activeWorkspaceId);
+      statusBar?.update(plan);
+      await checkNewApprovals(api, plan, activeWorkspaceId, () => refreshAll());
+    } else {
+      statusBar?.update(null);
+    }
+  }
+
+  // ── ASYNC STARTUP — runs in the background, doesn't block command use ──
+  (async () => {
+    let status = await server!.ensureRunning();
+
+    // "repo not found" is recoverable: ask the user to point at the monorepo.
+    if (!status.ok && status.reason === 'repo not found') {
+      const pick = await vscode.window.showWarningMessage(
+        'Atrune monorepo not found. Choose the folder containing pnpm-workspace.yaml to start the server.',
+        'Choose folder…',
+        'Open output',
+      );
+      if (pick === 'Choose folder…') {
+        const picked = await vscode.window.showOpenDialog({
+          canSelectFiles: false, canSelectFolders: true, canSelectMany: false,
+          openLabel: 'Use as Atrune monorepo',
+        });
+        if (picked && picked[0]) {
+          await server!.setRepoRoot(picked[0].fsPath);
+          status = await server!.ensureRunning();
+        }
+      } else if (pick === 'Open output') {
+        server?.show();
+      }
+    }
+
+    if (!status.ok) {
+      vscode.window.showWarningMessage(
+        `Atrune server not reachable: ${status.reason ?? 'unknown'}. Run "Atrune: Set monorepo folder" from the command palette to fix.`,
+        'Set monorepo folder…',
+        'Open output',
+      ).then((p) => {
+        if (p === 'Set monorepo folder…') vscode.commands.executeCommand('atrune.setRepoRoot');
+        else if (p === 'Open output') server?.show();
+      });
+    }
+    await refreshActiveWorkspace();
+    void tick();
+    void maybePromptFirstLaunch(ctx, api);
+    pollHandle = setInterval(() => { void tick(); }, 5000);
+  })();
+
+  ctx.subscriptions.push({ dispose: () => { if (pollHandle) clearInterval(pollHandle); } });
 
   server.log('Atrune extension activated.');
 }

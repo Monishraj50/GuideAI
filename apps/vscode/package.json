@@ -200,6 +200,10 @@
       {
         "command": "atrune.resetFirstLaunch",
         "title": "Atrune: Re-connect Claude (reset first-launch)"
+      },
+      {
+        "command": "atrune.setRepoRoot",
+        "title": "Atrune: Set monorepo folder…"
       }
     ],
     "menus": {

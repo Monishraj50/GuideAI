@@ -26,26 +26,60 @@ function slugFromTaskTitle(title: string): string {
 
 // Standard subfolder layout for every workspace. Briefs, docs, reports, and
 // slides each get their own home so the user can find artifacts by type.
-// meta.json captures the originating task + kind so we can tell auto-created
-// task workspaces apart from user-created project workspaces later.
+// meta.json captures kind + originating task + targetFolder so we can tell
+// auto-task workspaces apart from project workspaces, and resolve the cwd
+// for the pipeline at dispatch time.
+export interface WorkspaceMeta {
+  id: string;
+  createdAt: number;
+  kind: 'project' | 'auto-task';
+  originatingTask: string | null;
+  /** Local filesystem path where the project's code lives. Used as the
+   *  pipeline's cwd when set. */
+  targetFolder: string | null;
+}
+
 function scaffoldWorkspaceDir(id: string, meta: {
   originatingTask?: string;
   kind?: 'project' | 'auto-task';
+  targetFolder?: string;
 }): void {
   const wsRoot = path.join(paths.workspaces, id);
   for (const sub of ['briefs', 'docs', 'reports', 'slides', 'code']) {
     fs.mkdirSync(path.join(wsRoot, sub), { recursive: true });
   }
+  const data: WorkspaceMeta = {
+    id,
+    createdAt: Date.now(),
+    kind: meta.kind ?? 'project',
+    originatingTask: meta.originatingTask ?? null,
+    targetFolder: meta.targetFolder?.trim() || null,
+  };
   fs.writeFileSync(
     path.join(wsRoot, 'meta.json'),
-    JSON.stringify({
-      id,
-      createdAt: Date.now(),
-      kind: meta.kind ?? 'project',
-      originatingTask: meta.originatingTask ?? null,
-    }, null, 2),
+    JSON.stringify(data, null, 2),
     'utf-8',
   );
+}
+
+export function readWorkspaceMeta(id: string): WorkspaceMeta | null {
+  try {
+    const p = path.join(paths.workspaces, id, 'meta.json');
+    if (!fs.existsSync(p)) return null;
+    return JSON.parse(fs.readFileSync(p, 'utf-8')) as WorkspaceMeta;
+  } catch { return null; }
+}
+
+function writeWorkspaceMeta(id: string, patch: Partial<WorkspaceMeta>): WorkspaceMeta {
+  const wsRoot = path.join(paths.workspaces, id);
+  fs.mkdirSync(wsRoot, { recursive: true });
+  const existing = readWorkspaceMeta(id) ?? {
+    id, createdAt: Date.now(), kind: 'project' as const,
+    originatingTask: null, targetFolder: null,
+  };
+  const next = { ...existing, ...patch };
+  fs.writeFileSync(path.join(wsRoot, 'meta.json'), JSON.stringify(next, null, 2), 'utf-8');
+  return next;
 }
 
 export function registerWorkspaceRoutes(app: FastifyInstance) {
@@ -97,16 +131,21 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
     return { count: summaries.length, workspaces: summaries };
   });
 
-  // Create a new workspace. Body: { name }; id derived from slug.
+  // Create a new workspace. Body: { name, targetFolder? }; id derived from slug.
   //
   // Conflict semantics:
   //   - id taken by an ACTIVE workspace → 409 (true collision).
   //   - id taken only by ARCHIVED workspaces → auto-suffix (`-2`, `-3`, …) so
   //     the user can reuse the name without losing the archived data on disk.
-  app.post<{ Body: { name: string } }>('/api/workspaces', async (req, reply) => {
+  //
+  // `targetFolder` is the local filesystem path where the project's code
+  // lives — agents write here, opening this folder in VS Code later
+  // reconnects the project. Stored in meta.json; editable via PATCH.
+  app.post<{ Body: { name: string; targetFolder?: string } }>('/api/workspaces', async (req, reply) => {
     const name = (req.body?.name ?? '').toString().trim();
     if (!name) { reply.code(400); return { error: 'name is required' }; }
     const base = slugify(name);
+    const targetFolder = req.body?.targetFolder?.toString().trim() || undefined;
 
     const db = getDb();
     const rowFor = (slug: string) =>
@@ -132,10 +171,31 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
       createdAt: Date.now(),
     }).run();
 
-    // Standard subfolder layout: briefs/, docs/, reports/, slides/, code/, meta.json.
-    scaffoldWorkspaceDir(id, { kind: 'project' });
+    scaffoldWorkspaceDir(id, { kind: 'project', targetFolder });
 
-    return { id, name };
+    return { id, name, targetFolder: targetFolder ?? null };
+  });
+
+  // PATCH a workspace — for editing the targetFolder post-hoc.
+  app.patch<{ Params: { id: string }; Body: { targetFolder?: string } }>(
+    '/api/workspaces/:id', async (req, reply) => {
+      const db = getDb();
+      const row = db.select().from(schema.workspaces).where(eq(schema.workspaces.id, req.params.id)).all()[0];
+      if (!row) { reply.code(404); return { error: 'not found' }; }
+      const patch: Partial<WorkspaceMeta> = {};
+      if (req.body?.targetFolder !== undefined) {
+        patch.targetFolder = req.body.targetFolder.toString().trim() || null;
+      }
+      const updated = writeWorkspaceMeta(req.params.id, patch);
+      return { id: req.params.id, targetFolder: updated.targetFolder };
+    },
+  );
+
+  // Read a workspace's meta (project folder, kind, originating task).
+  app.get<{ Params: { id: string } }>('/api/workspaces/:id/meta', async (req, reply) => {
+    const meta = readWorkspaceMeta(req.params.id);
+    if (!meta) { reply.code(404); return { error: 'workspace meta not found' }; }
+    return meta;
   });
 
   // Zero-config workspace creation from a task title.

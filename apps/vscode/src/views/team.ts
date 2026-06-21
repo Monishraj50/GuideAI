@@ -1,4 +1,9 @@
 // 👥 Team — hired roster for the active project.
+//
+// Each agent node is clickable. Click → atrune.showAgentWork command, which
+// fetches work items assigned to that agent's role and shows them in a
+// QuickPick. Picking a work item offers to open Mission Control to the
+// relevant project page.
 
 import * as vscode from 'vscode';
 import { AtruneApi, type Agent } from '../api';
@@ -57,10 +62,15 @@ export class TeamProvider implements vscode.TreeDataProvider<Node> {
     return agents.map((a): Node => ({
       label: a.displayName,
       description: a.role,
-      tooltip: `${a.displayName} (${a.role}) · status: ${a.status}`,
+      tooltip: `${a.displayName} (${a.role}) · status: ${a.status} · click to see assigned work`,
       iconId: a.status === 'working' ? 'sync~spin' : a.status === 'retired' ? 'archive' : 'organization',
       contextValue: 'agent',
       agent: a,
+      command: {
+        command: 'atrune.showAgentWork',
+        title: 'Show agent work',
+        arguments: [{ workspaceId: wsId, agentId: a.id, role: a.role, displayName: a.displayName }],
+      },
     }));
   }
 }

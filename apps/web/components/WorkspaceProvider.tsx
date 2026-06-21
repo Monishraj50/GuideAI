@@ -23,7 +23,7 @@ interface Ctx {
   setActive: (id: string) => void;
   workspaces: WorkspaceSummary[];
   refresh: () => Promise<void>;
-  create: (name: string) => Promise<WorkspaceSummary | null>;
+  create: (name: string, targetFolder?: string) => Promise<WorkspaceSummary | null>;
   archive: (id: string) => Promise<void>;
   loading: boolean;
 }
@@ -68,11 +68,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     try { window.localStorage.setItem(STORAGE_KEY, id); } catch {}
   }, []);
 
-  const create = useCallback(async (name: string): Promise<WorkspaceSummary | null> => {
+  const create = useCallback(async (name: string, targetFolder?: string): Promise<WorkspaceSummary | null> => {
     const r = await fetch('/api/workspaces', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, targetFolder: targetFolder?.trim() || undefined }),
     });
     if (!r.ok) return null;
     await refresh();

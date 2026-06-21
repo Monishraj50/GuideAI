@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { appendEvent } from '@guideai/messaging/events';
 import { paths } from '@guideai/shared/paths';
 import { getDb, schema } from '@guideai/shared/db';
@@ -10,6 +12,7 @@ import { harvestBriefDeliverables } from './deliverables.js';
 import { loadTarget, runValidation } from './validate.js';
 import { loadIntake } from './discovery.js';
 import { isDesignTagged } from './designShotgun.js';
+import { hireAgent } from './hiring.js';
 import { eq } from 'drizzle-orm';
 
 const COS_AGENT_ROLE = 'chief-of-staff';
@@ -21,6 +24,17 @@ function base(workspaceId: string, agentId?: string) {
 }
 function safeArray(s: string): string[] {
   try { const v = JSON.parse(s); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+
+/** Read the workspace's meta.json to find its configured project folder.
+ *  Returns null if unset or unreadable — caller falls back. */
+function readWorkspaceTargetFolder(workspaceId: string): string | null {
+  try {
+    const p = path.join(paths.workspaces, workspaceId, 'meta.json');
+    if (!fs.existsSync(p)) return null;
+    const j = JSON.parse(fs.readFileSync(p, 'utf-8'));
+    return typeof j?.targetFolder === 'string' && j.targetFolder.trim() ? j.targetFolder.trim() : null;
+  } catch { return null; }
 }
 
 async function ensureWorkspace(workspaceId: string, name?: string) {
@@ -75,6 +89,12 @@ export async function submitBrief(args: {
   workspaceId: string;
   body: string;
   securityTagged?: boolean;
+  /** Local filesystem path where agents should write code. Becomes the pipeline's cwd. */
+  targetFolder?: string;
+  /** Catalog roles to ensure are hired before phase 1. Missing ones auto-hire. */
+  taggedAgents?: string[];
+  /** Soft budget hint surfaced as a system event for the UI. */
+  budget?: { mode: 'tokens' | 'currency'; amount: number };
 }): Promise<SubmitBriefResult> {
   const { workspaceId, body } = args;
   // A brief is security-tagged if the caller asks for it OR the body contains
@@ -82,6 +102,34 @@ export async function submitBrief(args: {
   const securityTagged = !!args.securityTagged || /^\s*\[(security|sec)\]/i.test(body);
   await ensureWorkspace(workspaceId);
   const agentId = await ensureCosAgent(workspaceId);
+
+  // Auto-hire any tagged agents not already on the roster. Failures are
+  // logged but non-fatal — the pipeline still runs with whoever IS hired.
+  if (args.taggedAgents?.length) {
+    const db = getDb();
+    const have = new Set(
+      db.select().from(schema.agents).all()
+        .filter((a) => a.workspaceId === workspaceId && a.status !== 'retired')
+        .map((a) => a.role),
+    );
+    for (const role of args.taggedAgents) {
+      if (have.has(role)) continue;
+      try {
+        await hireAgent(workspaceId, role);
+        const hireNote: SystemChunk = {
+          ...base(workspaceId), kind: 'system',
+          text: `auto-hired ${role} from marketplace (brief-tagged)`,
+        };
+        appendEvent(workspaceId, hireNote);
+      } catch (err: any) {
+        const failNote: SystemChunk = {
+          ...base(workspaceId), kind: 'system',
+          text: `could not auto-hire ${role}: ${String(err?.message ?? err)}`,
+        };
+        appendEvent(workspaceId, failNote);
+      }
+    }
+  }
 
   const db = getDb();
   const briefId = `brief-${randomUUID().slice(0, 8)}`;
@@ -92,7 +140,25 @@ export async function submitBrief(args: {
   const userChunk: UserChunk = { ...base(workspaceId), kind: 'user', text: body };
   appendEvent(workspaceId, userChunk);
 
-  const cwd = paths.agentCwd(workspaceId, agentId);
+  // Surface the budget intent so the live narrator + UI can show it.
+  if (args.budget && args.budget.amount > 0) {
+    const label = args.budget.mode === 'tokens'
+      ? `${(args.budget.amount / 1000).toFixed(0)}k tokens`
+      : `$${args.budget.amount.toFixed(2)}`;
+    const budgetNote: SystemChunk = {
+      ...base(workspaceId), kind: 'system',
+      text: `budget hint: ${label} (${args.budget.mode})`,
+    };
+    appendEvent(workspaceId, budgetNote);
+  }
+
+  // Cwd resolution:
+  //   1. Per-brief override (rarely used; kept for API back-compat)
+  //   2. Workspace's configured targetFolder (the project's code location)
+  //   3. Synthetic per-agent dir under ~/.guideai/ (sandbox fallback)
+  const cwd = args.targetFolder?.trim()
+    || readWorkspaceTargetFolder(workspaceId)
+    || paths.agentCwd(workspaceId, agentId);
 
   // Build the dispatch plan: each phase → specialist (or CoS fallback).
   const rosterRows = db.select().from(schema.agents).all()

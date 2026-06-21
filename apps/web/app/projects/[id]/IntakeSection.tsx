@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import {
-  Target, Compass, ShieldAlert, Coins, Users, Briefcase,
+  Target, Compass, ShieldAlert, Coins, Users, Briefcase, FolderTree,
   Plus, X, Sparkles, Play, Check, AlertTriangle, RefreshCw, Lightbulb,
   Wand2, Hand, ScanLine, UserCheck, UsersRound, Bot,
 } from 'lucide-react';
@@ -103,19 +103,28 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
   const [running, setRunning] = useState(false);
   const [criteriaDraft, setCriteriaDraft] = useState('');
   const [constraintDraft, setConstraintDraft] = useState('');
+  /** Local filesystem path where the agents write code. Stored on the
+   *  workspace meta (separate endpoint), not the intake row. */
+  const [targetFolder, setTargetFolder] = useState('');
   /** Remember the currency choice when toggling to tokens, so toggling back restores it. */
   const [lastCurrency, setLastCurrency] = useState<Currency>('USD');
 
   async function refresh() {
-    const r = await fetch(`/api/workspaces/${workspaceId}/intake`);
+    const [r, rMeta] = await Promise.all([
+      fetch(`/api/workspaces/${workspaceId}/intake`),
+      fetch(`/api/workspaces/${workspaceId}/meta`),
+    ]);
     if (r.ok) {
       const j = await r.json();
       setIntake(j.intake);
       setDiscovery(j.latestDiscovery);
-      // If the stored unit is a currency, remember it for the toggle.
       if (j.intake?.budgetHintUnit && j.intake.budgetHintUnit !== 'tokens') {
         setLastCurrency(j.intake.budgetHintUnit);
       }
+    }
+    if (rMeta.ok) {
+      const m = await rMeta.json();
+      setTargetFolder(m?.targetFolder ?? '');
     }
   }
   useEffect(() => { refresh(); }, [workspaceId]);
@@ -124,19 +133,27 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
     if (!intake) return;
     setBusy(true);
     try {
-      const r = await fetch(`/api/workspaces/${workspaceId}/intake`, {
-        method: 'PUT', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          goal: intake.goal,
-          successCriteria: intake.successCriteria,
-          constraints: intake.constraints,
-          budgetHintUsd: intake.budgetHintUsd,
-          budgetHintUnit: intake.budgetHintUnit,
-          planningMode: intake.planningMode,
-          hireMode: intake.hireMode,
+      // Two writes: intake fields → /intake, project folder → workspace meta.
+      const [r, rMeta] = await Promise.all([
+        fetch(`/api/workspaces/${workspaceId}/intake`, {
+          method: 'PUT', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            goal: intake.goal,
+            successCriteria: intake.successCriteria,
+            constraints: intake.constraints,
+            budgetHintUsd: intake.budgetHintUsd,
+            budgetHintUnit: intake.budgetHintUnit,
+            planningMode: intake.planningMode,
+            hireMode: intake.hireMode,
+          }),
         }),
-      });
-      if (!r.ok) throw new Error('save failed');
+        fetch(`/api/workspaces/${workspaceId}`, {
+          method: 'PATCH', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ targetFolder: targetFolder.trim() }),
+        }),
+      ]);
+      if (!r.ok) throw new Error('intake save failed');
+      if (!rMeta.ok) throw new Error('folder save failed');
       const j = await r.json();
       setIntake(j.intake);
       toast({ title: 'Intake saved', variant: 'success' });
@@ -216,6 +233,21 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
               placeholder="Build a customer-facing onboarding flow that…"
               rows={3}
               className="w-full bg-bg/60 border border-line/70 rounded-md px-3 py-2 text-sm text-ink outline-none focus:border-accent/60 resize-none"
+            />
+          </Field>
+
+          {/* Project folder — where agents write code on this machine */}
+          <Field
+            icon={<FolderTree size={12} />}
+            label="Project folder"
+            hint="Local filesystem path where agents write code. Opening this folder in VS Code reconnects the project. Leave empty for a sandboxed scratch dir."
+          >
+            <input
+              type="text"
+              value={targetFolder}
+              onChange={(e) => setTargetFolder(e.target.value)}
+              placeholder="/home/you/projects/this-project"
+              className="w-full bg-bg/60 border border-line/70 rounded-md px-3 py-2 text-sm text-ink font-mono outline-none focus:border-accent/60"
             />
           </Field>
 

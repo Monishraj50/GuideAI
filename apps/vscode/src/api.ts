@@ -98,11 +98,24 @@ export class AtruneApi {
     return r.ok;
   }
 
-  async submitBrief(args: { workspaceId: string; body: string; securityTagged?: boolean }): Promise<{ ok: boolean; briefId?: string; error?: string }> {
+  async submitBrief(args: {
+    workspaceId: string;
+    body: string;
+    securityTagged?: boolean;
+    targetFolder?: string;
+    taggedAgents?: string[];
+    budget?: { mode: 'tokens' | 'currency'; amount: number };
+  }): Promise<{ ok: boolean; briefId?: string; error?: string }> {
     try {
       const r = await fetch(`${base()}/api/workspaces/${args.workspaceId}/briefs`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ body: args.body, securityTagged: !!args.securityTagged }),
+        body: JSON.stringify({
+          body: args.body,
+          securityTagged: !!args.securityTagged,
+          targetFolder: args.targetFolder,
+          taggedAgents: args.taggedAgents,
+          budget: args.budget,
+        }),
       });
       const j = await r.json() as any;
       if (!r.ok) return { ok: false, error: j?.error ?? `http ${r.status}` };
@@ -110,6 +123,57 @@ export class AtruneApi {
     } catch (err: any) {
       return { ok: false, error: String(err?.message ?? err) };
     }
+  }
+
+  /** Get top-N catalog agents that match a brief body. Used by the composer to
+   *  auto-tag suggestions. Returns flag whether each is already hired in the
+   *  given workspace (no marketplace hire needed on dispatch). */
+  async suggestAgents(args: {
+    taskBody: string;
+    workspaceId?: string;
+    limit?: number;
+  }): Promise<{ count: number; suggestions: AgentSuggestion[] }> {
+    try {
+      const r = await fetch(`${base()}/api/catalog/suggest`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(args),
+      });
+      if (!r.ok) return { count: 0, suggestions: [] };
+      return await r.json() as { count: number; suggestions: AgentSuggestion[] };
+    } catch { return { count: 0, suggestions: [] }; }
+  }
+
+  /** List work items for a workspace, optionally filtered by brief. */
+  async listWorkItems(workspaceId: string, briefId?: string): Promise<WorkItem[]> {
+    try {
+      const url = briefId
+        ? `${base()}/api/workspaces/${workspaceId}/work-items?briefId=${encodeURIComponent(briefId)}`
+        : `${base()}/api/workspaces/${workspaceId}/work-items`;
+      const r = await fetch(url);
+      if (!r.ok) return [];
+      const j = await r.json() as { items: WorkItem[] };
+      return j.items ?? [];
+    } catch { return []; }
+  }
+
+  /** Work items assigned to a specific agent role across all briefs in a workspace. */
+  async listAgentWork(workspaceId: string, assignedRole: string): Promise<WorkItem[]> {
+    try {
+      const r = await fetch(`${base()}/api/work-items?workspaceId=${workspaceId}&assignedRole=${encodeURIComponent(assignedRole)}`);
+      if (!r.ok) return [];
+      const j = await r.json() as { items: WorkItem[] };
+      return j.items ?? [];
+    } catch { return []; }
+  }
+
+  /** Search the full catalog (for the manual-hire picker). */
+  async searchCatalog(q: string): Promise<CatalogAgent[]> {
+    try {
+      const r = await fetch(`${base()}/api/catalog/agents?q=${encodeURIComponent(q)}`);
+      if (!r.ok) return [];
+      const j = await r.json() as { agents: CatalogAgent[] };
+      return j.agents ?? [];
+    } catch { return []; }
   }
 
   async createWorkspace(name: string): Promise<{ ok: boolean; id?: string; error?: string }> {
@@ -223,6 +287,40 @@ export class AtruneApi {
       return { ok: false, error: String(err?.message ?? err) };
     }
   }
+}
+
+export interface WorkItem {
+  id: string;
+  workspaceId: string;
+  briefId: string | null;
+  title: string;
+  description: string | null;
+  status: 'todo' | 'in_progress' | 'blocked' | 'done' | 'cancelled';
+  phase: 'research' | 'plan' | 'implement' | 'review' | 'verify' | 'other' | null;
+  priority: 'low' | 'normal' | 'high' | 'critical';
+  assignedRole: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AgentSuggestion {
+  role: string;
+  displayName: string;
+  department: string;
+  description: string;
+  model?: string;
+  score: number;
+  bestPhase: string;
+  hiredAlready: boolean;
+}
+
+export interface CatalogAgent {
+  role: string;
+  displayName: string;
+  department: string;
+  description: string;
+  model?: string;
+  tools?: string[];
 }
 
 export interface DirectTaskRun {

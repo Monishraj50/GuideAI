@@ -21,7 +21,8 @@
     "./secondOpinion": "./src/secondOpinion.ts",
     "./memory": "./src/memory.ts",
     "./designShotgun": "./src/designShotgun.ts",
-    "./directTask": "./src/directTask.ts"
+    "./directTask": "./src/directTask.ts",
+    "./routing": "./src/routing.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
