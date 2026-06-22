@@ -13,6 +13,7 @@ import { loadTarget, runValidation } from './validate.js';
 import { loadIntake } from './discovery.js';
 import { isDesignTagged } from './designShotgun.js';
 import { hireAgent } from './hiring.js';
+import { writeBriefAnalyses, appendAgentSummary } from './projectContext.js';
 import { eq } from 'drizzle-orm';
 
 const COS_AGENT_ROLE = 'chief-of-staff';
@@ -213,6 +214,46 @@ export async function submitBrief(args: {
 
       db.update(schema.briefs).set({ status: 'done' })
         .where(eq(schema.briefs.id, briefId)).run();
+
+      // Project context — write per-role analyses for this brief + append
+      // a one-line entry to each participating role's rolling summary.
+      // Both are derived from the just-inserted `tasks` rows + on-disk
+      // artifacts; no LLM call.
+      try {
+        writeBriefAnalyses(workspaceId, briefId);
+
+        // Per-role rollups for the summary log.
+        const ownAgents = db.select().from(schema.agents).all();
+        const idToRole = new Map(ownAgents.map((a) => [a.id, a.role]));
+        const tasksForBrief = db.select().from(schema.tasks).all()
+          .filter((t) => t.briefId === briefId);
+        const rollups = new Map<string, { tokensIn: number; tokensOut: number; done: number; failed: number }>();
+        for (const t of tasksForBrief) {
+          if (!t.agentId) continue;
+          const role = idToRole.get(t.agentId);
+          if (!role) continue;
+          const r = rollups.get(role) ?? { tokensIn: 0, tokensOut: 0, done: 0, failed: 0 };
+          r.tokensIn += t.tokensIn ?? 0;
+          r.tokensOut += t.tokensOut ?? 0;
+          if (t.status === 'failed') r.failed++;
+          else r.done++;
+          rollups.set(role, r);
+        }
+        const briefTitle = body.split('\n')[0]?.slice(0, 120) ?? briefId;
+        for (const [role, r] of rollups) {
+          appendAgentSummary({
+            workspaceId, role, briefId, briefTitle,
+            tokensIn: r.tokensIn, tokensOut: r.tokensOut,
+            tasksDone: r.done, tasksFailed: r.failed,
+          });
+        }
+      } catch (err: any) {
+        appendEvent(workspaceId, {
+          ...base(workspaceId, agentId),
+          kind: 'system', level: 'warn',
+          text: `project-context update skipped: ${err?.message ?? err}`,
+        } as SystemChunk);
+      }
 
       // ECC Principle 6/7: Stop-hook → promote a draft skill from the trace.
       try {

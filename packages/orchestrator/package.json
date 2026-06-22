@@ -22,7 +22,8 @@
     "./memory": "./src/memory.ts",
     "./designShotgun": "./src/designShotgun.ts",
     "./directTask": "./src/directTask.ts",
-    "./routing": "./src/routing.ts"
+    "./routing": "./src/routing.ts",
+    "./projectContext": "./src/projectContext.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

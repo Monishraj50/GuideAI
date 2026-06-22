@@ -6,6 +6,7 @@ import { computeRosterStats } from '@guideai/metrics';
 import { readEvents } from '@guideai/messaging/events';
 import { listPending } from '@guideai/orchestrator/approvals';
 import { readLatestDigest } from '@guideai/orchestrator/digest';
+import { writeRequirementsMd } from '@guideai/orchestrator/projectContext';
 import { paths } from '@guideai/shared/paths';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -172,6 +173,9 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
     }).run();
 
     scaffoldWorkspaceDir(id, { kind: 'project', targetFolder });
+    // Scaffold the project-level requirements.md (intake is still empty;
+    // the file gets refreshed when intake is saved).
+    try { writeRequirementsMd(id); } catch {}
 
     return { id, name, targetFolder: targetFolder ?? null };
   });
@@ -187,6 +191,8 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
         patch.targetFolder = req.body.targetFolder.toString().trim() || null;
       }
       const updated = writeWorkspaceMeta(req.params.id, patch);
+      // Folder change → refresh requirements.md so the new path is in context.
+      try { writeRequirementsMd(req.params.id); } catch {}
       return { id: req.params.id, targetFolder: updated.targetFolder };
     },
   );
@@ -237,6 +243,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
       }).run();
 
       scaffoldWorkspaceDir(id, { kind, originatingTask: taskTitle });
+      try { writeRequirementsMd(id); } catch {}
 
       return { id, name };
     },

@@ -13,6 +13,7 @@ import { eq } from 'drizzle-orm';
 import { getDb, schema } from '@guideai/shared/db';
 import { appendEvent } from '@guideai/messaging/events';
 import type { SystemChunk } from '@guideai/shared/chunks';
+import { readProjectContext } from './projectContext.js';
 
 export type MemoryShare = 'all' | 'read-only' | 'deny';
 
@@ -131,20 +132,43 @@ export function loadAgentMemoryForRole(args: {
 
 /**
  * Render the memory block that gets prepended to a role's system prompt.
- * Returns an empty string when no entries are available.
+ *
+ * Two layers, concatenated when present:
+ *   1. **Project context** — requirements.md + this role's rolling summary +
+ *      past analyses of this role's work in prior briefs (read from disk).
+ *      Always-relevant scaffolding for fix/feature work.
+ *   2. **Cross-workspace memory** — distilled notes from agentMemory table
+ *      (manual + auto-promoted via skills).
+ *
+ * Returns an empty string when both layers are empty.
  */
 export function renderMemoryBlock(args: {
   role: string;
   currentWorkspaceId: string;
 }): string {
+  const blocks: string[] = [];
+
+  // Layer 1 — project-level requirements + this role's history in THIS project.
+  try {
+    const projectCtx = readProjectContext({
+      workspaceId: args.currentWorkspaceId,
+      role: args.role,
+    });
+    if (projectCtx) blocks.push(projectCtx);
+  } catch {}
+
+  // Layer 2 — distilled cross-workspace notes for this role.
   const entries = loadAgentMemoryForRole(args);
-  if (entries.length === 0) return '';
-  const lines = ['## Past notes (from previous projects)', ''];
-  for (const e of entries) {
-    const where = e.sourceWorkspaceId === args.currentWorkspaceId ? 'this workspace' : `from \`${e.sourceWorkspaceId}\``;
-    lines.push(`- ${e.body} _(${where})_`);
+  if (entries.length > 0) {
+    const lines = ['## Past notes (from previous projects)', ''];
+    for (const e of entries) {
+      const where = e.sourceWorkspaceId === args.currentWorkspaceId ? 'this workspace' : `from \`${e.sourceWorkspaceId}\``;
+      lines.push(`- ${e.body} _(${where})_`);
+    }
+    blocks.push(lines.join('\n'));
   }
-  return lines.join('\n');
+
+  return blocks.join('\n\n---\n\n');
 }
 
 // ---------- helpers ----------

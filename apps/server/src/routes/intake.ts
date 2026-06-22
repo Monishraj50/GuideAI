@@ -4,6 +4,7 @@ import {
   type IntakeRecord, type PlanningMode, type HireMode, type BudgetUnit,
 } from '@guideai/orchestrator/discovery';
 import { planFromDiscoveryByMode } from '@guideai/orchestrator/planReview';
+import { writeRequirementsMd } from '@guideai/orchestrator/projectContext';
 
 const PLANNING: PlanningMode[] = ['auto', 'assisted', 'manual'];
 const HIRING: HireMode[] = ['auto', 'manual', 'hybrid'];
@@ -68,6 +69,9 @@ export function registerIntakeRoutes(app: FastifyInstance) {
       reply.code(400); return { error: 'budget amount cannot be negative' };
     }
     saveIntake(next);
+    // Refresh the project-level requirements.md so subsequent briefs +
+    // direct tasks pick up the latest goal/criteria/constraints/budget.
+    try { writeRequirementsMd(req.params.id); } catch (err) { req.log.warn({ err }, 'writeRequirementsMd failed'); }
     return { intake: next };
   });
 

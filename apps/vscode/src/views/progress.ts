@@ -22,8 +22,11 @@ interface Node {
   command?: vscode.Command;
 }
 
+// Bucket-header icons stay STATIC (the bucket itself isn't "loading"; it's
+// just a label for a status group). Per-task icons map separately and
+// `in_progress` tasks DO get the spinner — those are actively running.
 const STATUS_GROUPS = [
-  { id: 'in_progress', label: 'Active',         icon: 'sync~spin' },
+  { id: 'in_progress', label: 'Active',         icon: 'play' },
   { id: 'todo',        label: 'Inactive',       icon: 'circle-outline' },
   { id: 'done',        label: 'Completed',      icon: 'check' },
   { id: 'blocked',     label: 'Not completed',  icon: 'warning' },
@@ -32,9 +35,15 @@ const STATUS_GROUPS = [
 
 type Status = typeof STATUS_GROUPS[number]['id'];
 
-const STATUS_ICON: Record<Status, string> = Object.fromEntries(
-  STATUS_GROUPS.map((g) => [g.id, g.icon]),
-) as Record<Status, string>;
+// Per-task icon — `in_progress` spins because the agent is actively loading
+// against that task. Bucket headers above never spin.
+const TASK_STATUS_ICON: Record<Status, string> = {
+  in_progress: 'sync~spin',
+  todo: 'circle-outline',
+  done: 'check',
+  blocked: 'warning',
+  cancelled: 'circle-slash',
+};
 
 export class ProgressProvider implements vscode.TreeDataProvider<Node> {
   private _emit = new vscode.EventEmitter<Node | undefined | void>();
@@ -106,7 +115,7 @@ export class ProgressProvider implements vscode.TreeDataProvider<Node> {
           label: t.title,
           description: [t.assignedRole, t.phase].filter(Boolean).join(' · '),
           tooltip: t.description ?? t.title,
-          iconId: STATUS_ICON[t.status as Status] ?? 'circle-outline',
+          iconId: TASK_STATUS_ICON[t.status as Status] ?? 'circle-outline',
           command: t.briefId ? {
             command: 'atrune.openBriefInMissionControl',
             title: 'Open brief',
