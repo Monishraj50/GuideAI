@@ -171,6 +171,27 @@ export class AtruneApi {
     } catch { return []; }
   }
 
+  /** All sessions (tasks) in a workspace, agent-tagged. Used for the
+   *  "Show all sessions" picker. */
+  async listSessions(workspaceId: string): Promise<SessionEntry[]> {
+    try {
+      const r = await fetch(`${base()}/api/workspaces/${workspaceId}/sessions`);
+      if (!r.ok) return [];
+      const j = await r.json() as { sessions: SessionEntry[] };
+      return j.sessions ?? [];
+    } catch { return []; }
+  }
+
+  /** Full chat history for a single task — the chunks emitted by the
+   *  task's agent between startedAt and endedAt. */
+  async getTaskSession(workspaceId: string, taskId: string): Promise<TaskSession | null> {
+    try {
+      const r = await fetch(`${base()}/api/workspaces/${workspaceId}/tasks/${taskId}/session`);
+      if (!r.ok) return null;
+      return await r.json() as TaskSession;
+    } catch { return null; }
+  }
+
   /** Work items assigned to a specific agent role across all briefs in a workspace. */
   async listAgentWork(workspaceId: string, assignedRole: string): Promise<WorkItem[]> {
     try {
@@ -352,6 +373,58 @@ export class AtruneApi {
       return { ok: false, error: String(err?.message ?? err) };
     }
   }
+}
+
+export interface SessionEntry {
+  taskId: string;
+  briefId: string;
+  briefTitle: string;
+  agentId: string | null;
+  agentRole: string | null;
+  agentDisplayName: string | null;
+  phase: string;
+  status: string;
+  startedAt: number | null;
+  endedAt: number | null;
+  tokensIn: number;
+  tokensOut: number;
+}
+
+export interface SessionChunk {
+  id: string;
+  ts: number;
+  workspaceId: string;
+  agentId?: string;
+  kind: 'user' | 'ai' | 'system' | 'tool' | 'phase' | 'approval';
+  text?: string;
+  level?: string;
+  toolName?: string;
+  toolInput?: any;
+  toolOutput?: any;
+  taskId?: string;
+  phase?: string;
+  status?: string;
+  [k: string]: any;
+}
+
+export interface TaskSession {
+  task: {
+    id: string;
+    briefId: string;
+    agentId: string | null;
+    phase: string;
+    status: string;
+    artifactPath: string | null;
+    tokensIn: number;
+    tokensOut: number;
+    startedAt: number | null;
+    endedAt: number | null;
+  };
+  brief: { id: string; body: string; status: string } | null;
+  agent: { id: string; role: string; displayName: string; status: string } | null;
+  chunks: SessionChunk[];
+  artifact: { phase: string; path: string; body: string } | null;
+  window: { startTs: number; endTs: number };
 }
 
 export interface WorkItem {

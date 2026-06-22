@@ -40,7 +40,10 @@ const PHASE_PROMPT: Record<Phase, string> = {
 };
 
 function briefDir(workspaceId: string, briefId: string) {
-  return path.join(paths.workspaceDir(workspaceId), 'briefs', briefId);
+  // Phase artifacts (research.md, plan.md, …) are user-readable markdown,
+  // so they live in the visible markdown root next to the project, not
+  // inside the hidden .atrune/ system folder.
+  return path.join(paths.workspaceMdDir(workspaceId), 'briefs', briefId);
 }
 
 function ensureBriefDir(workspaceId: string, briefId: string) {

@@ -22,6 +22,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { paths } from '@guideai/shared/paths';
 import { getDb, schema } from '@guideai/shared/db';
+import { readEvents } from '@guideai/messaging/events';
 import { loadIntake } from './discovery.js';
 
 /** Workspace meta.json — duplicated locally to avoid an apps→packages dep. */
@@ -32,8 +33,10 @@ interface WorkspaceMeta {
   targetFolder?: string | null;
 }
 
+/** User-readable markdown root: <project>/atrune/ (visible) when a project
+ *  folder is configured, sandbox path otherwise. All .md files written here. */
 function wsRoot(workspaceId: string): string {
-  return path.join(paths.workspaces, workspaceId);
+  return paths.workspaceMdDir(workspaceId);
 }
 
 function readMeta(workspaceId: string): WorkspaceMeta {
@@ -185,6 +188,117 @@ export function writeBriefAnalyses(workspaceId: string, briefId: string): void {
     const filePath = path.join(analysesDir, `${role}.md`);
     fs.writeFileSync(filePath, lines.join('\n'), 'utf-8');
   }
+}
+
+// ─── briefs/<briefId>/chat.md (per-feature session transcript) ──────────
+
+/**
+ * Persist a clean chat-style transcript of a brief's session.
+ *
+ * Format: standard markdown. User prompts and agent responses become
+ * `## You` / `## <agent>` sections; tool calls become inline `> ⚒ …` pills
+ * placed between turns. Infrastructure noise (system/phase/approval chunks)
+ * is omitted from the transcript — they're visible in the raw event stream
+ * for anyone who wants them.
+ *
+ * Written at brief completion. Read by the VS Code extension when the user
+ * clicks a task and wants to see the saved session.
+ */
+export async function writeBriefChat(workspaceId: string, briefId: string): Promise<void> {
+  const db = getDb();
+  const brief = db.select().from(schema.briefs).all().find((b) => b.id === briefId);
+  if (!brief) return;
+
+  const tasks = db.select().from(schema.tasks).all().filter((t) => t.briefId === briefId);
+  const agentsTable = db.select().from(schema.agents).all();
+  const agentById = new Map(agentsTable.map((a) => [a.id, a]));
+
+  // Read all events in the brief's time window, then keep only user / ai
+  // / tool chunks. System / phase / approval are infrastructure — saved
+  // elsewhere via the raw events.jsonl, no need to duplicate.
+  const startTs = brief.createdAt;
+  const endTs = tasks.reduce((m, t) => Math.max(m, t.endedAt ?? t.startedAt ?? 0), startTs) || Date.now();
+  const { chunks } = await readEvents(workspaceId, { sinceTs: Math.max(0, startTs - 1000) });
+  const relevant = chunks.filter((c) =>
+    c.ts <= endTs + 2000 && (c.kind === 'user' || c.kind === 'ai' || c.kind === 'tool'),
+  );
+
+  const lines: string[] = [];
+  lines.push(`# ${brief.body.split('\n')[0]?.slice(0, 120) ?? briefId}`);
+  lines.push('');
+  lines.push(`**Brief**: \`${briefId}\``);
+  lines.push(`**Started**: ${new Date(brief.createdAt).toISOString()}`);
+  lines.push(`**Ended**: ${new Date(endTs).toISOString()}`);
+  lines.push('');
+  const phaseList = Array.from(new Set(tasks.map((t) => t.phase))).filter(Boolean).join(' · ');
+  if (phaseList) {
+    lines.push(`**Phases**: ${phaseList}`);
+    lines.push('');
+  }
+  lines.push('---');
+  lines.push('');
+
+  let pendingTools: typeof relevant = [];
+
+  function flushTools() {
+    if (pendingTools.length === 0) return;
+    for (const t of pendingTools) {
+      const inp = (t as any).toolInput ?? {};
+      const summary =
+        (t as any).toolName === 'Bash'
+          ? String(inp.command ?? inp.cmd ?? '').slice(0, 80)
+          : String(inp.file_path ?? inp.path ?? inp.url ?? inp.pattern ?? '').slice(0, 80);
+      lines.push(`> ⚒ **${(t as any).toolName ?? 'tool'}**${summary ? ` · \`${summary}\`` : ''}`);
+    }
+    lines.push('');
+    pendingTools = [];
+  }
+
+  for (const c of relevant) {
+    if (c.kind === 'tool') {
+      pendingTools.push(c);
+      continue;
+    }
+    flushTools();
+
+    if (c.kind === 'user') {
+      lines.push(`## You`);
+      lines.push('');
+      lines.push((c as any).text?.trim() || '(empty)');
+      lines.push('');
+      lines.push('---');
+      lines.push('');
+    } else if (c.kind === 'ai') {
+      const agent = (c as any).agentId ? agentById.get((c as any).agentId) : null;
+      const speaker = agent ? `${agent.displayName} · ${agent.role}` : ((c as any).agentId ?? 'agent');
+      lines.push(`## ${speaker}`);
+      lines.push('');
+      lines.push((c as any).text?.trim() || '_(no response captured)_');
+      lines.push('');
+      lines.push('---');
+      lines.push('');
+    }
+  }
+  flushTools();
+
+  // Trailing summary block.
+  const totalIn = tasks.reduce((s, t) => s + (t.tokensIn ?? 0), 0);
+  const totalOut = tasks.reduce((s, t) => s + (t.tokensOut ?? 0), 0);
+  lines.push(`## Session summary`);
+  lines.push('');
+  lines.push(`- Tasks: ${tasks.length}`);
+  lines.push(`- Tokens: ${totalIn.toLocaleString()}↓ / ${totalOut.toLocaleString()}↑`);
+  lines.push('');
+
+  const filePath = path.join(wsRoot(workspaceId), 'briefs', briefId, 'chat.md');
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, lines.join('\n'), 'utf-8');
+}
+
+/** Compute the on-disk path for a brief's chat.md — used by the VS Code
+ *  extension when it wants to open the saved session. */
+export function briefChatPath(workspaceId: string, briefId: string): string {
+  return path.join(wsRoot(workspaceId), 'briefs', briefId, 'chat.md');
 }
 
 // ─── agents/<role>/summary.md (rolling) ───────────────────────────────────

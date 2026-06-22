@@ -13,7 +13,7 @@ import { loadTarget, runValidation } from './validate.js';
 import { loadIntake } from './discovery.js';
 import { isDesignTagged } from './designShotgun.js';
 import { hireAgent } from './hiring.js';
-import { writeBriefAnalyses, appendAgentSummary } from './projectContext.js';
+import { writeBriefAnalyses, appendAgentSummary, writeBriefChat } from './projectContext.js';
 import { eq } from 'drizzle-orm';
 
 const COS_AGENT_ROLE = 'chief-of-staff';
@@ -30,12 +30,20 @@ function safeArray(s: string): string[] {
 /** Read the workspace's meta.json to find its configured project folder.
  *  Returns null if unset or unreadable — caller falls back. */
 function readWorkspaceTargetFolder(workspaceId: string): string | null {
-  try {
-    const p = path.join(paths.workspaces, workspaceId, 'meta.json');
-    if (!fs.existsSync(p)) return null;
-    const j = JSON.parse(fs.readFileSync(p, 'utf-8'));
-    return typeof j?.targetFolder === 'string' && j.targetFolder.trim() ? j.targetFolder.trim() : null;
-  } catch { return null; }
+  // Try the registered storage root first (where new workspaces live), then
+  // the sandbox fallback (for pre-registry workspaces).
+  const candidates = [paths.workspaceDir(workspaceId), path.join(paths.workspaces, workspaceId)];
+  for (const root of candidates) {
+    try {
+      const p = path.join(root, 'meta.json');
+      if (!fs.existsSync(p)) continue;
+      const j = JSON.parse(fs.readFileSync(p, 'utf-8'));
+      if (typeof j?.targetFolder === 'string' && j.targetFolder.trim()) {
+        return j.targetFolder.trim();
+      }
+    } catch {}
+  }
+  return null;
 }
 
 async function ensureWorkspace(workspaceId: string, name?: string) {
@@ -221,6 +229,9 @@ export async function submitBrief(args: {
       // artifacts; no LLM call.
       try {
         writeBriefAnalyses(workspaceId, briefId);
+        // Persist the chat transcript so clicking a task in VS Code opens
+        // the saved session as a markdown file.
+        await writeBriefChat(workspaceId, briefId);
 
         // Per-role rollups for the summary log.
         const ownAgents = db.select().from(schema.agents).all();

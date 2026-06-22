@@ -223,6 +223,11 @@
         "command": "atrune.connectSubscription",
         "title": "Atrune: Connect a subscription…",
         "icon": "$(plug)"
+      },
+      {
+        "command": "atrune.showAllSessions",
+        "title": "Atrune: Show all sessions",
+        "icon": "$(history)"
       }
     ],
     "menus": {
@@ -256,6 +261,11 @@
           "command": "atrune.refresh",
           "when": "view == atrune.progress || view == atrune.team",
           "group": "navigation"
+        },
+        {
+          "command": "atrune.showAllSessions",
+          "when": "view == atrune.team",
+          "group": "navigation@2"
         }
       ],
       "explorer/context": [

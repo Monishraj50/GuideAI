@@ -9,6 +9,9 @@
 //      LAST — they happen in the background after activate() returns.
 
 import * as vscode from 'vscode';
+import * as path from 'node:path';
+import * as os from 'node:os';
+import * as fs from 'node:fs';
 import { AtruneServer } from './server';
 import { AtruneApi } from './api';
 import { ActiveWorkProvider } from './views/activeWork';
@@ -25,6 +28,39 @@ import { openConnectSubscription } from './webviews/connectSubscription';
 let server: AtruneServer | undefined;
 let pollHandle: NodeJS.Timeout | undefined;
 let statusBar: AtruneStatusBar | undefined;
+
+/** On-disk path for a brief's saved chat transcript. */
+function briefChatPath(workspaceId: string, briefId: string): string {
+  const home = process.env.GUIDEAI_HOME || path.join(os.homedir(), '.guideai');
+  return path.join(home, 'workspaces', workspaceId, 'briefs', briefId, 'chat.md');
+}
+
+/**
+ * Open a brief's saved chat.md in the editor + show the markdown preview
+ * to the side. Falls back to the Mission Control Logs/Replay page if the
+ * file doesn't exist yet (mid-brief).
+ */
+async function openBriefChatFile(workspaceId: string, briefId: string): Promise<void> {
+  const filePath = briefChatPath(workspaceId, briefId);
+  if (!fs.existsSync(filePath)) {
+    const pick = await vscode.window.showInformationMessage(
+      'No saved chat for this task yet — the transcript is written when the brief completes. Open the live Logs/Replay page in your browser?',
+      'Open Logs',
+      'Cancel',
+    );
+    if (pick === 'Open Logs') {
+      await vscode.commands.executeCommand('atrune.openMissionControl', { route: `/logs/${briefId}` });
+    }
+    return;
+  }
+  const uri = vscode.Uri.file(filePath);
+  const doc = await vscode.workspace.openTextDocument(uri);
+  await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+  // Show the rendered markdown preview next to the editor view.
+  try {
+    await vscode.commands.executeCommand('markdown.showPreviewToSide', uri);
+  } catch {}
+}
 
 export async function activate(ctx: vscode.ExtensionContext) {
   server = new AtruneServer();
@@ -182,10 +218,11 @@ export async function activate(ctx: vscode.ExtensionContext) {
       workspaceId: string; agentId: string; role: string; displayName: string;
     }) => {
       if (!args?.workspaceId || !args?.role) return;
-      const items = await api.listAgentWork(args.workspaceId, args.role);
-      if (items.length === 0) {
+      const allSessions = await api.listSessions(args.workspaceId);
+      const myTasks = allSessions.filter((s) => s.agentRole === args.role || s.agentId === args.agentId);
+      if (myTasks.length === 0) {
         const pick = await vscode.window.showInformationMessage(
-          `${args.displayName} has no assigned work right now.`,
+          `${args.displayName} has no recorded tasks yet.`,
           'View in Mission Control',
         );
         if (pick === 'View in Mission Control') {
@@ -194,24 +231,54 @@ export async function activate(ctx: vscode.ExtensionContext) {
         return;
       }
       const STATUS_GLYPH: Record<string, string> = {
-        todo: '$(circle-outline)',
-        in_progress: '$(sync~spin)',
-        blocked: '$(warning)',
-        done: '$(check)',
-        cancelled: '$(circle-slash)',
+        running: '$(sync~spin)',
+        completed: '$(check)',
+        failed: '$(error)',
+        skipped: '$(circle-slash)',
       };
       const pick = await vscode.window.showQuickPick(
-        items.map((it) => ({
-          label: `${STATUS_GLYPH[it.status] ?? ''} ${it.title}`,
-          description: it.status,
-          detail: [it.phase, it.priority, it.description ?? '']
-            .filter(Boolean).join(' · '),
-          item: it,
+        myTasks.map((s) => ({
+          label: `${STATUS_GLYPH[s.status] ?? '$(circle-outline)'} ${s.briefTitle}`,
+          description: `${s.phase} · ${s.status}`,
+          detail: `${s.tokensIn.toLocaleString()}↓/${s.tokensOut.toLocaleString()}↑ · ${s.taskId}`,
+          briefId: s.briefId,
         })),
-        { placeHolder: `${args.displayName} · ${items.length} task${items.length > 1 ? 's' : ''} assigned` },
+        { placeHolder: `${args.displayName} · ${myTasks.length} task${myTasks.length > 1 ? 's' : ''} · pick one to view the saved session` },
       );
       if (pick) {
-        vscode.commands.executeCommand('atrune.openMissionControl', { route: '/board' });
+        // Saved session per feature: open the brief's chat.md file written
+        // at completion. Falls back to Logs/Replay if not yet written.
+        await openBriefChatFile(args.workspaceId, (pick as any).briefId);
+      }
+    }),
+    vscode.commands.registerCommand('atrune.showAllSessions', async () => {
+      const wsId = activeWorkspaceId;
+      if (!wsId) {
+        vscode.window.showWarningMessage('No active project.');
+        return;
+      }
+      const sessions = await api.listSessions(wsId);
+      if (sessions.length === 0) {
+        vscode.window.showInformationMessage('No sessions yet — dispatch a brief to start.');
+        return;
+      }
+      const STATUS_GLYPH: Record<string, string> = {
+        running: '$(sync~spin)',
+        completed: '$(check)',
+        failed: '$(error)',
+        skipped: '$(circle-slash)',
+      };
+      const pick = await vscode.window.showQuickPick(
+        sessions.map((s) => ({
+          label: `${STATUS_GLYPH[s.status] ?? '$(circle-outline)'} ${s.briefTitle}`,
+          description: s.agentDisplayName ? `@${s.agentDisplayName}` : (s.agentRole ? `@${s.agentRole}` : ''),
+          detail: `${s.phase} · ${s.status} · ${s.tokensIn.toLocaleString()}↓/${s.tokensOut.toLocaleString()}↑`,
+          briefId: s.briefId,
+        })),
+        { placeHolder: `All sessions · ${sessions.length} · pick one to view the saved session` },
+      );
+      if (pick) {
+        await openBriefChatFile(wsId, (pick as any).briefId);
       }
     }),
     vscode.commands.registerCommand('atrune.setRepoRoot', async () => {

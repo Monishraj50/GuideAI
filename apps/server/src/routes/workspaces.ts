@@ -7,7 +7,7 @@ import { readEvents } from '@guideai/messaging/events';
 import { listPending } from '@guideai/orchestrator/approvals';
 import { readLatestDigest } from '@guideai/orchestrator/digest';
 import { writeRequirementsMd } from '@guideai/orchestrator/projectContext';
-import { paths } from '@guideai/shared/paths';
+import { paths, setWorkspaceRoot, getWorkspaceRoot, dropWorkspaceRoot } from '@guideai/shared/paths';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -45,7 +45,17 @@ function scaffoldWorkspaceDir(id: string, meta: {
   kind?: 'project' | 'auto-task';
   targetFolder?: string;
 }): void {
-  const wsRoot = path.join(paths.workspaces, id);
+  // If a project folder is configured, all storage lives at
+  // `<targetFolder>/.atrune`. Otherwise fall back to the sandbox path.
+  const tf = meta.targetFolder?.trim() || null;
+  const wsRoot = tf
+    ? path.join(tf, '.atrune')
+    : path.join(paths.workspaces, id);
+
+  // Register the workspace's storage root so every other path helper
+  // (events.jsonl, agentDir, etc.) routes here for this workspace.
+  setWorkspaceRoot(id, wsRoot);
+
   for (const sub of ['briefs', 'docs', 'reports', 'slides', 'code']) {
     fs.mkdirSync(path.join(wsRoot, sub), { recursive: true });
   }
@@ -54,7 +64,7 @@ function scaffoldWorkspaceDir(id: string, meta: {
     createdAt: Date.now(),
     kind: meta.kind ?? 'project',
     originatingTask: meta.originatingTask ?? null,
-    targetFolder: meta.targetFolder?.trim() || null,
+    targetFolder: tf,
   };
   fs.writeFileSync(
     path.join(wsRoot, 'meta.json'),
@@ -65,14 +75,21 @@ function scaffoldWorkspaceDir(id: string, meta: {
 
 export function readWorkspaceMeta(id: string): WorkspaceMeta | null {
   try {
-    const p = path.join(paths.workspaces, id, 'meta.json');
-    if (!fs.existsSync(p)) return null;
-    return JSON.parse(fs.readFileSync(p, 'utf-8')) as WorkspaceMeta;
+    // Try the registered root first; fall back to the sandbox path so old
+    // workspaces (created before the registry existed) still work.
+    const candidates = [getWorkspaceRoot(id), path.join(paths.workspaces, id)];
+    for (const root of candidates) {
+      const p = path.join(root, 'meta.json');
+      if (fs.existsSync(p)) {
+        return JSON.parse(fs.readFileSync(p, 'utf-8')) as WorkspaceMeta;
+      }
+    }
+    return null;
   } catch { return null; }
 }
 
 function writeWorkspaceMeta(id: string, patch: Partial<WorkspaceMeta>): WorkspaceMeta {
-  const wsRoot = path.join(paths.workspaces, id);
+  const wsRoot = getWorkspaceRoot(id);
   fs.mkdirSync(wsRoot, { recursive: true });
   const existing = readWorkspaceMeta(id) ?? {
     id, createdAt: Date.now(), kind: 'project' as const,
@@ -81,6 +98,22 @@ function writeWorkspaceMeta(id: string, patch: Partial<WorkspaceMeta>): Workspac
   const next = { ...existing, ...patch };
   fs.writeFileSync(path.join(wsRoot, 'meta.json'), JSON.stringify(next, null, 2), 'utf-8');
   return next;
+}
+
+/**
+ * Move a workspace's storage from one root to another. Used when the user
+ * changes `targetFolder` via PATCH — we copy/move existing artifacts into
+ * the new location so the workspace doesn't appear empty.
+ */
+function migrateWorkspaceRoot(id: string, oldRoot: string, newRoot: string): void {
+  if (oldRoot === newRoot) return;
+  if (!fs.existsSync(oldRoot)) return;
+  fs.mkdirSync(path.dirname(newRoot), { recursive: true });
+  if (fs.existsSync(newRoot)) {
+    // New root already has content — refuse to clobber. Caller should warn.
+    throw new Error(`destination already exists: ${newRoot}`);
+  }
+  fs.renameSync(oldRoot, newRoot);
 }
 
 export function registerWorkspaceRoutes(app: FastifyInstance) {
@@ -180,17 +213,34 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
     return { id, name, targetFolder: targetFolder ?? null };
   });
 
-  // PATCH a workspace — for editing the targetFolder post-hoc.
+  // PATCH a workspace — for editing the targetFolder post-hoc. When the
+  // folder changes, we migrate the workspace's storage to <newFolder>/.atrune
+  // so future writes land there and existing artifacts stay reachable.
   app.patch<{ Params: { id: string }; Body: { targetFolder?: string } }>(
     '/api/workspaces/:id', async (req, reply) => {
       const db = getDb();
       const row = db.select().from(schema.workspaces).where(eq(schema.workspaces.id, req.params.id)).all()[0];
       if (!row) { reply.code(404); return { error: 'not found' }; }
-      const patch: Partial<WorkspaceMeta> = {};
-      if (req.body?.targetFolder !== undefined) {
-        patch.targetFolder = req.body.targetFolder.toString().trim() || null;
+
+      const currentMeta = readWorkspaceMeta(req.params.id);
+      const currentRoot = getWorkspaceRoot(req.params.id);
+      const requestedFolder = req.body?.targetFolder?.toString().trim() ?? '';
+      const newTargetFolder = requestedFolder || null;
+      const folderChanged = newTargetFolder !== (currentMeta?.targetFolder ?? null);
+
+      if (folderChanged) {
+        const newRoot = newTargetFolder
+          ? path.join(newTargetFolder, '.atrune')
+          : path.join(paths.workspaces, req.params.id);
+        try {
+          migrateWorkspaceRoot(req.params.id, currentRoot, newRoot);
+          setWorkspaceRoot(req.params.id, newRoot);
+        } catch (err: any) {
+          reply.code(409); return { error: `migration failed: ${err?.message ?? err}` };
+        }
       }
-      const updated = writeWorkspaceMeta(req.params.id, patch);
+
+      const updated = writeWorkspaceMeta(req.params.id, { targetFolder: newTargetFolder });
       // Folder change → refresh requirements.md so the new path is in context.
       try { writeRequirementsMd(req.params.id); } catch {}
       return { id: req.params.id, targetFolder: updated.targetFolder };
@@ -249,14 +299,117 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
     },
   );
 
-  // Archive a workspace (soft delete — data on disk + DB rows are preserved).
-  app.delete<{ Params: { id: string } }>('/api/workspaces/:id', async (req, reply) => {
+  // Archive (default) or hard-delete a workspace.
+  //   DELETE /api/workspaces/:id         → soft archive (preserves data)
+  //   DELETE /api/workspaces/:id?hard=1  → hard delete: drops DB rows, removes
+  //                                        the on-disk storage folder, clears
+  //                                        the registry entry. Irrecoverable.
+  app.delete<{ Params: { id: string }; Querystring: { hard?: string } }>(
+    '/api/workspaces/:id', async (req, reply) => {
+      const db = getDb();
+      const row = db.select().from(schema.workspaces).where(eq(schema.workspaces.id, req.params.id)).all()[0];
+      if (!row) { reply.code(404); return { error: 'not found' }; }
+
+      const hard = req.query.hard === '1' || req.query.hard === 'true';
+      if (!hard) {
+        db.update(schema.workspaces).set({ autonomyMode: 'archived' })
+          .where(eq(schema.workspaces.id, req.params.id)).run();
+        return { ok: true, archived: req.params.id };
+      }
+
+      // Hard delete — cascade through every table that references this
+      // workspace, then drop the storage folder + registry entry.
+      const id = req.params.id;
+      const briefIds = db.select().from(schema.briefs).all()
+        .filter((b) => b.workspaceId === id).map((b) => b.id);
+      const agentIds = db.select().from(schema.agents).all()
+        .filter((a) => a.workspaceId === id).map((a) => a.id);
+
+      // Tables keyed by briefId
+      if (briefIds.length > 0) {
+        const tasks = db.select().from(schema.tasks).all()
+          .filter((t) => briefIds.includes(t.briefId));
+        for (const t of tasks) db.delete(schema.tasks).where(eq(schema.tasks.id, t.id)).run();
+        const workItems = db.select().from(schema.workItems).all()
+          .filter((w) => briefIds.includes(w.briefId ?? '') || w.workspaceId === id);
+        for (const w of workItems) db.delete(schema.workItems).where(eq(schema.workItems.id, w.id)).run();
+      }
+      // Brief-keyed siblings
+      for (const briefId of briefIds) {
+        db.delete(schema.briefs).where(eq(schema.briefs.id, briefId)).run();
+      }
+      // Workspace-keyed tables (best-effort — names may vary)
+      for (const t of [schema.agents, schema.agentMemory, schema.discoveries, schema.plans] as const) {
+        try {
+          const rows = db.select().from(t).all().filter((r: any) =>
+            r.workspaceId === id || r.sourceWorkspaceId === id,
+          );
+          for (const r of rows as any[]) {
+            // Each table has its own primary key; use whichever matches.
+            const pkCol = (t as any).id;
+            if (pkCol) db.delete(t).where(eq(pkCol, (r as any).id)).run();
+          }
+        } catch {}
+      }
+
+      // Finally the workspace row.
+      db.delete(schema.workspaces).where(eq(schema.workspaces.id, id)).run();
+
+      // Disk — best-effort. Use the resolved root, then drop the registry.
+      const storageRoot = getWorkspaceRoot(id);
+      try { fs.rmSync(storageRoot, { recursive: true, force: true }); } catch {}
+      // Also clean the sandbox path if it exists (pre-registry workspaces).
+      try { fs.rmSync(path.join(paths.workspaces, id), { recursive: true, force: true }); } catch {}
+      dropWorkspaceRoot(id);
+
+      return { ok: true, hardDeleted: id, briefs: briefIds.length, agents: agentIds.length };
+    },
+  );
+
+  // Nuclear option — wipe every Atrune workspace (DB rows + disk + registry).
+  // Integrations, global Claude/OpenAI/GitHub credentials, and skills are
+  // preserved (they're cross-project state, not workspace data).
+  app.post('/api/admin/reset-all', async (_req, reply) => {
     const db = getDb();
-    const row = db.select().from(schema.workspaces).where(eq(schema.workspaces.id, req.params.id)).all()[0];
-    if (!row) { reply.code(404); return { error: 'not found' }; }
-    db.update(schema.workspaces).set({ autonomyMode: 'archived' })
-      .where(eq(schema.workspaces.id, req.params.id)).run();
-    return { ok: true, archived: req.params.id };
+    const summary = { workspaces: 0, briefs: 0, tasks: 0, agents: 0 };
+    try {
+      summary.tasks = db.select().from(schema.tasks).all().length;
+      summary.briefs = db.select().from(schema.briefs).all().length;
+      summary.agents = db.select().from(schema.agents).all().length;
+      summary.workspaces = db.select().from(schema.workspaces).all().length;
+
+      // Drop every row in every workspace-derived table.
+      for (const t of [
+        schema.tasks, schema.briefs, schema.workItems, schema.agentMemory,
+        schema.discoveries, schema.plans, schema.agents, schema.workspaces,
+      ] as const) {
+        try {
+          const rows = db.select().from(t).all();
+          for (const r of rows as any[]) {
+            const pkCol = (t as any).id;
+            if (pkCol) db.delete(t).where(eq(pkCol, r.id)).run();
+          }
+        } catch {}
+      }
+    } catch (err: any) {
+      reply.code(500); return { error: String(err?.message ?? err) };
+    }
+
+    // Disk: wipe ALL workspaces (sandbox-style) + every registered project's
+    // .atrune folder. Registry resets to empty.
+    const registryFile = path.join(paths.home, 'registry.json');
+    try {
+      if (fs.existsSync(registryFile)) {
+        const reg = JSON.parse(fs.readFileSync(registryFile, 'utf-8')) as Record<string, string>;
+        for (const root of Object.values(reg)) {
+          try { fs.rmSync(root, { recursive: true, force: true }); } catch {}
+        }
+      }
+    } catch {}
+    try { fs.rmSync(paths.workspaces, { recursive: true, force: true }); } catch {}
+    try { fs.writeFileSync(registryFile, '{}', 'utf-8'); } catch {}
+
+    return { ok: true, wiped: summary };
   });
 
   // Per-project "plan" surface: last digest + pending approvals + active briefs + counters.
