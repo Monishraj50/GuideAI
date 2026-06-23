@@ -13,7 +13,7 @@ import { eq } from 'drizzle-orm';
 import { getDb, schema } from '@guideai/shared/db';
 import { appendEvent } from '@guideai/messaging/events';
 import type { SystemChunk } from '@guideai/shared/chunks';
-import { readProjectContext } from './projectContext.js';
+import { readProjectContext, readRecentSessions } from './projectContext.js';
 
 export type MemoryShare = 'all' | 'read-only' | 'deny';
 
@@ -133,14 +133,18 @@ export function loadAgentMemoryForRole(args: {
 /**
  * Render the memory block that gets prepended to a role's system prompt.
  *
- * Two layers, concatenated when present:
+ * Three layers, concatenated when present:
  *   1. **Project context** — requirements.md + this role's rolling summary +
  *      past analyses of this role's work in prior briefs (read from disk).
  *      Always-relevant scaffolding for fix/feature work.
- *   2. **Cross-workspace memory** — distilled notes from agentMemory table
+ *   2. **Recent task transcripts** (Phase F) — the last 3 chat-history files
+ *      for this role under `<mdRoot>/agents/<role>/sessions/`. Gives the
+ *      agent the actual conversation context it had on its last few tasks
+ *      so bug-fix / verify-and-repair flows can find prior decisions.
+ *   3. **Cross-workspace memory** — distilled notes from agentMemory table
  *      (manual + auto-promoted via skills).
  *
- * Returns an empty string when both layers are empty.
+ * Returns an empty string when all layers are empty.
  */
 export function renderMemoryBlock(args: {
   role: string;
@@ -157,7 +161,17 @@ export function renderMemoryBlock(args: {
     if (projectCtx) blocks.push(projectCtx);
   } catch {}
 
-  // Layer 2 — distilled cross-workspace notes for this role.
+  // Layer 2 (Phase F) — recent per-task chat-history transcripts for this role.
+  // Bounded to 3 files × 150 tail-lines × 3000 chars total to keep prompt size sane.
+  try {
+    const sessions = readRecentSessions({
+      workspaceId: args.currentWorkspaceId,
+      role: args.role,
+    });
+    if (sessions) blocks.push(sessions);
+  } catch {}
+
+  // Layer 3 — distilled cross-workspace notes for this role.
   const entries = loadAgentMemoryForRole(args);
   if (entries.length > 0) {
     const lines = ['## Past notes (from previous projects)', ''];

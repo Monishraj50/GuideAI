@@ -393,3 +393,54 @@ export function readProjectContext(args: {
   const joined = parts.join('\n\n---\n\n');
   return joined.length > maxChars ? joined.slice(0, maxChars - 3) + '…' : joined;
 }
+
+/**
+ * Phase F — read the N most-recent per-task chat-history transcripts for a role
+ * so the agent has prior conversation context on every new task. Files are
+ * append-only Markdown written by `transcriptWriter.writeTaskTranscript` at
+ * `<mdRoot>/agents/<role>/sessions/<taskId>.md`.
+ *
+ * Each transcript is truncated to its last `tailLines` lines (default 150) —
+ * the head is the system prompt + first turn, which is rarely the most
+ * useful context. The tail tends to have the resolution or the last
+ * known-good state.
+ *
+ * Returns an empty string when there are no transcripts yet.
+ */
+export function readRecentSessions(args: {
+  workspaceId: string;
+  role: string;
+  /** How many transcripts to include. Default 3. */
+  limit?: number;
+  /** Last N lines per transcript. Default 150. */
+  tailLines?: number;
+  /** Hard cap on the rendered block. Default 3000 chars. */
+  maxChars?: number;
+}): string {
+  const limit = args.limit ?? 3;
+  const tailLines = args.tailLines ?? 150;
+  const maxChars = args.maxChars ?? 3000;
+  const dir = path.join(wsRoot(args.workspaceId), 'agents', args.role, 'sessions');
+  try {
+    if (!fs.existsSync(dir)) return '';
+    const files = fs.readdirSync(dir)
+      .filter((f) => f.endsWith('.md'))
+      .map((f) => ({ f, mtime: fs.statSync(path.join(dir, f)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, limit);
+    if (files.length === 0) return '';
+
+    const parts: string[] = ['## Recent task transcripts (' + args.role + ')'];
+    for (const { f } of files) {
+      const taskId = f.replace(/\.md$/, '');
+      const all = fs.readFileSync(path.join(dir, f), 'utf-8').split('\n');
+      const tail = all.slice(-tailLines).join('\n').trim();
+      if (!tail) continue;
+      parts.push(`### Task \`${taskId}\`\n\n${tail}`);
+    }
+    const joined = parts.join('\n\n');
+    return joined.length > maxChars ? joined.slice(0, maxChars - 3) + '…' : joined;
+  } catch {
+    return '';
+  }
+}
