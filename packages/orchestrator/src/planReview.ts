@@ -429,13 +429,17 @@ export async function approvePlan(args: {
   let status: PlanStatus = 'approved';
   if (shouldDispatch) {
     const body = composeBriefBody(plan.synthesis, intake?.goal ?? '');
+    // Phase C — plan-approval flow defers actual execution. The brief is
+    // created + WBS seeded + transcript channels primed, but runPipeline
+    // blocks at the synthetic _start_ gate. The Start Implementing panel in
+    // the project UI promotes the brief to auto/manual when the user clicks.
     const result = await submitBrief({
-      workspaceId: plan.workspaceId, body, securityTagged,
+      workspaceId: plan.workspaceId, body, securityTagged, mode: 'pending',
     });
     briefId = result.briefId;
     status = 'dispatched';
     appendEvent(plan.workspaceId, sys(plan.workspaceId,
-      `plan ${plan.id} dispatched → brief ${briefId}`));
+      `plan ${plan.id} dispatched → brief ${briefId} (awaiting Start Implementing)`));
     // Phase 4 — seed the WBS so the dashboard has something to show.
     try {
       autoSeedFromPlan({

@@ -191,8 +191,12 @@ export function PlanReview({ workspaceId }: { workspaceId: string }) {
         return;
       }
       toast({
-        title: j.plan.status === 'dispatched' ? 'Plan dispatched' : 'Plan approved — hires queued',
-        description: j.plan.briefId ? `brief ${j.plan.briefId}` : `${j.plan.hireSummary?.queued.length ?? 0} hires need approval`,
+        title: j.plan.status === 'dispatched'
+          ? 'Plan dispatched · awaiting Start Implementing'
+          : 'Plan approved — hires queued',
+        description: j.plan.briefId
+          ? `brief ${j.plan.briefId} — pick Auto or Manual in the panel below to begin`
+          : `${j.plan.hireSummary?.queued.length ?? 0} hires need approval`,
         variant: 'success',
       });
     } catch (e: any) {

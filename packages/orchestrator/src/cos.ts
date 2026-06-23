@@ -106,8 +106,11 @@ export async function submitBrief(args: {
   /** Soft budget hint surfaced as a system event for the UI. */
   budget?: { mode: 'tokens' | 'currency'; amount: number };
   /** Execution mode. 'auto' (default) runs end-to-end. 'manual' awaits a
-   *  per-phase release call (the Kanban drives this). */
-  mode?: 'auto' | 'manual';
+   *  per-phase release call (the Kanban drives this). 'pending' (Phase C —
+   *  defer-dispatch) blocks at the synthetic start gate until the user clicks
+   *  Start Implementing in the project UI; the /start endpoint then promotes
+   *  the brief to auto or manual and releases the gate. */
+  mode?: 'pending' | 'auto' | 'manual';
 }): Promise<SubmitBriefResult> {
   const { workspaceId, body } = args;
   // A brief is security-tagged if the caller asks for it OR the body contains

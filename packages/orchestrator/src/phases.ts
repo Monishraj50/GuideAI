@@ -125,6 +125,19 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
   const { workspaceId, agentId, briefId, brief, cwd, securityTagged, designTagged, route } = args;
   ensureBriefDir(workspaceId, briefId);
 
+  // Phase C — defer-dispatch flow. If the brief was registered with
+  // mode='pending', this awaits until the user clicks "Start Implementing"
+  // (which calls taskGate.start(briefId, 'auto' | 'manual')). 'auto' and
+  // 'manual' modes short-circuit awaitRelease immediately.
+  if (taskGate.modeOf(briefId) === 'pending') {
+    appendEvent(workspaceId, {
+      id: randomUUID(), ts: Date.now(), workspaceId, agentId,
+      kind: 'system', level: 'info',
+      text: `pending dispatch: brief ${briefId} awaiting Start Implementing`,
+    });
+  }
+  await taskGate.awaitRelease(briefId, taskGate.START_GATE);
+
   const skills = loadSkills();
   if (skills.length > 0) {
     appendEvent(workspaceId, {

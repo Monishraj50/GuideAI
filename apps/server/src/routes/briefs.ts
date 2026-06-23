@@ -15,9 +15,13 @@ export function registerBriefRoutes(app: FastifyInstance) {
       /** Soft budget hint for the gate. `mode: tokens` uses raw token count;
        *  `mode: currency` uses USD. */
       budget?: { mode: 'tokens' | 'currency'; amount: number };
-      /** Execution mode. 'auto' runs end-to-end (default). 'manual' awaits
-       *  per-phase release from the Kanban. */
-      mode?: 'auto' | 'manual';
+      /** Execution mode.
+       *    'auto'    — runs end-to-end (default for /ops + ext direct-task)
+       *    'manual'  — pauses each phase; Kanban drag-release advances it
+       *    'pending' — Phase C; brief blocks at the start gate until a
+       *                separate POST /api/briefs/:briefId/start promotes it
+       */
+      mode?: 'auto' | 'manual' | 'pending';
     };
   }>(
     '/api/workspaces/:id/briefs',
@@ -28,6 +32,9 @@ export function registerBriefRoutes(app: FastifyInstance) {
         return { error: 'body is required' };
       }
       try {
+        const rawMode = req.body?.mode;
+        const mode: 'auto' | 'manual' | 'pending' =
+          rawMode === 'manual' ? 'manual' : rawMode === 'pending' ? 'pending' : 'auto';
         const result = await submitBrief({
           workspaceId: req.params.id,
           body,
@@ -39,7 +46,7 @@ export function registerBriefRoutes(app: FastifyInstance) {
           budget: req.body?.budget && typeof req.body.budget.amount === 'number'
             ? { mode: req.body.budget.mode, amount: req.body.budget.amount }
             : undefined,
-          mode: req.body?.mode === 'manual' ? 'manual' : 'auto',
+          mode,
         });
         return result;
       } catch (err: any) {
@@ -47,6 +54,25 @@ export function registerBriefRoutes(app: FastifyInstance) {
         reply.code(500);
         return { error: String(err?.message ?? err) };
       }
+    },
+  );
+
+  // Phase C — promote a 'pending' brief to 'auto' or 'manual' and release the
+  // synthetic start gate. Idempotent: calling on a non-pending brief is a
+  // no-op (returns the current mode + 0 released gates).
+  app.post<{
+    Params: { briefId: string };
+    Body: { mode?: 'auto' | 'manual' };
+  }>(
+    '/api/briefs/:briefId/start',
+    async (req, reply) => {
+      const requested = req.body?.mode;
+      if (requested !== 'auto' && requested !== 'manual') {
+        reply.code(400);
+        return { error: "mode must be 'auto' or 'manual'" };
+      }
+      const r = taskGate.start(req.params.briefId, requested);
+      return { ok: true, briefId: req.params.briefId, ...r };
     },
   );
 
