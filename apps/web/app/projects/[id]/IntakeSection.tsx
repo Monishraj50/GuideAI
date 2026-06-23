@@ -102,7 +102,11 @@ const VERDICT_TINT: Record<Synthesis['costVerdict'], string> = {
   'unknown':       'border-line/70 text-dim',
 };
 
-export function IntakeSection({ workspaceId }: { workspaceId: string }) {
+/** Phase E — `frozen` is computed by ProjectPlan and means "the brief is in
+ *  flight or done; revising should be deferred to a new project". Locks the
+ *  budget / planning / hire / discoveryContext / run-round-table button.
+ *  Auto-flips back to false when the latest brief status is 'failed'. */
+export function IntakeSection({ workspaceId, frozen = false }: { workspaceId: string; frozen?: boolean }) {
   const [intake, setIntake] = useState<IntakeRecord | null>(null);
   const [discovery, setDiscovery] = useState<DiscoveryRec | null>(null);
   const [discoveries, setDiscoveries] = useState<DiscoveryRec[]>([]);  // Phase B history rail
@@ -287,7 +291,7 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
   }
 
   return (
-    <section className="space-y-5">
+    <section className={cn('space-y-5', frozen && 'opacity-95')}>
       <SectionHeader
         title="Project intake & discovery"
         icon={<Compass size={14} className="text-accent" />}
@@ -300,6 +304,18 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
           </button>
         }
       />
+
+      {/* Phase E — frozen banner shown when a brief is in flight or done.
+            Auto-unfreezes when the latest brief fails (server-side cascade). */}
+      {frozen && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-info/40 bg-info/[0.05] text-[12px]">
+          <Sparkles size={13} className="text-info" />
+          <span className="text-ink">Brief in flight</span>
+          <span className="text-dim2">
+            · intake + plan are read-only while implementation is running. Will auto-unfreeze if the brief fails.
+          </span>
+        </div>
+      )}
 
       {/* Lock banner — only shown post-lock for clarity */}
       {intake.locked && (
@@ -315,8 +331,10 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
         </div>
       )}
 
-      {/* Intake form */}
-      <div className="border border-line/70 rounded-lg bg-surface2/50 overflow-hidden">
+      {/* Intake form — wrapped in <fieldset> so `frozen` disables every form
+          control inside in one move (Phase E). The 4 core fields stay frozen
+          via intake.locked even when not frozen at the section level. */}
+      <fieldset disabled={frozen} className="border border-line/70 rounded-lg bg-surface2/50 overflow-hidden disabled:cursor-not-allowed">
         <div className="p-4 space-y-4">
           {/* Goal */}
           <Field
@@ -329,10 +347,10 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
               onChange={(e) => setIntake({ ...intake, goal: e.target.value })}
               placeholder="Build a customer-facing onboarding flow that…"
               rows={3}
-              disabled={intake.locked}
+              disabled={intake.locked || frozen}
               className={cn(
                 'w-full bg-bg/60 border border-line/70 rounded-md px-3 py-2 text-sm text-ink outline-none focus:border-accent/60 resize-none',
-                intake.locked && 'opacity-70 cursor-not-allowed',
+                (intake.locked || frozen) && 'opacity-70 cursor-not-allowed',
               )}
             />
           </Field>
@@ -348,10 +366,10 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
               value={targetFolder}
               onChange={(e) => setTargetFolder(e.target.value)}
               placeholder="/home/you/projects/this-project"
-              disabled={intake.locked}
+              disabled={intake.locked || frozen}
               className={cn(
                 'w-full bg-bg/60 border border-line/70 rounded-md px-3 py-2 text-sm text-ink font-mono outline-none focus:border-accent/60',
-                intake.locked && 'opacity-70 cursor-not-allowed',
+                (intake.locked || frozen) && 'opacity-70 cursor-not-allowed',
               )}
             />
           </Field>
@@ -364,9 +382,9 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
           >
             <Chips
               items={intake.successCriteria}
-              onRemove={intake.locked ? undefined : (i) => setIntake({ ...intake, successCriteria: intake.successCriteria.filter((_, j) => j !== i) })}
+              onRemove={(intake.locked || frozen) ? undefined : (i) => setIntake({ ...intake, successCriteria: intake.successCriteria.filter((_, j) => j !== i) })}
             />
-            {!intake.locked && (
+            {!(intake.locked || frozen) && (
               <ChipInput
                 value={criteriaDraft}
                 onChange={setCriteriaDraft}
@@ -384,9 +402,9 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
           >
             <Chips
               items={intake.constraints}
-              onRemove={intake.locked ? undefined : (i) => setIntake({ ...intake, constraints: intake.constraints.filter((_, j) => j !== i) })}
+              onRemove={(intake.locked || frozen) ? undefined : (i) => setIntake({ ...intake, constraints: intake.constraints.filter((_, j) => j !== i) })}
             />
-            {!intake.locked && (
+            {!(intake.locked || frozen) && (
               <ChipInput
                 value={constraintDraft}
                 onChange={setConstraintDraft}
@@ -572,11 +590,13 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
             </span>
           )}
         </div>
-      </div>
+      </fieldset>
 
-      {/* Discovery context — unlocks after the requirements are locked */}
+      {/* Discovery context — unlocks after the requirements are locked. Also
+          wrapped in <fieldset disabled> so Phase E freezes the textarea and
+          the "run round-table" button together. */}
       {intake.locked && (
-        <div data-section="discovery-context" className="border border-line/70 rounded-lg bg-surface2/50 overflow-hidden">
+        <fieldset disabled={frozen} data-section="discovery-context" className="border border-line/70 rounded-lg bg-surface2/50 overflow-hidden disabled:cursor-not-allowed">
           <div className="p-4 space-y-3">
             <Field
               icon={<Lightbulb size={12} />}
@@ -606,7 +626,7 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
               <Play size={11} /> {running ? 'panel discussing…' : 'run discovery round-table'}
             </button>
           </div>
-        </div>
+        </fieldset>
       )}
 
       {/* Revision history rail — only visible when there's more than one revision */}
@@ -657,8 +677,9 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
       {/* Discovery action row + viewer */}
       {discovery && discovery.status === 'done' && (
         <div className="space-y-3">
-          {/* 3-button decision row: Looks good / Needs changes / Edit context */}
-          {revisionMode === 'idle' && (
+          {/* 3-button decision row: Looks good / Needs changes / Edit context.
+              Hidden once a brief is in flight — there's no plan iteration to do. */}
+          {revisionMode === 'idle' && !frozen && (
             <div className="flex flex-wrap items-center gap-2 px-3 py-2 rounded-lg border border-line/70 bg-bg/30">
               <span className="text-[12px] text-dim">Happy with this synthesis?</span>
               <button

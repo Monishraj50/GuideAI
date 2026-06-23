@@ -102,7 +102,11 @@ function fmtUsd(n: number | null | undefined) {
   return `$${n.toFixed(2)}`;
 }
 
-export function PlanReview({ workspaceId }: { workspaceId: string }) {
+/** Phase E — `frozen` is true while a brief is in flight or done. Hides the
+ *  edit / approve / force-dispatch buttons so the plan can't be retroactively
+ *  modified while implementation is happening. Auto-flips off if the latest
+ *  brief fails (server-side cascade also clears intake.locked). */
+export function PlanReview({ workspaceId, frozen = false }: { workspaceId: string; frozen?: boolean }) {
   const [plan, setPlan] = useState<PlanRecord | null>(null);
   const [preview, setPreview] = useState<HireSummary | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -299,7 +303,7 @@ export function PlanReview({ workspaceId }: { workspaceId: string }) {
               <Pill icon={<Users size={11} />} tint="border-line/70 text-dim" text={`${syn.recommendedRoles.length} roles`} />
             </div>
           </div>
-          {isDraft && (
+          {isDraft && !frozen && (
             <div className="flex flex-col gap-2 shrink-0">
               {!editing ? (
                 <button
@@ -377,14 +381,16 @@ export function PlanReview({ workspaceId }: { workspaceId: string }) {
               {plan.critiques?.blocked && (
                 <span className="text-[10px] uppercase tracking-wider font-mono px-1.5 py-0.5 rounded-full border border-warn/40 text-warn bg-warn/10">blocked</span>
               )}
-              <button
-                onClick={recritique}
-                disabled={busy === 'critique'}
-                className="ml-auto text-dim2 hover:text-ink text-[11px] flex items-center gap-1 disabled:opacity-40"
-                title="Re-run CEO + Eng critics against the current synthesis"
-              >
-                <Sparkles size={10} /> {busy === 'critique' ? 'critiquing…' : (plan.critiques ? 're-run' : 'run critics')}
-              </button>
+              {!frozen && (
+                <button
+                  onClick={recritique}
+                  disabled={busy === 'critique'}
+                  className="ml-auto text-dim2 hover:text-ink text-[11px] flex items-center gap-1 disabled:opacity-40"
+                  title="Re-run CEO + Eng critics against the current synthesis"
+                >
+                  <Sparkles size={10} /> {busy === 'critique' ? 'critiquing…' : (plan.critiques ? 're-run' : 'run critics')}
+                </button>
+              )}
             </div>
             {plan.critiques ? (
               <div className="grid md:grid-cols-2 gap-2">
@@ -467,7 +473,7 @@ export function PlanReview({ workspaceId }: { workspaceId: string }) {
                 <X size={11} /> reject
               </button>
             )}
-            {isDraft && !plan.critiques?.blocked && syn.costVerdict !== 'over-budget' && (
+            {isDraft && !plan.critiques?.blocked && syn.costVerdict !== 'over-budget' && !frozen && (
               <button
                 onClick={() => approve(false)}
                 disabled={busy === 'approve' || editing}
@@ -477,7 +483,7 @@ export function PlanReview({ workspaceId }: { workspaceId: string }) {
                 <ArrowRight size={11} /> {busy === 'approve' ? 'approving…' : (plan.critiques ? 'approve & dispatch' : 'run critics & approve')}
               </button>
             )}
-            {isDraft && (plan.critiques?.blocked || syn.costVerdict === 'over-budget') && (
+            {isDraft && (plan.critiques?.blocked || syn.costVerdict === 'over-budget') && !frozen && (
               <button
                 onClick={() => approve(true)}
                 disabled={busy === 'approve' || editing}
@@ -492,7 +498,7 @@ export function PlanReview({ workspaceId }: { workspaceId: string }) {
                 )}
               </button>
             )}
-            {isApproved && (
+            {isApproved && !frozen && (
               <button
                 onClick={() => approve(true)}
                 disabled={busy === 'approve'}
@@ -501,6 +507,11 @@ export function PlanReview({ workspaceId }: { workspaceId: string }) {
               >
                 <Send size={11} /> {busy === 'approve' ? 'dispatching…' : 'force dispatch anyway'}
               </button>
+            )}
+            {frozen && (
+              <span className="text-dim2 text-[11px] italic">
+                Brief in flight · plan locked. Auto-unfreezes if the brief fails.
+              </span>
             )}
           </div>
         )}

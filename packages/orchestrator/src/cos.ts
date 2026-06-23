@@ -359,6 +359,22 @@ export async function submitBrief(args: {
       appendEvent(workspaceId, fail);
       db.update(schema.briefs).set({ status: 'failed' })
         .where(eq(schema.briefs.id, briefId)).run();
+      // Phase E — unfreeze the intake so the user can revise + retry. The
+      // 4 core fields go back to editable; UI also reads brief.status to flip
+      // the dispatched/in-flight freeze state for budget/planning/hire/etc.
+      try {
+        db.update(schema.projectIntakes)
+          .set({ locked: 0, lockedAt: null, updatedAt: Date.now() } as any)
+          .where(eq(schema.projectIntakes.workspaceId, workspaceId)).run();
+        appendEvent(workspaceId, {
+          ...base(workspaceId, agentId),
+          kind: 'system', level: 'info',
+          text: `intake unfrozen — brief ${briefId} failed; revise + retry`,
+        } as SystemChunk);
+      } catch (unfreezeErr) {
+        // Non-fatal; the UI's `frozen` computed flag still flips off when
+        // it sees brief.status === 'failed'.
+      }
     }
   })();
 

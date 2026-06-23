@@ -82,6 +82,15 @@ export function ProjectPlan({ workspaceId }: { workspaceId: string }) {
     return <div className="p-5 space-y-2"><div className="h-4 w-40 shimmer bg-line/30 rounded" /><div className="h-3 w-80 shimmer bg-line/20 rounded" /></div>;
   }
 
+  // Phase E — freeze policy.
+  //   • No briefs yet → not frozen (still in intake / round-table / plan-review).
+  //   • Latest brief is failed → not frozen (auto-unfreeze for revise + retry).
+  //   • Otherwise (active / done / pending) → frozen.
+  // Sections respect this for budget/planning/hire/discoveryContext/PlanReview.
+  // The 4 core intake fields are additionally gated by intake.locked (Phase A).
+  const latestBrief = plan.briefs.recent[0] ?? null;
+  const frozen = latestBrief !== null && latestBrief.status !== 'failed';
+
   return (
     <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-6">
       {/* Hero */}
@@ -100,13 +109,13 @@ export function ProjectPlan({ workspaceId }: { workspaceId: string }) {
       </div>
 
       {/* Intake + discovery round-table */}
-      <IntakeSection workspaceId={workspaceId} />
+      <IntakeSection workspaceId={workspaceId} frozen={frozen} />
 
       {/* Cross-vendor review toggle (Phase 9) */}
       <SecondOpinionToggle workspaceId={workspaceId} />
 
       {/* Plan review + hire dispatch */}
-      <PlanReview workspaceId={workspaceId} />
+      <PlanReview workspaceId={workspaceId} frozen={frozen} />
 
       {/* Phase D — "Ready to implement" panel.
             Renders only when there's a dispatched brief sitting in 'pending'.
