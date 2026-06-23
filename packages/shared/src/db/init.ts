@@ -301,6 +301,9 @@ const MIGRATIONS = [
   "ALTER TABLE workspaces ADD COLUMN second_opinion_enabled INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE workspaces ADD COLUMN memory_share TEXT NOT NULL DEFAULT 'read-only'",
   "ALTER TABLE project_intakes ADD COLUMN budget_hint_unit TEXT NOT NULL DEFAULT 'USD'",
+  "ALTER TABLE project_intakes ADD COLUMN locked INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE project_intakes ADD COLUMN locked_at INTEGER",
+  "ALTER TABLE project_intakes ADD COLUMN discovery_context TEXT NOT NULL DEFAULT ''",
 ];
 
 function main() {

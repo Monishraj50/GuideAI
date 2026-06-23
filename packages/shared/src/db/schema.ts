@@ -147,6 +147,12 @@ export const projectIntakes = sqliteTable('project_intakes', {
   budgetHintUnit: text('budget_hint_unit').notNull().default('USD'),
   planningMode: text('planning_mode').notNull().default('assisted'),  // auto|assisted|manual
   hireMode: text('hire_mode').notNull().default('manual'),            // auto|manual|hybrid
+  // Phase A — two-stage intake. Once `locked` is true the 4 core fields
+  // (goal/successCriteria/constraints/targetFolder) are read-only and the
+  // `discoveryContext` free-text section unlocks for the user.
+  locked: integer('locked').notNull().default(0),
+  lockedAt: integer('locked_at'),
+  discoveryContext: text('discovery_context').notNull().default(''),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
 });

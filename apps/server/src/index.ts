@@ -3,7 +3,7 @@ import path from 'node:path';
 import Fastify from 'fastify';
 import { paths } from '@guideai/shared/paths';
 import { CAPS } from '@guideai/policies/caps';
-import { initDbIfMissing } from '@guideai/shared/db';
+import { initDb } from '@guideai/shared/db';
 import { registerEventRoutes } from './sse.js';
 import { registerBriefRoutes } from './routes/briefs.js';
 import { registerApprovalRoutes } from './routes/approvals.js';
@@ -73,12 +73,13 @@ registerSecondOpinionRoutes(app);
 registerMemoryRoutes(app);
 registerDirectTaskRoutes(app);
 
-// Self-heal: if the DB file doesn't exist (e.g. user wiped the repo or this
-// is a fresh project workspace), run the schema migration before listening so
-// the first request doesn't fail with "no such table".
+// Self-heal: always run the schema migrations on startup. initDb is
+// idempotent — CREATE TABLE IF NOT EXISTS + ALTER ADD COLUMN with duplicate
+// guards — so this safely picks up new columns added by newer code without
+// requiring the user to wipe the DB.
 try {
   fs.mkdirSync(path.dirname(paths.db), { recursive: true });
-  initDbIfMissing();
+  initDb();
 } catch (err) {
   app.log.error({ err }, 'DB init failed — server may return 500 on first query');
 }

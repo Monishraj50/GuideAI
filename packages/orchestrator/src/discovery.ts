@@ -31,6 +31,13 @@ export interface IntakeRecord {
   budgetHintUnit: BudgetUnit;
   planningMode: PlanningMode;
   hireMode: HireMode;
+  /** Phase A — once true, goal/successCriteria/constraints/targetFolder are
+   *  read-only; the `discoveryContext` free-text section becomes editable. */
+  locked: boolean;
+  lockedAt: number | null;
+  /** Free-text notes injected into the round-table panel prompts. Only
+   *  editable while `locked === true`. */
+  discoveryContext: string;
 }
 
 /** Plans should be conservative — leave headroom for retries, longer-than-expected
@@ -180,6 +187,9 @@ export function loadIntake(workspaceId: string): IntakeRecord | null {
     budgetHintUnit: ((row as any).budgetHintUnit as BudgetUnit) ?? 'USD',
     planningMode: (row.planningMode as PlanningMode) ?? 'assisted',
     hireMode: (row.hireMode as HireMode) ?? 'manual',
+    locked: !!((row as any).locked),
+    lockedAt: (row as any).lockedAt ?? null,
+    discoveryContext: (row as any).discoveryContext ?? '',
   };
 }
 
@@ -197,6 +207,9 @@ export function saveIntake(intake: IntakeRecord): void {
     budgetHintUnit: intake.budgetHintUnit ?? 'USD',
     planningMode: intake.planningMode,
     hireMode: intake.hireMode,
+    locked: intake.locked ? 1 : 0,
+    lockedAt: intake.lockedAt,
+    discoveryContext: intake.discoveryContext ?? '',
     updatedAt: now,
     createdAt: existing?.createdAt ?? now,
   };

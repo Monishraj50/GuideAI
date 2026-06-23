@@ -32,6 +32,10 @@ interface IntakeRecord {
   budgetHintUnit: BudgetUnit;
   planningMode: PlanningMode;
   hireMode: HireMode;
+  // Phase A — two-stage intake.
+  locked: boolean;
+  lockedAt: number | null;
+  discoveryContext: string;
 }
 
 interface PanelEntry {
@@ -162,6 +166,59 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
     } finally { setBusy(false); }
   }
 
+  async function lockRequirements() {
+    if (!intake) return;
+    if (!intake.goal.trim()) {
+      toast({ title: 'Set a goal first', variant: 'warn' });
+      return;
+    }
+    setBusy(true);
+    try {
+      // First save current edits, then issue the lock toggle.
+      const [r, rMeta] = await Promise.all([
+        fetch(`/api/workspaces/${workspaceId}/intake`, {
+          method: 'PUT', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            goal: intake.goal,
+            successCriteria: intake.successCriteria,
+            constraints: intake.constraints,
+            budgetHintUsd: intake.budgetHintUsd,
+            budgetHintUnit: intake.budgetHintUnit,
+            planningMode: intake.planningMode,
+            hireMode: intake.hireMode,
+            locked: true,
+          }),
+        }),
+        fetch(`/api/workspaces/${workspaceId}`, {
+          method: 'PATCH', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ targetFolder: targetFolder.trim() }),
+        }),
+      ]);
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error ?? 'lock failed');
+      }
+      if (!rMeta.ok) throw new Error('folder save failed');
+      const j = await r.json();
+      setIntake(j.intake);
+      toast({ title: 'Requirements locked', description: 'Add discovery context next, then run the round-table.', variant: 'success' });
+    } catch (e: any) {
+      toast({ title: 'Lock failed', description: e?.message, variant: 'error' });
+    } finally { setBusy(false); }
+  }
+
+  async function saveDiscoveryContext(value: string) {
+    if (!intake) return;
+    setIntake({ ...intake, discoveryContext: value });
+    // Debounced server save would be nicer; for now save on blur via this helper.
+    try {
+      await fetch(`/api/workspaces/${workspaceId}/intake`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ discoveryContext: value }),
+      });
+    } catch { /* silent — user sees it via the loaded intake */ }
+  }
+
   async function runRoundTable() {
     if (!intake?.goal.trim()) {
       toast({ title: 'Set a goal first', variant: 'warn' });
@@ -218,6 +275,20 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
         }
       />
 
+      {/* Lock banner — only shown post-lock for clarity */}
+      {intake.locked && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-accent/40 bg-accent/[0.05] text-[12px]">
+          <ShieldAlert size={13} className="text-accent" />
+          <span className="text-ink">Requirements locked</span>
+          <span className="text-dim2">
+            · the 4 core fields are read-only · add Discovery context below to brief the round-table
+          </span>
+          {intake.lockedAt && (
+            <span className="ml-auto text-dim2 font-mono text-[10px]">{new Date(intake.lockedAt).toLocaleString()}</span>
+          )}
+        </div>
+      )}
+
       {/* Intake form */}
       <div className="border border-line/70 rounded-lg bg-surface2/50 overflow-hidden">
         <div className="p-4 space-y-4">
@@ -232,7 +303,11 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
               onChange={(e) => setIntake({ ...intake, goal: e.target.value })}
               placeholder="Build a customer-facing onboarding flow that…"
               rows={3}
-              className="w-full bg-bg/60 border border-line/70 rounded-md px-3 py-2 text-sm text-ink outline-none focus:border-accent/60 resize-none"
+              disabled={intake.locked}
+              className={cn(
+                'w-full bg-bg/60 border border-line/70 rounded-md px-3 py-2 text-sm text-ink outline-none focus:border-accent/60 resize-none',
+                intake.locked && 'opacity-70 cursor-not-allowed',
+              )}
             />
           </Field>
 
@@ -247,7 +322,11 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
               value={targetFolder}
               onChange={(e) => setTargetFolder(e.target.value)}
               placeholder="/home/you/projects/this-project"
-              className="w-full bg-bg/60 border border-line/70 rounded-md px-3 py-2 text-sm text-ink font-mono outline-none focus:border-accent/60"
+              disabled={intake.locked}
+              className={cn(
+                'w-full bg-bg/60 border border-line/70 rounded-md px-3 py-2 text-sm text-ink font-mono outline-none focus:border-accent/60',
+                intake.locked && 'opacity-70 cursor-not-allowed',
+              )}
             />
           </Field>
 
@@ -259,14 +338,16 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
           >
             <Chips
               items={intake.successCriteria}
-              onRemove={(i) => setIntake({ ...intake, successCriteria: intake.successCriteria.filter((_, j) => j !== i) })}
+              onRemove={intake.locked ? undefined : (i) => setIntake({ ...intake, successCriteria: intake.successCriteria.filter((_, j) => j !== i) })}
             />
-            <ChipInput
-              value={criteriaDraft}
-              onChange={setCriteriaDraft}
-              onSubmit={addCriterion}
-              placeholder="e.g. user can finish in under 2 minutes"
-            />
+            {!intake.locked && (
+              <ChipInput
+                value={criteriaDraft}
+                onChange={setCriteriaDraft}
+                onSubmit={addCriterion}
+                placeholder="e.g. user can finish in under 2 minutes"
+              />
+            )}
           </Field>
 
           {/* Constraints */}
@@ -277,14 +358,16 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
           >
             <Chips
               items={intake.constraints}
-              onRemove={(i) => setIntake({ ...intake, constraints: intake.constraints.filter((_, j) => j !== i) })}
+              onRemove={intake.locked ? undefined : (i) => setIntake({ ...intake, constraints: intake.constraints.filter((_, j) => j !== i) })}
             />
-            <ChipInput
-              value={constraintDraft}
-              onChange={setConstraintDraft}
-              onSubmit={addConstraint}
-              placeholder="e.g. must run offline; ship by Friday"
-            />
+            {!intake.locked && (
+              <ChipInput
+                value={constraintDraft}
+                onChange={setConstraintDraft}
+                onSubmit={addConstraint}
+                placeholder="e.g. must run offline; ship by Friday"
+              />
+            )}
           </Field>
 
           {/* Budget hint */}
@@ -432,28 +515,73 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
           </Field>
         </div>
 
-        {/* Footer actions */}
+        {/* Footer actions — stage-aware:
+              • Before lock: save intake + ▶ Lock requirements
+              • After  lock: hint that round-table runs from the Discovery context section below */}
         <div className="p-3 border-t border-line/40 flex items-center justify-end gap-2 bg-bg/40">
-          <button
-            disabled={busy}
-            onClick={save}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-line/70 text-ink2 hover:text-ink hover:border-line2 text-xs font-medium disabled:opacity-40"
-          >
-            {busy ? 'saving…' : 'save intake'}
-          </button>
-          <button
-            disabled={running || intake.planningMode === 'manual'}
-            onClick={runRoundTable}
-            className={cn(
-              'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium shadow-glow disabled:opacity-40',
-              'bg-accent text-bg hover:brightness-110',
-            )}
-            title={intake.planningMode === 'manual' ? 'Switch to auto/assisted to use the round-table' : ''}
-          >
-            <Play size={11} /> {running ? 'panel discussing…' : 'run discovery round-table'}
-          </button>
+          {!intake.locked ? (
+            <>
+              <button
+                disabled={busy}
+                onClick={save}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-line/70 text-ink2 hover:text-ink hover:border-line2 text-xs font-medium disabled:opacity-40"
+              >
+                {busy ? 'saving…' : 'save intake'}
+              </button>
+              <button
+                disabled={busy || !intake.goal.trim()}
+                onClick={lockRequirements}
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium shadow-glow disabled:opacity-40',
+                  'bg-accent text-bg hover:brightness-110',
+                )}
+                title={!intake.goal.trim() ? 'Add a goal first' : 'Save + lock the 4 core fields; unlocks the Discovery context'}
+              >
+                <ShieldAlert size={11} /> {busy ? 'locking…' : '▶ Lock requirements'}
+              </button>
+            </>
+          ) : (
+            <span className="text-dim2 text-[11px] ml-auto">
+              Locked · the round-table runs from the Discovery context section ↓
+            </span>
+          )}
         </div>
       </div>
+
+      {/* Discovery context — unlocks after the requirements are locked */}
+      {intake.locked && (
+        <div className="border border-line/70 rounded-lg bg-surface2/50 overflow-hidden">
+          <div className="p-4 space-y-3">
+            <Field
+              icon={<Lightbulb size={12} />}
+              label="Discovery context"
+              hint="Free-text notes for the round-table panel — known constraints, prior attempts, vibe direction, edge cases. Each panelist sees this when discussing your brief."
+            >
+              <textarea
+                value={intake.discoveryContext}
+                onChange={(e) => setIntake({ ...intake, discoveryContext: e.target.value })}
+                onBlur={(e) => saveDiscoveryContext(e.target.value)}
+                placeholder="e.g. previous attempt failed because the auth library hijacked routing — we want a vanilla-JS approach this time. Audience is non-technical creators on mobile."
+                rows={5}
+                className="w-full bg-bg/60 border border-line/70 rounded-md px-3 py-2 text-sm text-ink outline-none focus:border-accent/60 resize-none"
+              />
+            </Field>
+          </div>
+          <div className="p-3 border-t border-line/40 flex items-center justify-end gap-2 bg-bg/40">
+            <button
+              disabled={running || intake.planningMode === 'manual'}
+              onClick={runRoundTable}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium shadow-glow disabled:opacity-40',
+                'bg-accent text-bg hover:brightness-110',
+              )}
+              title={intake.planningMode === 'manual' ? 'Switch to auto/assisted to use the round-table' : ''}
+            >
+              <Play size={11} /> {running ? 'panel discussing…' : 'run discovery round-table'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Discovery viewer */}
       {discovery && (
@@ -628,7 +756,7 @@ function Field({ icon, label, hint, children }: { icon: React.ReactNode; label: 
   );
 }
 
-function Chips({ items, onRemove }: { items: string[]; onRemove: (i: number) => void }) {
+function Chips({ items, onRemove }: { items: string[]; onRemove?: (i: number) => void }) {
   if (!items.length) return null;
   return (
     <div className="flex flex-wrap gap-1.5 mb-2">
@@ -638,13 +766,15 @@ function Chips({ items, onRemove }: { items: string[]; onRemove: (i: number) => 
           className="group inline-flex items-center gap-1 text-[12px] px-2 py-0.5 rounded-full border border-line/70 bg-bg/40 text-ink2"
         >
           {c}
-          <button
-            onClick={() => onRemove(i)}
-            className="opacity-50 hover:opacity-100 hover:text-err transition-opacity"
-            title="remove"
-          >
-            <X size={10} />
-          </button>
+          {onRemove && (
+            <button
+              onClick={() => onRemove(i)}
+              className="opacity-50 hover:opacity-100 hover:text-err transition-opacity"
+              title="remove"
+            >
+              <X size={10} />
+            </button>
+          )}
         </span>
       ))}
     </div>
