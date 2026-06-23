@@ -16,6 +16,7 @@ import { Validation } from './Validation';
 import { SecondOpinionToggle } from './SecondOpinionToggle';
 import { MemorySection } from './MemorySection';
 import { BriefPane } from '../../ops/BriefPane';
+import { StartImplementation } from './StartImplementation';
 
 interface PlanResp {
   workspace: { id: string; name: string; autonomyMode: string; createdAt: number };
@@ -106,6 +107,11 @@ export function ProjectPlan({ workspaceId }: { workspaceId: string }) {
 
       {/* Plan review + hire dispatch */}
       <PlanReview workspaceId={workspaceId} />
+
+      {/* Phase D — "Ready to implement" panel.
+            Renders only when there's a dispatched brief sitting in 'pending'.
+            Clicking Auto or Manual flips the mode + releases the start gate. */}
+      <StartImplementation workspaceId={workspaceId} />
 
       {/* Progress dashboard (WBS Kanban + burndown) */}
       <Dashboard workspaceId={workspaceId} />

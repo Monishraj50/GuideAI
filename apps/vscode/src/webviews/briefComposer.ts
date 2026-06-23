@@ -112,7 +112,9 @@ export async function openBriefComposer(
         const budget = msg.budget && typeof msg.budget.amount === 'number' && msg.budget.amount > 0
           ? { mode: msg.budget.mode === 'tokens' ? 'tokens' as const : 'currency' as const, amount: msg.budget.amount }
           : undefined;
-        const execMode: 'auto' | 'manual' = msg.execMode === 'manual' ? 'manual' : 'auto';
+        // Phase D — direct-dispatch from the composer runs end-to-end. Mode
+        // selection only happens for plan-approval flows (web UI / project page),
+        // where the user picks Auto/Manual in the "Ready to implement" panel.
 
         if (!wsId || !body) {
           panel?.webview.postMessage({ type: 'error', error: 'workspace + brief body are required' });
@@ -132,7 +134,7 @@ export async function openBriefComposer(
         // targetFolder is now a workspace-level setting; the orchestrator
         // reads it from the workspace meta.json. We don't send it per-brief.
         const r = await api.submitBrief({
-          workspaceId: wsId, body, securityTagged, taggedAgents, budget, mode: execMode,
+          workspaceId: wsId, body, securityTagged, taggedAgents, budget, mode: 'auto',
         });
         if (r.ok) {
           panel?.webview.postMessage({ type: 'success', briefId: r.briefId });
@@ -248,24 +250,6 @@ function renderHtml(
   .budget-amount input { flex: 1; }
   .budget-amount .unit { color: var(--dim); font-size: 12px; min-width: 24px; }
 
-  /* Mode picker — two large cards side by side */
-  .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .mode-grid input[type=radio] { display: none; }
-  .mode-card {
-    margin: 0; padding: 12px 14px;
-    border: 1.5px solid var(--line); border-radius: 6px;
-    background: var(--soft); cursor: pointer;
-    text-transform: none; letter-spacing: 0; color: var(--ink);
-    transition: border-color 0.15s, background 0.15s;
-  }
-  .mode-card:hover { border-color: var(--teal); }
-  .mode-grid input[type=radio]:checked + .mode-card {
-    border-color: var(--teal);
-    background: rgba(20, 184, 166, 0.08);
-    box-shadow: 0 0 0 1px var(--teal);
-  }
-  .mode-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
-  .mode-desc { font-size: 11px; color: var(--dim); line-height: 1.4; }
 </style>
 </head>
 <body>
@@ -279,20 +263,6 @@ function renderHtml(
 
     <label for="body">Goal</label>
     <textarea id="body" placeholder="e.g. Build a tiny URL-shortener API with a POST /shorten endpoint that persists to SQLite." required>${prefillText}</textarea>
-
-    <label>⚙️ Execution mode</label>
-    <div class="mode-grid">
-      <input type="radio" id="mode-auto" name="exec-mode" value="auto" checked />
-      <label for="mode-auto" class="mode-card">
-        <div class="mode-title">▶ Auto</div>
-        <div class="mode-desc">Runs the full pipeline end-to-end. Cards march left → right on the Kanban automatically.</div>
-      </label>
-      <input type="radio" id="mode-manual" name="exec-mode" value="manual" />
-      <label for="mode-manual" class="mode-card">
-        <div class="mode-title">🖐 Manual</div>
-        <div class="mode-desc">Pauses between phases. You drag each phase card from Inactive → Active to release it.</div>
-      </label>
-    </div>
 
     <label>👥 Tag agents · they get hired from the marketplace if not on your team</label>
     <div id="chips" class="chips"></div>
@@ -431,7 +401,6 @@ function renderHtml(
             ? { mode: tokensMode ? 'tokens' : 'currency', amount }
             : undefined,
           securityTagged: document.getElementById('security').checked,
-          execMode: document.getElementById('mode-manual').checked ? 'manual' : 'auto',
         });
       });
       document.getElementById('cancel').addEventListener('click', () => {
