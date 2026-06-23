@@ -105,6 +105,8 @@ export class AtruneApi {
     targetFolder?: string;
     taggedAgents?: string[];
     budget?: { mode: 'tokens' | 'currency'; amount: number };
+    /** 'auto' (default) runs end-to-end. 'manual' awaits per-phase release. */
+    mode?: 'auto' | 'manual';
   }): Promise<{ ok: boolean; briefId?: string; error?: string }> {
     try {
       const r = await fetch(`${base()}/api/workspaces/${args.workspaceId}/briefs`, {
@@ -115,6 +117,7 @@ export class AtruneApi {
           targetFolder: args.targetFolder,
           taggedAgents: args.taggedAgents,
           budget: args.budget,
+          mode: args.mode,
         }),
       });
       const j = await r.json() as any;
@@ -212,11 +215,11 @@ export class AtruneApi {
     } catch { return []; }
   }
 
-  async createWorkspace(name: string): Promise<{ ok: boolean; id?: string; error?: string }> {
+  async createWorkspace(name: string, targetFolder?: string): Promise<{ ok: boolean; id?: string; error?: string }> {
     try {
       const r = await fetch(`${base()}/api/workspaces`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, targetFolder }),
       });
       const j = await r.json() as any;
       if (!r.ok) return { ok: false, error: j?.error ?? `http ${r.status}` };
@@ -227,13 +230,15 @@ export class AtruneApi {
   }
 
   /** Zero-config workspace creation from a task title. Server generates the
-   *  slug + date suffix; client just supplies the human-readable task. */
-  async createAutoWorkspace(taskTitle: string, kind: 'auto-task' | 'project' = 'auto-task')
+   *  slug + date suffix; client just supplies the human-readable task. The
+   *  extension always passes targetFolder so agents write into the open repo
+   *  root, never under .atrune. */
+  async createAutoWorkspace(taskTitle: string, kind: 'auto-task' | 'project' = 'auto-task', targetFolder?: string)
   : Promise<{ ok: boolean; id?: string; name?: string; error?: string }> {
     try {
       const r = await fetch(`${base()}/api/workspaces/auto`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ taskTitle, kind }),
+        body: JSON.stringify({ taskTitle, kind, targetFolder }),
       });
       const j = await r.json() as any;
       if (!r.ok) return { ok: false, error: j?.error ?? `http ${r.status}` };

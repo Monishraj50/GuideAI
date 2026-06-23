@@ -15,3 +15,4 @@ export function getDb() {
 }
 
 export { schema };
+export { initDb, initDbIfMissing } from './init.js';

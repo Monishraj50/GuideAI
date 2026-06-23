@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Send, ShieldAlert, Cpu, Loader2 } from 'lucide-react';
+import { Send, ShieldAlert, Cpu, Loader2, Play, Hand } from 'lucide-react';
 import { toast } from '../../components/Toast';
 import { cn } from '../../lib/cn';
 
@@ -15,6 +15,7 @@ interface RuntimeListing {
 export function BriefPane({ workspaceId }: { workspaceId: string }) {
   const [text, setText] = useState('');
   const [securityTagged, setSecurityTagged] = useState(false);
+  const [execMode, setExecMode] = useState<'auto' | 'manual'>('auto');
   const [runtime, setRuntime] = useState<RuntimeListing['id']>('claude');
   const [runtimes, setRuntimes] = useState<RuntimeListing[]>([]);
   const [busy, setBusy] = useState(false);
@@ -30,7 +31,7 @@ export function BriefPane({ workspaceId }: { workspaceId: string }) {
       const res = await fetch(`/api/workspaces/${workspaceId}/briefs`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ body: text, securityTagged }),
+        body: JSON.stringify({ body: text, securityTagged, mode: execMode }),
       });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error ?? `http ${res.status}`);
@@ -69,6 +70,57 @@ export function BriefPane({ workspaceId }: { workspaceId: string }) {
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); }
         }}
       />
+      <div>
+        <div className="text-[11px] uppercase tracking-wider text-dim mb-1.5 flex items-center gap-1.5">
+          <span>Execution mode</span>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setExecMode('auto')}
+            disabled={busy}
+            className={cn(
+              'flex items-start gap-2 px-3 py-2.5 rounded-md text-left transition-colors',
+              'border bg-bg/70 hover:border-accent/60',
+              execMode === 'auto'
+                ? 'border-accent ring-1 ring-accent/40 bg-accent/10'
+                : 'border-line/70',
+            )}
+          >
+            <Play size={14} className={execMode === 'auto' ? 'text-accent mt-0.5' : 'text-dim2 mt-0.5'} />
+            <div className="flex-1">
+              <div className={cn('text-xs font-medium', execMode === 'auto' ? 'text-ink' : 'text-dim')}>
+                Auto
+              </div>
+              <div className="text-[10px] text-dim2 leading-snug mt-0.5">
+                Runs end-to-end · cards march across the Kanban automatically
+              </div>
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => setExecMode('manual')}
+            disabled={busy}
+            className={cn(
+              'flex items-start gap-2 px-3 py-2.5 rounded-md text-left transition-colors',
+              'border bg-bg/70 hover:border-accent/60',
+              execMode === 'manual'
+                ? 'border-accent ring-1 ring-accent/40 bg-accent/10'
+                : 'border-line/70',
+            )}
+          >
+            <Hand size={14} className={execMode === 'manual' ? 'text-accent mt-0.5' : 'text-dim2 mt-0.5'} />
+            <div className="flex-1">
+              <div className={cn('text-xs font-medium', execMode === 'manual' ? 'text-ink' : 'text-dim')}>
+                Manual
+              </div>
+              <div className="text-[10px] text-dim2 leading-snug mt-0.5">
+                Pauses between phases · drag each card from Inactive → Active to release
+              </div>
+            </div>
+          </button>
+        </div>
+      </div>
       <label className="flex items-center gap-2 text-xs text-dim cursor-pointer select-none px-1">
         <input
           type="checkbox"

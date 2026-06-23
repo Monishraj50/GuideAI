@@ -74,9 +74,19 @@ export function dropWorkspaceRoot(workspaceId: string): void {
   saveRegistry();
 }
 
+/** Database file path. Resolves to ATRUNE_DB_PATH env var if set (the VS Code
+ *  extension passes <openFolder>/.atrune/db.sqlite so DB data lives inside
+ *  the user's repo and gets deleted with it). Falls back to the global
+ *  ~/.guideai/db.sqlite for headless / pre-extension setups. */
+export function getDbPath(): string {
+  const override = process.env.ATRUNE_DB_PATH?.trim();
+  if (override) return override;
+  return path.join(GUIDEAI_HOME, 'db.sqlite');
+}
+
 export const paths = {
   home: GUIDEAI_HOME,
-  db: path.join(GUIDEAI_HOME, 'db.sqlite'),
+  get db() { return getDbPath(); },
   workspaces: path.join(GUIDEAI_HOME, 'workspaces'),
   skills: path.join(GUIDEAI_HOME, 'skills'),
   agentsCustom: path.join(GUIDEAI_HOME, 'agents', 'custom'),

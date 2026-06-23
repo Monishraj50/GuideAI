@@ -1,6 +1,9 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import Fastify from 'fastify';
 import { paths } from '@guideai/shared/paths';
 import { CAPS } from '@guideai/policies/caps';
+import { initDbIfMissing } from '@guideai/shared/db';
 import { registerEventRoutes } from './sse.js';
 import { registerBriefRoutes } from './routes/briefs.js';
 import { registerApprovalRoutes } from './routes/approvals.js';
@@ -70,6 +73,16 @@ registerSecondOpinionRoutes(app);
 registerMemoryRoutes(app);
 registerDirectTaskRoutes(app);
 
+// Self-heal: if the DB file doesn't exist (e.g. user wiped the repo or this
+// is a fresh project workspace), run the schema migration before listening so
+// the first request doesn't fail with "no such table".
+try {
+  fs.mkdirSync(path.dirname(paths.db), { recursive: true });
+  initDbIfMissing();
+} catch (err) {
+  app.log.error({ err }, 'DB init failed — server may return 500 on first query');
+}
+
 app.listen({ port: PORT, host: '0.0.0.0' })
-  .then(() => app.log.info(`GuideAI server up on :${PORT} (state: ${paths.home})`))
+  .then(() => app.log.info(`GuideAI server up on :${PORT} (state: ${paths.home} · db: ${paths.db})`))
   .catch((err) => { app.log.error(err); process.exit(1); });

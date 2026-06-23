@@ -23,7 +23,9 @@
     "./designShotgun": "./src/designShotgun.ts",
     "./directTask": "./src/directTask.ts",
     "./routing": "./src/routing.ts",
-    "./projectContext": "./src/projectContext.ts"
+    "./projectContext": "./src/projectContext.ts",
+    "./transcriptWriter": "./src/transcriptWriter.ts",
+    "./taskGate": "./src/taskGate.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

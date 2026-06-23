@@ -11,6 +11,8 @@ import {
   type Tier,
 } from '@guideai/policies/budgets';
 import { markPhaseComplete, type WorkPhase } from './wbs.js';
+import { writeTaskTranscript } from './transcriptWriter.js';
+import * as taskGate from './taskGate.js';
 import { setupCrossVendor, type CrossVendorContext } from './secondOpinion.js';
 import { renderMemoryBlock } from './memory.js';
 import {
@@ -220,6 +222,17 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
         throw new Error(`budget pause: ${outcome.reason}`);
       }
     }
+    // Manual-mode gate: block until the user drags this phase to Active in
+    // the Kanban. In Auto mode this resolves immediately.
+    if (taskGate.modeOf(briefId) === 'manual') {
+      appendEvent(workspaceId, {
+        id: randomUUID(), ts: Date.now(), workspaceId, agentId,
+        kind: 'system', level: 'info',
+        text: `manual mode: awaiting release for phase ${phase}…`,
+      });
+    }
+    await taskGate.awaitRelease(briefId, phase);
+
     const phaseStartedAt = Date.now();
 
     // Phase metadata chunk is owned by CoS (the conductor).
@@ -431,6 +444,17 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
 
     // Forward all chunks the adapter emitted so the live feed shows them.
     for (const c of result.chunks) appendEvent(workspaceId, c);
+
+    // Persist a per-task chat-history transcript so the Team sidebar can
+    // surface it via markdown preview. Phase-scoped today (one file per
+    // brief × phase × worker role).
+    try {
+      writeTaskTranscript({
+        workspaceId, role: worker.role, taskId: `${briefId}-${phase}`,
+        taskTitle: `${phase} — ${worker.displayName}`,
+        briefId, systemPrompt,
+      }, result.chunks);
+    } catch {}
 
     const aiText = result.chunks
       .filter((c): c is AIChunk => c.kind === 'ai')

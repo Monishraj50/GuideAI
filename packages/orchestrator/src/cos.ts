@@ -14,6 +14,7 @@ import { loadIntake } from './discovery.js';
 import { isDesignTagged } from './designShotgun.js';
 import { hireAgent } from './hiring.js';
 import { writeBriefAnalyses, appendAgentSummary, writeBriefChat } from './projectContext.js';
+import * as taskGate from './taskGate.js';
 import { eq } from 'drizzle-orm';
 
 const COS_AGENT_ROLE = 'chief-of-staff';
@@ -104,6 +105,9 @@ export async function submitBrief(args: {
   taggedAgents?: string[];
   /** Soft budget hint surfaced as a system event for the UI. */
   budget?: { mode: 'tokens' | 'currency'; amount: number };
+  /** Execution mode. 'auto' (default) runs end-to-end. 'manual' awaits a
+   *  per-phase release call (the Kanban drives this). */
+  mode?: 'auto' | 'manual';
 }): Promise<SubmitBriefResult> {
   const { workspaceId, body } = args;
   // A brief is security-tagged if the caller asks for it OR the body contains
@@ -146,6 +150,9 @@ export async function submitBrief(args: {
     id: briefId, workspaceId, body, status: 'active', createdAt: now(),
   }).run();
 
+  // Register the brief's execution mode before any phase awaits a release.
+  taskGate.registerBrief(briefId, args.mode ?? 'auto');
+
   const userChunk: UserChunk = { ...base(workspaceId), kind: 'user', text: body };
   appendEvent(workspaceId, userChunk);
 
@@ -161,13 +168,13 @@ export async function submitBrief(args: {
     appendEvent(workspaceId, budgetNote);
   }
 
-  // Cwd resolution:
+  // Cwd resolution. Code MUST land outside the workspace's .atrune storage:
   //   1. Per-brief override (rarely used; kept for API back-compat)
-  //   2. Workspace's configured targetFolder (the project's code location)
-  //   3. Synthetic per-agent dir under ~/.guideai/ (sandbox fallback)
+  //   2. Workspace's configured targetFolder (the project's repo root)
+  //   3. Global sandbox dir under ~/.guideai/sandbox/<id>/ — never inside any .atrune
   const cwd = args.targetFolder?.trim()
     || readWorkspaceTargetFolder(workspaceId)
-    || paths.agentCwd(workspaceId, agentId);
+    || path.join(paths.home, 'sandbox', workspaceId);
 
   // Build the dispatch plan: each phase → specialist (or CoS fallback).
   const rosterRows = db.select().from(schema.agents).all()

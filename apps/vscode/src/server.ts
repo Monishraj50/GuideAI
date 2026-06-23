@@ -98,10 +98,23 @@ export class AtruneServer {
     this.log(`Repo root: ${root}`);
 
     this.log('Spawning Fastify server (tsx watch apps/server)…');
+    // Per-project DB: the SQLite file lives inside the user's open folder
+    // at <openFolder>/.atrune/db.sqlite, so deleting the repo removes the
+    // data too. Falls back to ~/.guideai/db.sqlite when no folder is open.
+    const projectDbPath = this.projectDbPath();
+    if (projectDbPath) this.log(`Using per-project DB: ${projectDbPath}`);
     this.procs.server = spawn(
       path.join(root, 'node_modules', '.bin', 'tsx'),
       ['watch', path.join(root, 'apps', 'server', 'src', 'index.ts')],
-      { cwd: root, env: { ...process.env, PORT: String(this.serverPort()) }, stdio: 'pipe' },
+      {
+        cwd: root,
+        env: {
+          ...process.env,
+          PORT: String(this.serverPort()),
+          ...(projectDbPath ? { ATRUNE_DB_PATH: projectDbPath } : {}),
+        },
+        stdio: 'pipe',
+      },
     );
     this.pipe('server', this.procs.server);
 
@@ -157,6 +170,15 @@ export class AtruneServer {
   }
   webPort(): number {
     return vscode.workspace.getConfiguration('atrune').get<number>('webPort', 3000);
+  }
+
+  /** Resolve where the project's SQLite DB should live: inside the open
+   *  folder's `.atrune/` so the data follows the repo. Returns null when no
+   *  workspace folder is open (server falls back to ~/.guideai/db.sqlite). */
+  projectDbPath(): string | null {
+    const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!folder) return null;
+    return path.join(folder, '.atrune', 'db.sqlite');
   }
 
   async dispose(): Promise<void> {

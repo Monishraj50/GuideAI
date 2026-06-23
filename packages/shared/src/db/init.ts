@@ -255,6 +255,54 @@ CREATE INDEX IF NOT EXISTS idx_approvals_task ON approvals(task_id);
 CREATE INDEX IF NOT EXISTS idx_metrics_agent ON metric_snapshots(agent_id);
 `;
 
+/** Idempotent: run the DDL + ALTER ADD COLUMN backfills against the
+ *  currently-resolved DB path. Safe to call from the server on startup. */
+export function initDb(): void {
+  fs.mkdirSync(paths.home, { recursive: true });
+  fs.mkdirSync(paths.workspaces, { recursive: true });
+  fs.mkdirSync(paths.skills, { recursive: true });
+  fs.mkdirSync(paths.agentsCustom, { recursive: true });
+
+  const db = new Database(paths.db);
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  db.exec(DDL);
+
+  for (const stmt of MIGRATIONS) {
+    try { db.exec(stmt); } catch (e: any) {
+      if (!/duplicate column/i.test(String(e?.message ?? ''))) throw e;
+    }
+  }
+
+  db.close();
+}
+
+/** Cheap startup check: only run the full DDL if the DB file is missing or
+ *  empty. (initDb is idempotent but reads/writes; this short-circuits the
+ *  common case.) */
+export function initDbIfMissing(): void {
+  let needsInit = false;
+  try {
+    const st = fs.statSync(paths.db);
+    needsInit = st.size === 0;
+  } catch {
+    needsInit = true;
+  }
+  if (needsInit) initDb();
+}
+
+const MIGRATIONS = [
+  "ALTER TABLE work_items ADD COLUMN github_issue_number INTEGER",
+  "ALTER TABLE work_items ADD COLUMN github_issue_url TEXT",
+  "ALTER TABLE plans ADD COLUMN critiques_json TEXT",
+  "ALTER TABLE plans ADD COLUMN critiques_run_at INTEGER",
+  "ALTER TABLE workspaces ADD COLUMN target_url TEXT",
+  "ALTER TABLE workspaces ADD COLUMN target_url_allowlist TEXT",
+  "ALTER TABLE workspaces ADD COLUMN second_opinion_enabled INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE workspaces ADD COLUMN memory_share TEXT NOT NULL DEFAULT 'read-only'",
+  "ALTER TABLE project_intakes ADD COLUMN budget_hint_unit TEXT NOT NULL DEFAULT 'USD'",
+];
+
 function main() {
   fs.mkdirSync(paths.home, { recursive: true });
   fs.mkdirSync(paths.workspaces, { recursive: true });
@@ -268,17 +316,7 @@ function main() {
 
   // Idempotent column additions (SQLite ALTER ADD COLUMN errors if the column
   // already exists, so we wrap each one).
-  for (const stmt of [
-    "ALTER TABLE work_items ADD COLUMN github_issue_number INTEGER",
-    "ALTER TABLE work_items ADD COLUMN github_issue_url TEXT",
-    "ALTER TABLE plans ADD COLUMN critiques_json TEXT",
-    "ALTER TABLE plans ADD COLUMN critiques_run_at INTEGER",
-    "ALTER TABLE workspaces ADD COLUMN target_url TEXT",
-    "ALTER TABLE workspaces ADD COLUMN target_url_allowlist TEXT",
-    "ALTER TABLE workspaces ADD COLUMN second_opinion_enabled INTEGER NOT NULL DEFAULT 0",
-    "ALTER TABLE workspaces ADD COLUMN memory_share TEXT NOT NULL DEFAULT 'read-only'",
-    "ALTER TABLE project_intakes ADD COLUMN budget_hint_unit TEXT NOT NULL DEFAULT 'USD'",
-  ]) {
+  for (const stmt of MIGRATIONS) {
     try { db.exec(stmt); } catch (e: any) {
       if (!/duplicate column/i.test(String(e?.message ?? ''))) throw e;
     }
@@ -289,4 +327,9 @@ function main() {
   console.log(`[init-db] ready at ${paths.db}`);
 }
 
-main();
+// Run the standalone migrator only when this file is the entry point
+// (pnpm --filter @guideai/shared run init-db). When imported as a module
+// (initDb / initDbIfMissing) we don't want to side-effect.
+if (process.argv[1] && process.argv[1].endsWith('init.ts')) {
+  main();
+}

@@ -19,6 +19,7 @@ import { ProgressProvider } from './views/progress';
 import { TeamProvider } from './views/team';
 import { openMissionControl } from './webviews/missionControl';
 import { openBriefComposer } from './webviews/briefComposer';
+import { openKanban } from './webviews/kanban';
 import { quickAskChooser, askOneAgent, autoFix } from './directTask';
 import { AtruneStatusBar } from './statusBar';
 import { checkNewApprovals } from './approvals';
@@ -123,18 +124,11 @@ export async function activate(ctx: vscode.ExtensionContext) {
         async (info?: { workspaceId?: string; briefId?: string }) => {
           await refreshActiveWorkspaceImmediate();
           refreshAll();
-          if (info?.workspaceId) {
-            vscode.window.showInformationMessage(
-              'Brief dispatched. Watch tasks appear in the sidebar, or open the project view.',
-              'Open project view',
-              'Open Kanban board',
-            ).then((p) => {
-              if (p === 'Open project view') {
-                vscode.commands.executeCommand('atrune.openMissionControl', { route: `/projects/${info.workspaceId}` });
-              } else if (p === 'Open Kanban board') {
-                vscode.commands.executeCommand('atrune.openMissionControl', { route: '/board' });
-              }
-            });
+          if (info?.workspaceId && info?.briefId) {
+            // Auto-open the native Kanban so the user sees the phase cards
+            // immediately (especially important in Manual mode where work
+            // can't progress until the user drags a card to Active).
+            await openKanban({ workspaceId: info.workspaceId, briefId: info.briefId });
           }
         },
       );
@@ -209,10 +203,33 @@ export async function activate(ctx: vscode.ExtensionContext) {
       workspaceId?: string; briefId?: string;
     }) => {
       if (!args?.workspaceId) return;
-      const route = args.briefId
-        ? `/projects/${args.workspaceId}#brief-${args.briefId}`
-        : `/projects/${args.workspaceId}`;
+      // Prefer the native Kanban if we have a briefId — same surface, no browser.
+      if (args.briefId) {
+        await openKanban({ workspaceId: args.workspaceId, briefId: args.briefId });
+        return;
+      }
+      const route = `/projects/${args.workspaceId}`;
       await vscode.commands.executeCommand('atrune.openMissionControl', { route });
+    }),
+    vscode.commands.registerCommand('atrune.openKanban', async (args?: {
+      workspaceId?: string; briefId?: string;
+    }) => {
+      if (!args?.workspaceId || !args?.briefId) {
+        vscode.window.showInformationMessage('No brief selected. Dispatch a brief first.');
+        return;
+      }
+      await openKanban({ workspaceId: args.workspaceId, briefId: args.briefId });
+    }),
+    vscode.commands.registerCommand('atrune.openTaskTranscript', async (args?: { filePath?: string }) => {
+      const fp = args?.filePath?.trim();
+      if (!fp || !fs.existsSync(fp)) {
+        vscode.window.showInformationMessage('Transcript not found — agent may not have written it yet.');
+        return;
+      }
+      const uri = vscode.Uri.file(fp);
+      const doc = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+      try { await vscode.commands.executeCommand('markdown.showPreviewToSide', uri); } catch {}
     }),
     vscode.commands.registerCommand('atrune.showAgentWork', async (args?: {
       workspaceId: string; agentId: string; role: string; displayName: string;

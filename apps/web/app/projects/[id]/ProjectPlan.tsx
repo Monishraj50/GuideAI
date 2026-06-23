@@ -15,6 +15,7 @@ import { RepoSection } from './RepoSection';
 import { Validation } from './Validation';
 import { SecondOpinionToggle } from './SecondOpinionToggle';
 import { MemorySection } from './MemorySection';
+import { BriefPane } from '../../ops/BriefPane';
 
 interface PlanResp {
   workspace: { id: string; name: string; autonomyMode: string; createdAt: number };
@@ -182,6 +183,16 @@ export function ProjectPlan({ workspaceId }: { workspaceId: string }) {
         ) : (
           <Empty text="No digest yet. Run one to summarise the last 24h." />
         )}
+      </Section>
+
+      {/* Dispatch a new brief — same component as /ops, includes Auto/Manual mode toggle */}
+      <Section
+        title="Dispatch a brief"
+        icon={<RadioTower size={14} className="text-accent" />}
+      >
+        <div className="border border-line/70 rounded-lg p-4 bg-surface2/50">
+          <BriefPane workspaceId={workspaceId} />
+        </div>
       </Section>
 
       {/* Recent briefs */}

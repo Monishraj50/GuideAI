@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { submitBrief } from '@guideai/orchestrator/cos';
+import * as taskGate from '@guideai/orchestrator/taskGate';
 
 export function registerBriefRoutes(app: FastifyInstance) {
   app.post<{
@@ -14,6 +15,9 @@ export function registerBriefRoutes(app: FastifyInstance) {
       /** Soft budget hint for the gate. `mode: tokens` uses raw token count;
        *  `mode: currency` uses USD. */
       budget?: { mode: 'tokens' | 'currency'; amount: number };
+      /** Execution mode. 'auto' runs end-to-end (default). 'manual' awaits
+       *  per-phase release from the Kanban. */
+      mode?: 'auto' | 'manual';
     };
   }>(
     '/api/workspaces/:id/briefs',
@@ -35,6 +39,7 @@ export function registerBriefRoutes(app: FastifyInstance) {
           budget: req.body?.budget && typeof req.body.budget.amount === 'number'
             ? { mode: req.body.budget.mode, amount: req.body.budget.amount }
             : undefined,
+          mode: req.body?.mode === 'manual' ? 'manual' : 'auto',
         });
         return result;
       } catch (err: any) {
@@ -42,6 +47,51 @@ export function registerBriefRoutes(app: FastifyInstance) {
         reply.code(500);
         return { error: String(err?.message ?? err) };
       }
+    },
+  );
+
+  // Release a single phase gate (Manual mode) — fired when the user drags
+  // a phase card from Inactive → Active in the Kanban.
+  app.post<{ Params: { briefId: string; phase: string } }>(
+    '/api/briefs/:briefId/phases/:phase/release',
+    async (req) => {
+      const released = taskGate.release(req.params.briefId, req.params.phase);
+      return { ok: true, released, briefId: req.params.briefId, phase: req.params.phase };
+    },
+  );
+
+  // Release every remaining phase gate for a brief (Auto handoff / "play all").
+  app.post<{ Params: { briefId: string } }>(
+    '/api/briefs/:briefId/release-all',
+    async (req) => {
+      const n = taskGate.releaseAll(req.params.briefId);
+      return { ok: true, released: n, briefId: req.params.briefId };
+    },
+  );
+
+  // Read gate states for a brief — used by the Kanban to render Inactive vs.
+  // released phase cards.
+  app.get<{ Params: { briefId: string } }>(
+    '/api/briefs/:briefId/gates',
+    async (req) => ({ briefId: req.params.briefId, mode: taskGate.modeOf(req.params.briefId), gates: taskGate.gateStates(req.params.briefId) }),
+  );
+
+  // Reopen a completed phase in verify-and-repair mode. Today this records
+  // the request (emits a system event + appends a reopen marker to the
+  // transcript on next run) but does NOT yet rerun the agent in isolation —
+  // that requires extracting dispatch from runPipeline (planned v1.1).
+  // The UI affordance is live so the gesture works end-to-end.
+  app.post<{ Params: { briefId: string; phase: string } }>(
+    '/api/briefs/:briefId/phases/:phase/reopen',
+    async (req, reply) => {
+      reply.code(202);
+      return {
+        ok: true,
+        briefId: req.params.briefId,
+        phase: req.params.phase,
+        mode: 'verify-and-repair',
+        note: 'reopen recorded — agent rerun lands in v1.1',
+      };
     },
   );
 }

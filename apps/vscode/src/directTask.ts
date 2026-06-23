@@ -28,7 +28,7 @@ export async function askOneAgent(
       placeHolder: 'e.g. add input validation to the /shorten endpoint',
     });
     if (!provisionalPrompt?.trim()) return;
-    const created = await api.createAutoWorkspace(provisionalPrompt.trim());
+    const created = await api.createAutoWorkspace(provisionalPrompt.trim(), 'auto-task', currentFolderCwd());
     if (!created.ok || !created.id) {
       vscode.window.showErrorMessage(`Could not create workspace: ${created.error}`);
       return;
@@ -104,7 +104,7 @@ export async function autoFix(
 
   // Zero-config: if no active workspace, create one from the task title.
   if (!wsId) {
-    const created = await api.createAutoWorkspace(description.trim());
+    const created = await api.createAutoWorkspace(description.trim(), 'auto-task', currentFolderCwd());
     if (!created.ok || !created.id) {
       vscode.window.showErrorMessage(`Could not create workspace: ${created.error}`);
       return;

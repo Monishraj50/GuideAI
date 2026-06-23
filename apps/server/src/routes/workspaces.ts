@@ -264,11 +264,12 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
   //
   // Designed for the VS Code right-click → Auto-fix flow where the user
   // hasn't picked a workspace; we make one for them named from the task.
-  app.post<{ Body: { taskTitle: string; kind?: 'project' | 'auto-task' } }>(
+  app.post<{ Body: { taskTitle: string; kind?: 'project' | 'auto-task'; targetFolder?: string } }>(
     '/api/workspaces/auto', async (req, reply) => {
       const taskTitle = (req.body?.taskTitle ?? '').toString().trim();
       if (!taskTitle) { reply.code(400); return { error: 'taskTitle is required' }; }
       const kind = req.body?.kind ?? 'auto-task';
+      const targetFolder = req.body?.targetFolder?.toString().trim() || undefined;
 
       const base = slugFromTaskTitle(taskTitle);
       const db = getDb();
@@ -292,10 +293,10 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
         createdAt: Date.now(),
       }).run();
 
-      scaffoldWorkspaceDir(id, { kind, originatingTask: taskTitle });
+      scaffoldWorkspaceDir(id, { kind, originatingTask: taskTitle, targetFolder });
       try { writeRequirementsMd(id); } catch {}
 
-      return { id, name };
+      return { id, name, targetFolder: targetFolder ?? null };
     },
   );
 

@@ -2,7 +2,7 @@
   "name": "atruneai",
   "displayName": "AtruneAI",
   "description": "Your AI workplace, inside VS Code. Brief your team, watch a 5-phase pipeline run, ship.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "atrune-ai",
   "license": "AGPL-3.0",
   "main": "./dist/extension.js",
@@ -163,6 +163,11 @@
         "command": "atrune.newBrief",
         "title": "Atrune: New brief…",
         "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "atrune.openKanban",
+        "title": "Atrune: Open Kanban for brief…",
+        "icon": "$(layout)"
       },
       {
         "command": "atrune.quickAsk",
