@@ -259,7 +259,7 @@ export function PlanReview({ workspaceId }: { workspaceId: string }) {
   const syn = (editing && draft) ? draft : plan.synthesis;
 
   return (
-    <section className="space-y-3">
+    <section data-section="plan-review" className="space-y-3">
       <SectionHeader
         title="Plan review"
         icon={<ClipboardCheck size={14} className="text-accent" />}

@@ -73,6 +73,8 @@ interface DiscoveryRec {
   costUsd: number;
   startedAt: number;
   endedAt: number | null;
+  /** Phase B — present when this round-table was a re-run with feedback. */
+  revisionNote?: string | null;
 }
 
 const PLANNING_MODES: { id: PlanningMode; label: string; description: string; icon: React.ComponentType<{ size?: number; className?: string }> }[] = [
@@ -103,6 +105,7 @@ const VERDICT_TINT: Record<Synthesis['costVerdict'], string> = {
 export function IntakeSection({ workspaceId }: { workspaceId: string }) {
   const [intake, setIntake] = useState<IntakeRecord | null>(null);
   const [discovery, setDiscovery] = useState<DiscoveryRec | null>(null);
+  const [discoveries, setDiscoveries] = useState<DiscoveryRec[]>([]);  // Phase B history rail
   const [busy, setBusy] = useState(false);
   const [running, setRunning] = useState(false);
   const [criteriaDraft, setCriteriaDraft] = useState('');
@@ -112,11 +115,15 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
   const [targetFolder, setTargetFolder] = useState('');
   /** Remember the currency choice when toggling to tokens, so toggling back restores it. */
   const [lastCurrency, setLastCurrency] = useState<Currency>('USD');
+  // Phase B — revision UI state.
+  const [revisionMode, setRevisionMode] = useState<'idle' | 'collecting'>('idle');
+  const [revisionNote, setRevisionNote] = useState('');
 
   async function refresh() {
-    const [r, rMeta] = await Promise.all([
+    const [r, rMeta, rHist] = await Promise.all([
       fetch(`/api/workspaces/${workspaceId}/intake`),
       fetch(`/api/workspaces/${workspaceId}/meta`),
+      fetch(`/api/workspaces/${workspaceId}/discoveries`),  // Phase B history rail
     ]);
     if (r.ok) {
       const j = await r.json();
@@ -129,6 +136,10 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
     if (rMeta.ok) {
       const m = await rMeta.json();
       setTargetFolder(m?.targetFolder ?? '');
+    }
+    if (rHist.ok) {
+      const h = await rHist.json();
+      setDiscoveries(h.discoveries ?? []);
     }
   }
   useEffect(() => { refresh(); }, [workspaceId]);
@@ -219,18 +230,33 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
     } catch { /* silent — user sees it via the loaded intake */ }
   }
 
-  async function runRoundTable() {
+  async function runRoundTable(opts?: { revisionNote?: string }) {
     if (!intake?.goal.trim()) {
       toast({ title: 'Set a goal first', variant: 'warn' });
       return;
     }
     setRunning(true);
     try {
-      const r = await fetch(`/api/workspaces/${workspaceId}/discovery`, { method: 'POST' });
+      const r = await fetch(`/api/workspaces/${workspaceId}/discovery`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(opts?.revisionNote ? { revisionNote: opts.revisionNote } : {}),
+      });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error ?? 'discovery failed');
       setDiscovery(j.discovery);
-      toast({ title: 'Discovery complete', description: `${j.discovery.panel.length} panelists weighed in`, variant: 'success' });
+      setRevisionMode('idle');
+      setRevisionNote('');
+      // Refresh the history rail so the new run appears immediately.
+      try {
+        const rHist = await fetch(`/api/workspaces/${workspaceId}/discoveries`);
+        if (rHist.ok) setDiscoveries((await rHist.json()).discoveries ?? []);
+      } catch { /* non-fatal */ }
+      toast({
+        title: opts?.revisionNote ? 'Re-run complete' : 'Discovery complete',
+        description: `${j.discovery.panel.length} panelists weighed in`,
+        variant: 'success',
+      });
     } catch (e: any) {
       toast({ title: 'Discovery failed', description: e?.message, variant: 'error' });
     } finally { setRunning(false); }
@@ -550,7 +576,7 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
 
       {/* Discovery context — unlocks after the requirements are locked */}
       {intake.locked && (
-        <div className="border border-line/70 rounded-lg bg-surface2/50 overflow-hidden">
+        <div data-section="discovery-context" className="border border-line/70 rounded-lg bg-surface2/50 overflow-hidden">
           <div className="p-4 space-y-3">
             <Field
               icon={<Lightbulb size={12} />}
@@ -570,7 +596,7 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
           <div className="p-3 border-t border-line/40 flex items-center justify-end gap-2 bg-bg/40">
             <button
               disabled={running || intake.planningMode === 'manual'}
-              onClick={runRoundTable}
+              onClick={() => runRoundTable()}
               className={cn(
                 'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium shadow-glow disabled:opacity-40',
                 'bg-accent text-bg hover:brightness-110',
@@ -583,9 +609,132 @@ export function IntakeSection({ workspaceId }: { workspaceId: string }) {
         </div>
       )}
 
-      {/* Discovery viewer */}
-      {discovery && (
-        <DiscoveryView record={discovery} />
+      {/* Revision history rail — only visible when there's more than one revision */}
+      {discoveries.length > 1 && (
+        <details className="border border-line/70 rounded-lg bg-bg/30 overflow-hidden group">
+          <summary className="px-3 py-2 text-[12px] text-dim hover:text-ink cursor-pointer flex items-center gap-2 select-none">
+            <RefreshCw size={12} className="text-info" />
+            <span className="font-medium">Revision history</span>
+            <span className="text-dim2">· {discoveries.length} round-tables</span>
+            <span className="ml-auto text-dim2 text-[10px] group-open:hidden">expand</span>
+            <span className="ml-auto text-dim2 text-[10px] hidden group-open:inline">collapse</span>
+          </summary>
+          <ul className="divide-y divide-line/30 border-t border-line/30">
+            {discoveries.map((d, idx) => {
+              const isCurrent = discovery?.id === d.id;
+              const order = discoveries.length - idx;  // most recent = highest number
+              return (
+                <li key={d.id} className={cn('px-3 py-2 text-[11px] flex items-center gap-3', isCurrent && 'bg-accent/[0.05]')}>
+                  <span className={cn(
+                    'font-mono text-[10px] px-1.5 py-0.5 rounded-full border',
+                    isCurrent ? 'border-accent/60 text-accent bg-accent/10' : 'border-line/60 text-dim',
+                  )}>
+                    Rev {order}
+                  </span>
+                  <span className="font-mono text-dim2">{d.id}</span>
+                  <span className="text-dim2">{new Date(d.startedAt).toLocaleString()}</span>
+                  {d.revisionNote && (
+                    <span className="text-ink2 italic truncate max-w-md" title={d.revisionNote}>
+                      "{d.revisionNote}"
+                    </span>
+                  )}
+                  {isCurrent && <span className="ml-auto text-accent text-[10px] uppercase tracking-wider">viewing</span>}
+                  {!isCurrent && (
+                    <button
+                      onClick={() => setDiscovery(d)}
+                      className="ml-auto text-dim hover:text-ink text-[10px] underline-offset-2 hover:underline"
+                    >
+                      view
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </details>
+      )}
+
+      {/* Discovery action row + viewer */}
+      {discovery && discovery.status === 'done' && (
+        <div className="space-y-3">
+          {/* 3-button decision row: Looks good / Needs changes / Edit context */}
+          {revisionMode === 'idle' && (
+            <div className="flex flex-wrap items-center gap-2 px-3 py-2 rounded-lg border border-line/70 bg-bg/30">
+              <span className="text-[12px] text-dim">Happy with this synthesis?</span>
+              <button
+                onClick={() => {
+                  // Smooth scroll the PlanReview section into view (it's rendered
+                  // below this component by ProjectPlan.tsx).
+                  const el = document.querySelector('[data-section="plan-review"]');
+                  el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  toast({ title: 'Looks good', description: 'Scroll down to PlanReview to generate the plan.', variant: 'success' });
+                }}
+                className="flex items-center gap-1 px-3 py-1 rounded-md bg-accent text-bg text-[11px] font-medium shadow-glow hover:brightness-110"
+              >
+                <Check size={11} /> Looks good — generate plan
+              </button>
+              <button
+                onClick={() => setRevisionMode('collecting')}
+                className="flex items-center gap-1 px-3 py-1 rounded-md border border-warn/40 text-warn text-[11px] hover:bg-warn/10"
+              >
+                <RefreshCw size={11} /> Needs changes
+              </button>
+              <button
+                onClick={() => {
+                  const el = document.querySelector('[data-section="discovery-context"]');
+                  el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }}
+                className="flex items-center gap-1 px-3 py-1 rounded-md border border-line/70 text-ink2 text-[11px] hover:border-line2 hover:text-ink"
+              >
+                <Lightbulb size={11} /> Edit discovery context
+              </button>
+            </div>
+          )}
+
+          {/* Revision note collector */}
+          {revisionMode === 'collecting' && (
+            <div className="border border-warn/40 rounded-lg bg-warn/[0.05] p-3 space-y-2">
+              <div className="flex items-center gap-2 text-[12px] text-warn">
+                <RefreshCw size={12} />
+                <span className="font-medium">What should change in the round-table output?</span>
+              </div>
+              <textarea
+                value={revisionNote}
+                onChange={(e) => setRevisionNote(e.target.value)}
+                placeholder="e.g. cost estimate feels too high — focus on a leaner v1; drop the risk about i18n, that's out of scope; recommend simpler roles"
+                rows={4}
+                disabled={running}
+                className="w-full bg-bg/60 border border-line/70 rounded-md px-3 py-2 text-sm text-ink outline-none focus:border-warn/60 resize-none"
+              />
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  disabled={running}
+                  onClick={() => { setRevisionMode('idle'); setRevisionNote(''); }}
+                  className="px-3 py-1 rounded-md border border-line/70 text-dim hover:text-ink text-[11px] disabled:opacity-40"
+                >
+                  Cancel
+                </button>
+                <button
+                  disabled={running || !revisionNote.trim()}
+                  onClick={() => runRoundTable({ revisionNote: revisionNote.trim() })}
+                  className={cn(
+                    'flex items-center gap-1.5 px-3 py-1 rounded-md text-[11px] font-medium shadow-glow disabled:opacity-40',
+                    'bg-warn text-bg hover:brightness-110',
+                  )}
+                >
+                  <Play size={11} /> {running ? 'panel re-running…' : 'Re-run round-table with these notes'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          <DiscoveryView record={discovery} />
+        </div>
+      )}
+      {discovery && discovery.status === 'running' && (
+        <div className="border border-line/70 rounded-lg p-4 text-dim text-xs italic">
+          Panel discussing… {discovery.panel.length}/5 weighed in.
+        </div>
       )}
       {!discovery && intake.planningMode !== 'manual' && (
         <div className="border border-dashed border-line/70 rounded-lg p-4 text-dim2 text-xs italic">

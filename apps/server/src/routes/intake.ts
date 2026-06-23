@@ -119,13 +119,20 @@ export function registerIntakeRoutes(app: FastifyInstance) {
   });
 
   // Kick off a new discovery round-table.
-  app.post<{ Params: { id: string } }>('/api/workspaces/:id/discovery', async (req, reply) => {
+  // Phase B: accepts a `revisionNote` to re-run with explicit user feedback.
+  app.post<{
+    Params: { id: string };
+    Body: Partial<{ revisionNote: string }>;
+  }>('/api/workspaces/:id/discovery', async (req, reply) => {
     const intake = loadIntake(req.params.id);
     if (!intake || !intake.goal.trim()) {
       reply.code(400); return { error: 'intake.goal must be set before running discovery' };
     }
+    const revisionNote = typeof req.body?.revisionNote === 'string'
+      ? req.body.revisionNote.trim() || undefined
+      : undefined;
     try {
-      const rec = await runDiscovery({ workspaceId: req.params.id });
+      const rec = await runDiscovery({ workspaceId: req.params.id, revisionNote });
       // Hand off to plan-review per the workspace's planning mode.
       let plan = null;
       if (rec.synthesis) {

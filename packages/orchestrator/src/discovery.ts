@@ -169,6 +169,10 @@ export interface DiscoveryRecord {
   costUsd: number;
   startedAt: number;
   endedAt: number | null;
+  /** Phase B — when this discovery was triggered by "Needs changes", the
+   *  user's revision note is preserved for the history rail and prepended
+   *  to each panelist's prompt as a `## Revision request` block. */
+  revisionNote: string | null;
 }
 
 // ---------- intake CRUD ----------
@@ -247,6 +251,7 @@ function rowToRecord(row: any): DiscoveryRecord {
     costUsd: row.costUsd ?? 0,
     startedAt: row.startedAt,
     endedAt: row.endedAt,
+    revisionNote: row.revisionNote ?? null,
   };
 }
 
@@ -260,6 +265,10 @@ function rowToRecord(row: any): DiscoveryRecord {
 export async function runDiscovery(args: {
   workspaceId: string;
   intake?: IntakeRecord;        // override; otherwise loaded from disk
+  /** Phase B — user-supplied note describing what to change relative to the
+   *  previous round-table output. Prepended to each panelist's user prompt
+   *  as a "Revision request" block and persisted with the discovery row. */
+  revisionNote?: string;
 }): Promise<DiscoveryRecord> {
   const { workspaceId } = args;
   const db = getDb();
@@ -267,15 +276,21 @@ export async function runDiscovery(args: {
   if (!intake || !intake.goal.trim()) {
     throw new Error('intake is empty — set a goal before running discovery');
   }
+  const revisionNote = args.revisionNote?.trim() || null;
 
   const id = `disc-${randomUUID().slice(0, 8)}`;
   const startedAt = Date.now();
   db.insert(schema.discoveries).values({
     id, workspaceId, status: 'running', panelJson: '[]',
     tokensIn: 0, tokensOut: 0, costUsd: 0, startedAt,
+    revisionNote,
   } as any).run();
 
-  appendEvent(workspaceId, sys(workspaceId, `discovery ${id} → 5-agent round-table starting`));
+  appendEvent(workspaceId, sys(workspaceId,
+    revisionNote
+      ? `discovery ${id} → 5-agent round-table starting (revision: ${revisionNote.slice(0, 80)}…)`
+      : `discovery ${id} → 5-agent round-table starting`,
+  ));
 
   // Budget gate up front. Forecast the sum across all panelists at their tiers.
   {
@@ -311,7 +326,32 @@ export async function runDiscovery(args: {
 
   const adapter = resolveActiveAdapter();
   const cwd = paths.agentCwd(workspaceId, `discovery-${id}`);
-  const intakeBlock = renderIntake(intake);
+  // Compose the panelist user prompt. Order matters: revision request first
+  // (so the panelist knows this is a re-run with explicit feedback), then
+  // the intake block, then any free-text discovery context the user added.
+  const sections: string[] = [];
+  if (revisionNote) {
+    sections.push(
+      '## Revision request',
+      '',
+      'The user reviewed the previous round-table output and asked for changes:',
+      '',
+      `> ${revisionNote.split('\n').join('\n> ')}`,
+      '',
+      'Reflect this revision in your analysis. Do not repeat prior framings the user has rejected.',
+      '',
+    );
+  }
+  sections.push(renderIntake(intake));
+  if (intake.discoveryContext.trim()) {
+    sections.push(
+      '',
+      '## Discovery context (user notes)',
+      '',
+      intake.discoveryContext.trim(),
+    );
+  }
+  const intakeBlock = sections.join('\n');
 
   // Run all panelists in parallel — Principle 3B/5B: parallelism *within* a
   // gate is fine, just not across gates. 5 fits in the concurrency cap.
@@ -381,6 +421,7 @@ export async function runDiscovery(args: {
     panel: panelResults, synthesis,
     tokensIn: totalIn, tokensOut: totalOut, costUsd: totalCost,
     startedAt, endedAt,
+    revisionNote,
   };
 }
 

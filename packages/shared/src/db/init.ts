@@ -304,6 +304,7 @@ const MIGRATIONS = [
   "ALTER TABLE project_intakes ADD COLUMN locked INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE project_intakes ADD COLUMN locked_at INTEGER",
   "ALTER TABLE project_intakes ADD COLUMN discovery_context TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE discoveries ADD COLUMN revision_note TEXT",
 ];
 
 function main() {

@@ -238,4 +238,8 @@ export const discoveries = sqliteTable('discoveries', {
   costUsd: real('cost_usd').notNull().default(0),
   startedAt: integer('started_at').notNull(),
   endedAt: integer('ended_at'),
+  // Phase B — when this discovery was re-run after a "Needs changes" gesture,
+  // the user's revision note is persisted here for the history rail and so the
+  // panelists see prior feedback on their next pass.
+  revisionNote: text('revision_note'),
 });
