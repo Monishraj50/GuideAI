@@ -10,7 +10,7 @@ import {
   loadBudget, summarizeUsage, forecastPhaseCost, checkBudget, recordUsage, modelToTier,
   type Tier,
 } from '@guideai/policies/budgets';
-import { markPhaseComplete, type WorkPhase } from './wbs.js';
+import { markPhaseComplete, markPhaseFailed, type WorkPhase } from './wbs.js';
 import { writeTaskTranscript } from './transcriptWriter.js';
 import * as taskGate from './taskGate.js';
 import { setupCrossVendor, type CrossVendorContext } from './secondOpinion.js';
@@ -452,6 +452,9 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
       };
       appendEvent(workspaceId, note);
       appendEvent(workspaceId, makePhaseChunk(workspaceId, agentId, briefId, phase, 'failed'));
+      // Cascade per-task: every work-item in this phase moves to 'blocked'
+      // so the Task Kanban shows them in the Failed column.
+      try { markPhaseFailed({ workspaceId, briefId, phase: phase as WorkPhase }); } catch {}
       throw err;
     }
 

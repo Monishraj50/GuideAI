@@ -226,17 +226,26 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
       const currentRoot = getWorkspaceRoot(req.params.id);
       const requestedFolder = req.body?.targetFolder?.toString().trim() ?? '';
       const newTargetFolder = requestedFolder || null;
-      const folderChanged = newTargetFolder !== (currentMeta?.targetFolder ?? null);
+      const newRoot = newTargetFolder
+        ? path.join(newTargetFolder, '.atrune')
+        : path.join(paths.workspaces, req.params.id);
 
-      if (folderChanged) {
-        const newRoot = newTargetFolder
-          ? path.join(newTargetFolder, '.atrune')
-          : path.join(paths.workspaces, req.params.id);
-        try {
-          migrateWorkspaceRoot(req.params.id, currentRoot, newRoot);
+      // Migrate only when the resolved storage root is actually changing.
+      const rootChanged = path.resolve(newRoot) !== path.resolve(currentRoot);
+      if (rootChanged) {
+        // If the destination already exists (because the per-project DB env
+        // var is pointing the server at it, or a previous session scaffolded
+        // it), don't try to copy — just point the registry at the existing
+        // storage. The data is already there; migrating would clobber or fail.
+        if (fs.existsSync(newRoot)) {
           setWorkspaceRoot(req.params.id, newRoot);
-        } catch (err: any) {
-          reply.code(409); return { error: `migration failed: ${err?.message ?? err}` };
+        } else {
+          try {
+            migrateWorkspaceRoot(req.params.id, currentRoot, newRoot);
+            setWorkspaceRoot(req.params.id, newRoot);
+          } catch (err: any) {
+            reply.code(409); return { error: `migration failed: ${err?.message ?? err}` };
+          }
         }
       }
 

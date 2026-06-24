@@ -16,3 +16,25 @@ coverage
 CLAUDE.md
 .mcp.json
 .claude/
+
+# Atrune project storage — created at runtime when a user grants folder
+# consent. NEVER commit DB, events, transcripts, or the consent marker.
+.atrune/
+atrune/
+
+# SQLite artefacts anywhere (Atrune DB + any local tooling that uses sqlite)
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite-journal
+
+# Packaged VS Code extension builds — produced by `vsce package`, not source
+*.vsix
+
+# Editor / IDE scratch
+.vscode/
+.idea/
+
+# Misc build / cache outputs
+.eslintcache
+out/

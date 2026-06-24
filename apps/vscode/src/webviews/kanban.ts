@@ -103,33 +103,39 @@ async function fetchState(workspaceId: string, briefId: string): Promise<KanbanS
   const gatesRes = await fetch(`${SERVER}/api/briefs/${briefId}/gates`);
   const gatesJson = await gatesRes.json() as { briefId: string; mode: 'auto' | 'manual'; gates: GateState[] };
 
-  // 2. Brief status to know overall progress.
-  const planRes = await fetch(`${SERVER}/api/workspaces/${workspaceId}/plan`);
-  const planJson = await planRes.json() as { briefs?: BriefStatus[] };
-  const brief = planJson.briefs?.find((b) => b.id === briefId);
+  // 2. Brief detail — chunks include per-phase status events (started/completed/failed).
+  const briefRes = await fetch(`${SERVER}/api/workspaces/${workspaceId}/briefs/${briefId}`);
+  const briefJson = await briefRes.json() as {
+    brief?: { id: string; status: string };
+    chunks?: Array<{ kind: string; phase?: string; status?: string; ts?: number }>;
+  };
+  const brief = briefJson.brief ?? null;
+  const chunks = briefJson.chunks ?? [];
 
-  // 3. Phase artifacts to detect completion. Read the briefs/<id> dir
-  //    via events stream. For simplicity, derive phase status from gates:
-  //    not released → inactive
-  //    released but not done → active
-  //    Completion is reported via plan endpoint's phase chunks (kept simple
-  //    here: rely on brief status === 'done' to mark all as completed).
+  // 3. Compute per-phase status from the LAST phase event we saw for that
+  //    phase. Order: failed > completed > started > inactive. Combined with
+  //    gate state — a phase that has no event but its gate is released is
+  //    "active" (about to run).
   const phaseStatus: Record<Phase, 'inactive' | 'active' | 'completed' | 'failed'> = {
     research: 'inactive', plan: 'inactive', implement: 'inactive', review: 'inactive', verify: 'inactive',
   };
   const releasedSet = new Set(gatesJson.gates.filter((g) => g.released).map((g) => g.phase));
 
-  // Naive: if a later phase is released, all earlier ones are completed.
-  let furthest = -1;
-  for (let i = PHASES.length - 1; i >= 0; i--) {
-    if (releasedSet.has(PHASES[i]!)) { furthest = i; break; }
+  // Walk chunks oldest → newest so the latest event wins.
+  for (const c of chunks) {
+    if (c.kind !== 'phase' || !c.phase || !PHASES.includes(c.phase as Phase)) continue;
+    const p = c.phase as Phase;
+    if (c.status === 'started') phaseStatus[p] = 'active';
+    else if (c.status === 'completed') phaseStatus[p] = 'completed';
+    else if (c.status === 'failed') phaseStatus[p] = 'failed';
+    else if (c.status === 'paused') phaseStatus[p] = 'active'; // budget pause — still in-flight semantically
   }
-  for (let i = 0; i < PHASES.length; i++) {
-    const p = PHASES[i]!;
-    if (i < furthest) phaseStatus[p] = 'completed';
-    else if (i === furthest) phaseStatus[p] = 'active';
-    else phaseStatus[p] = 'inactive';
+  // Phases whose gate is released but no event yet → active.
+  for (const p of PHASES) {
+    if (phaseStatus[p] === 'inactive' && releasedSet.has(p)) phaseStatus[p] = 'active';
   }
+  // Brief-level "done" → every phase is done. Brief "failed" doesn't blanket-
+  // override — keep the per-phase signal so the failed phase is highlighted.
   if (brief?.status === 'done') {
     for (const p of PHASES) phaseStatus[p] = 'completed';
   }
@@ -157,6 +163,7 @@ function renderHtml(briefId: string): string {
     --accent-fg: var(--vscode-button-foreground, #0e1116);
     --teal: #14B8A6;
     --amber: #f5c451;
+    --err: var(--vscode-errorForeground, #f48771);
     --ok:  #5cf2c0;
     --inactive: #6b7280;
   }
@@ -180,7 +187,7 @@ function renderHtml(briefId: string): string {
   button:hover { border-color: var(--teal); }
   button.primary { background: var(--accent); color: var(--accent-fg); border: 0; }
 
-  .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .board { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
   .col {
     background: var(--soft); border: 1px solid var(--line); border-radius: 6px;
     padding: 12px; min-height: 360px;
@@ -204,12 +211,27 @@ function renderHtml(briefId: string): string {
   .card:hover { border-color: var(--teal); }
   .card.dragging { opacity: 0.4; cursor: grabbing; }
   .card.completed { border-color: rgba(92, 242, 192, 0.3); }
-  .card.active { border-color: var(--amber); box-shadow: 0 0 0 1px var(--amber); }
+  .card.active {
+    border-color: var(--amber); box-shadow: 0 0 0 1px var(--amber);
+    cursor: not-allowed;  /* locked while running */
+  }
+  .card.active:hover { border-color: var(--amber); }
+  .card.failed {
+    border-color: rgba(244, 135, 113, 0.5);
+    background: rgba(244, 135, 113, 0.04);
+  }
+  /* Inactive cards whose prereqs aren't done — visually dimmed + not grabbable */
+  .card.waiting {
+    opacity: 0.45; cursor: not-allowed;
+    border-style: dashed;
+  }
+  .card.waiting:hover { border-color: var(--line); }
   .card .phase-name {
     font-size: 13px; font-weight: 600; text-transform: capitalize; margin-bottom: 2px;
   }
   .card .phase-meta { font-size: 11px; color: var(--dim); }
   .card.completed .phase-meta { color: var(--ok); }
+  .card.failed .phase-meta { color: var(--err); }
 
   .empty-col { font-size: 11px; color: var(--dim); padding: 24px 12px; text-align: center; opacity: 0.7; }
 
@@ -240,6 +262,10 @@ function renderHtml(briefId: string): string {
       <h2>Completed <span class="count" id="count-completed">0</span></h2>
       <div class="cards" id="cards-completed"></div>
     </div>
+    <div class="col" id="col-failed">
+      <h2>Failed <span class="count" id="count-failed">0</span></h2>
+      <div class="cards" id="cards-failed"></div>
+    </div>
   </div>
 
   <script>
@@ -261,47 +287,104 @@ function renderHtml(briefId: string): string {
 
       $('release-all-btn').style.display = state.mode === 'manual' && state.briefStatus !== 'done' ? '' : 'none';
 
-      // Bucket phases.
-      const buckets = { inactive: [], active: [], completed: [] };
+      // Bucket phases into 4 columns. Failure is per-phase: a single failed
+      // phase doesn't blanket the others. Active cards are NEVER draggable —
+      // you can't yank work out from under a running agent.
+      const buckets = { inactive: [], active: [], completed: [], failed: [] };
       for (const p of PHASES) {
         const s = state.phaseStatus[p];
-        if (s === 'completed') buckets.completed.push(p);
+        if (s === 'failed') buckets.failed.push(p);
+        else if (s === 'completed') buckets.completed.push(p);
         else if (s === 'active') buckets.active.push(p);
         else buckets.inactive.push(p);
       }
+
+      // Sequential dependency: a phase is "releasable" only when every
+      // earlier phase in PHASE_ORDER is completed. Non-releasable Inactive
+      // cards stay visually waiting and are not draggable.
+      const releasable = {};
+      let blocker = null;
+      for (const p of PHASES) {
+        const s = state.phaseStatus[p];
+        if (s === 'completed') { releasable[p] = false; continue; }
+        if (blocker === null) {
+          // first non-completed phase: it can run now
+          releasable[p] = (s !== 'active'); // active = already running, no need to release again
+          blocker = p;
+        } else {
+          // later phases wait for the blocker
+          releasable[p] = false;
+        }
+      }
+      const EMPTY_HINT = {
+        inactive: 'nothing waiting',
+        active: 'nothing running',
+        completed: 'nothing done yet',
+        failed: 'no failures 🎉',
+      };
       for (const k of Object.keys(buckets)) {
         const wrap = $('cards-' + k);
         const count = $('count-' + k);
         wrap.innerHTML = '';
         count.textContent = String(buckets[k].length);
         if (buckets[k].length === 0) {
-          wrap.innerHTML = '<div class="empty-col">' + (k === 'inactive' ? 'nothing waiting' : k === 'active' ? 'nothing running' : 'nothing done yet') + '</div>';
+          wrap.innerHTML = '<div class="empty-col">' + EMPTY_HINT[k] + '</div>';
           continue;
         }
         for (const p of buckets[k]) {
           const card = document.createElement('div');
-          card.className = 'card ' + k;
-          card.draggable = k === 'inactive' || k === 'completed'; // forward-only EXCEPT completed → active (verify-and-repair)
-          card.dataset.phase = p;
-          card.dataset.bucket = k;
           const idx = PHASES.indexOf(p);
           const order = ['1', '2', '3', '4', '5'][idx];
-          card.innerHTML = '<div class="phase-name">' + order + '. ' + p + '</div>' +
-                           '<div class="phase-meta">' + (k === 'completed' ? '✓ done · drag back to re-verify' : (k === 'active' ? '⏳ running' : '⏸ waiting')) + '</div>';
 
-          card.addEventListener('dragstart', (e) => {
-            card.classList.add('dragging');
-            e.dataTransfer.setData('text/phase', p);
-            e.dataTransfer.setData('text/bucket', k);
-          });
-          card.addEventListener('dragend', () => card.classList.remove('dragging'));
+          // Determine draggability + meta text. Phase ordering: a card is
+          // releasable from Inactive ONLY when every prior phase is completed.
+          // Active is locked. Completed/Failed are always draggable (reopen).
+          let isDraggable = false;
+          let meta = '';
+          if (k === 'active') {
+            meta = '⏳ running · locked while in flight';
+          } else if (k === 'completed') {
+            isDraggable = true;
+            meta = '✓ done · drag back to Active to re-verify';
+          } else if (k === 'failed') {
+            isDraggable = true;
+            meta = '🛑 failed · drag to Active to retry';
+          } else {
+            // inactive — only releasable if dependencies are met
+            if (releasable[p]) {
+              isDraggable = true;
+              meta = '⏸ ready · drag to Active to release';
+            } else {
+              const prevPhase = PHASES[idx - 1];
+              meta = '🔒 waiting for ' + (prevPhase || 'prereqs') + ' to complete';
+            }
+          }
+
+          card.className = 'card ' + k + (!isDraggable && k === 'inactive' ? ' waiting' : '');
+          card.draggable = isDraggable;
+          card.dataset.phase = p;
+          card.dataset.bucket = k;
+          card.innerHTML = '<div class="phase-name">' + order + '. ' + p + '</div>' +
+                           '<div class="phase-meta">' + meta + '</div>';
+
+          if (card.draggable) {
+            card.addEventListener('dragstart', (e) => {
+              card.classList.add('dragging');
+              e.dataTransfer.setData('text/phase', p);
+              e.dataTransfer.setData('text/bucket', k);
+            });
+            card.addEventListener('dragend', () => card.classList.remove('dragging'));
+          }
 
           wrap.appendChild(card);
         }
       }
     }
 
-    // Drop target = Active column. Only accepts cards from Inactive.
+    // Drop target = Active column. Accepts:
+    //   Inactive  → release (start the phase)
+    //   Completed → reopen  (verify-and-repair)
+    //   Failed    → reopen  (retry — same path, agent rechecks + fixes)
     const activeCol = $('col-active');
     activeCol.addEventListener('dragover', (e) => {
       e.preventDefault();
@@ -313,10 +396,19 @@ function renderHtml(briefId: string): string {
       activeCol.classList.remove('drop-target');
       const phase = e.dataTransfer.getData('text/phase');
       const bucket = e.dataTransfer.getData('text/bucket');
-      if (!phase) return;
+      if (!phase || !lastState) return;
+      // Server-side guard against dependency violations: even if a card
+      // somehow ends up here, only allow release when phaseStatus says ok.
+      const phaseStatus = lastState.phaseStatus[phase];
       if (bucket === 'inactive') {
+        // Ensure all prior phases are completed.
+        const idx = PHASES.indexOf(phase);
+        for (let i = 0; i < idx; i++) {
+          if (lastState.phaseStatus[PHASES[i]] !== 'completed') return;
+        }
+        if (phaseStatus !== 'inactive') return;
         vscode.postMessage({ type: 'release', phase });
-      } else if (bucket === 'completed') {
+      } else if (bucket === 'completed' || bucket === 'failed') {
         vscode.postMessage({ type: 'reopen', phase });
       }
     });

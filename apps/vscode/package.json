@@ -2,7 +2,7 @@
   "name": "atruneai",
   "displayName": "AtruneAI",
   "description": "Your AI workplace, inside VS Code. Brief your team, watch a 5-phase pipeline run, ship.",
-  "version": "0.1.1",
+  "version": "0.1.7",
   "publisher": "atrune-ai",
   "license": "AGPL-3.0",
   "main": "./dist/extension.js",
@@ -54,32 +54,38 @@
         {
           "id": "atrune.welcome",
           "name": "Get started",
-          "when": "!atrune.connected"
+          "when": "!atrune.connected || !atrune.folderConsented"
         },
         {
           "id": "atrune.activeWork",
           "name": "Active work",
           "icon": "$(target)",
-          "when": "atrune.connected"
+          "when": "atrune.connected && atrune.folderConsented"
         },
         {
           "id": "atrune.progress",
           "name": "Progress tracker",
           "icon": "$(checklist)",
-          "when": "atrune.connected"
+          "when": "atrune.connected && atrune.folderConsented"
         },
         {
           "id": "atrune.team",
           "name": "Team",
           "icon": "$(organization)",
-          "when": "atrune.connected"
+          "when": "atrune.connected && atrune.folderConsented"
         }
       ]
     },
     "viewsWelcome": [
       {
         "view": "atrune.welcome",
-        "contents": "Welcome to **AtruneAI**.\n\nYour AI workplace. Connect a coding subscription to activate your team.\n\n[$(plug) Connect a subscription](command:atrune.connectSubscription)\n\nClaude · Copilot · Codex\n\n---\n\n[Show me around](command:atrune.showWalkthrough)"
+        "when": "!atrune.connected",
+        "contents": "**Step 1 / 2 · Connect a coding subscription**\n\nClaude · Copilot · Codex — pick whichever you already pay for.\n\n[$(plug) Connect a subscription](command:atrune.connectSubscription)\n\n---\n\n[Show me around](command:atrune.showWalkthrough)"
+      },
+      {
+        "view": "atrune.welcome",
+        "when": "atrune.connected && !atrune.folderConsented",
+        "contents": "**Step 2 / 2 · Allow project storage**\n\nAtrune stores this project's history, logs, transcripts, and configs inside the folder you choose.\n\nEverything lives in `.atrune/` — delete that folder anytime to reset Atrune to initial state. Nothing is written until you click Allow.\n\n[$(folder-active) Allow storage in this folder](command:atrune.allowFolderStorage)\n\n---\n\n[Show me around](command:atrune.showWalkthrough)"
       }
     ],
     "configuration": {
@@ -228,6 +234,16 @@
         "command": "atrune.connectSubscription",
         "title": "Atrune: Connect a subscription…",
         "icon": "$(plug)"
+      },
+      {
+        "command": "atrune.allowFolderStorage",
+        "title": "Atrune: Allow project storage in this folder…",
+        "icon": "$(folder-active)"
+      },
+      {
+        "command": "atrune.revokeFolderStorage",
+        "title": "Atrune: Revoke folder storage (delete .atrune/)",
+        "icon": "$(trash)"
       },
       {
         "command": "atrune.showAllSessions",

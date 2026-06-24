@@ -17,6 +17,7 @@ import { SecondOpinionToggle } from './SecondOpinionToggle';
 import { MemorySection } from './MemorySection';
 import { BriefPane } from '../../ops/BriefPane';
 import { StartImplementation } from './StartImplementation';
+import { PhaseKanban } from './PhaseKanban';
 
 interface PlanResp {
   workspace: { id: string; name: string; autonomyMode: string; createdAt: number };
@@ -121,6 +122,12 @@ export function ProjectPlan({ workspaceId }: { workspaceId: string }) {
             Renders only when there's a dispatched brief sitting in 'pending'.
             Clicking Auto or Manual flips the mode + releases the start gate. */}
       <StartImplementation workspaceId={workspaceId} />
+
+      {/* Phase board — web-UI counterpart of the extension's Kanban webview.
+            Sequential dependency rule: only the next non-completed phase is
+            releasable. Mirrors the 4-column layout (Inactive/Active/Completed
+            /Failed). Renders only for briefs in auto/manual mode. */}
+      <PhaseKanban workspaceId={workspaceId} />
 
       {/* Progress dashboard (WBS Kanban + burndown) */}
       <Dashboard workspaceId={workspaceId} />

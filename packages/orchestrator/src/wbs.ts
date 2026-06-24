@@ -249,6 +249,26 @@ export function markPhaseComplete(args: {
   return matching.map((r) => getWorkItem(r.id)!);
 }
 
+/** Mark all items matching a (briefId, phase) as blocked (UI shows this as
+ *  "Failed"). Called from runPipeline when a phase throws so the task
+ *  Kanban reflects the failure per-task, not just per-brief. */
+export function markPhaseFailed(args: {
+  workspaceId: string;
+  briefId: string;
+  phase: WorkPhase;
+}): WorkItem[] {
+  const db = getDb();
+  const matching = db.select().from(schema.workItems).all()
+    .filter((r) => r.workspaceId === args.workspaceId
+      && r.briefId === args.briefId
+      && r.phase === args.phase
+      && r.status !== 'done' && r.status !== 'cancelled');
+  for (const r of matching) {
+    updateWorkItem(r.id, { status: 'blocked' });
+  }
+  return matching.map((r) => getWorkItem(r.id)!);
+}
+
 // ---------- helpers ----------
 
 function truncate(s: string, n: number): string {

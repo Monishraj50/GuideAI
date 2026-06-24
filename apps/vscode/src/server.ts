@@ -17,8 +17,9 @@ export class AtruneServer {
   private procs: SpawnedProcs = { server: null, web: null };
   private channel: vscode.OutputChannel;
   private api = new AtruneApi();
-  /** True when WE spawned the processes (so we should kill them on deactivate). */
-  private weOwnProcesses = false;
+  /** True when WE spawned the processes (so we should kill them on deactivate
+   *  AND when we need to respawn for env changes like ATRUNE_DB_PATH). */
+  public weOwnProcesses = false;
 
   constructor() {
     this.channel = vscode.window.createOutputChannel('Atrune');
@@ -98,23 +99,24 @@ export class AtruneServer {
     this.log(`Repo root: ${root}`);
 
     this.log('Spawning Fastify server (tsx watch apps/server)…');
-    // Per-project DB: the SQLite file lives inside the user's open folder
-    // at <openFolder>/.atrune/db.sqlite, so deleting the repo removes the
-    // data too. Falls back to ~/.guideai/db.sqlite when no folder is open.
+    // User-data discipline: per-project DB is the ONLY storage path.
+    // projectDbPath() returns null unless the user granted folder consent.
+    // We still spawn the server when consent is missing — it serves health,
+    // catalog, and integrations endpoints — but the server itself refuses to
+    // create or open a DB until consent flips on (see apps/server/src/index.ts).
     const projectDbPath = this.projectDbPath();
     if (projectDbPath) this.log(`Using per-project DB: ${projectDbPath}`);
+    else this.log('No folder consent yet — server starting in NO-STORAGE mode.');
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PORT: String(this.serverPort()),
+    };
+    if (projectDbPath) env.ATRUNE_DB_PATH = projectDbPath;
+    else delete env.ATRUNE_DB_PATH; // ensure no stale env leaks in
     this.procs.server = spawn(
       path.join(root, 'node_modules', '.bin', 'tsx'),
       ['watch', path.join(root, 'apps', 'server', 'src', 'index.ts')],
-      {
-        cwd: root,
-        env: {
-          ...process.env,
-          PORT: String(this.serverPort()),
-          ...(projectDbPath ? { ATRUNE_DB_PATH: projectDbPath } : {}),
-        },
-        stdio: 'pipe',
-      },
+      { cwd: root, env, stdio: 'pipe' },
     );
     this.pipe('server', this.procs.server);
 
@@ -173,11 +175,18 @@ export class AtruneServer {
   }
 
   /** Resolve where the project's SQLite DB should live: inside the open
-   *  folder's `.atrune/` so the data follows the repo. Returns null when no
-   *  workspace folder is open (server falls back to ~/.guideai/db.sqlite). */
+   *  folder's `.atrune/` so the data follows the repo. Returns null when:
+   *    - no workspace folder is open, OR
+   *    - the folder has NOT been consented to (no .atrune/.consent.json)
+   *  In both cases the server falls back to ~/.guideai/db.sqlite (sandbox).
+   *  Consent is required so we never silently create .atrune/ in a folder
+   *  the user hasn't explicitly opted in to. */
   projectDbPath(): string | null {
     const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!folder) return null;
+    // Lazy-require so a circular import doesn't bite during construction.
+    const { hasConsent } = require('./folderConsent') as typeof import('./folderConsent');
+    if (!hasConsent(folder)) return null;
     return path.join(folder, '.atrune', 'db.sqlite');
   }
 

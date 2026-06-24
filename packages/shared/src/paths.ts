@@ -74,14 +74,25 @@ export function dropWorkspaceRoot(workspaceId: string): void {
   saveRegistry();
 }
 
-/** Database file path. Resolves to ATRUNE_DB_PATH env var if set (the VS Code
- *  extension passes <openFolder>/.atrune/db.sqlite so DB data lives inside
- *  the user's repo and gets deleted with it). Falls back to the global
- *  ~/.guideai/db.sqlite for headless / pre-extension setups. */
+/** Database file path. ONLY resolves to `ATRUNE_DB_PATH` (set by the VS Code
+ *  extension after the user has granted folder consent). No global fallback —
+ *  if the env var isn't set, all user data is supposed to live in the
+ *  consented folder and nowhere else. Accessing `paths.db` without a path
+ *  throws so callers can surface a clear error instead of silently writing
+ *  to a default location. */
 export function getDbPath(): string {
   const override = process.env.ATRUNE_DB_PATH?.trim();
   if (override) return override;
-  return path.join(GUIDEAI_HOME, 'db.sqlite');
+  throw new Error(
+    'ATRUNE_DB_PATH is not set. Atrune only writes data into a user-consented ' +
+    '<folder>/.atrune/. Click "Allow project storage" in the extension sidebar.',
+  );
+}
+
+/** Cheap check: is per-project storage configured? Callers use this to bail
+ *  out of DB-dependent code paths without throwing. */
+export function hasDbPath(): boolean {
+  return !!process.env.ATRUNE_DB_PATH?.trim();
 }
 
 export const paths = {

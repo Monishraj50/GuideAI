@@ -6,7 +6,7 @@
 //   in_progress → Active
 //   todo        → Inactive
 //   done        → Completed
-//   blocked     → Not completed
+//   blocked     → Failed       (renamed from "Not completed" — matches the Kanban)
 //   cancelled   → Abandoned
 
 import * as vscode from 'vscode';
@@ -29,7 +29,7 @@ const STATUS_GROUPS = [
   { id: 'in_progress', label: 'Active',         icon: 'play' },
   { id: 'todo',        label: 'Inactive',       icon: 'circle-outline' },
   { id: 'done',        label: 'Completed',      icon: 'check' },
-  { id: 'blocked',     label: 'Not completed',  icon: 'warning' },
+  { id: 'blocked',     label: 'Failed',         icon: 'error' },
   { id: 'cancelled',   label: 'Abandoned',      icon: 'circle-slash' },
 ] as const;
 
@@ -41,7 +41,7 @@ const TASK_STATUS_ICON: Record<Status, string> = {
   in_progress: 'sync~spin',
   todo: 'circle-outline',
   done: 'check',
-  blocked: 'warning',
+  blocked: 'error',
   cancelled: 'circle-slash',
 };
 

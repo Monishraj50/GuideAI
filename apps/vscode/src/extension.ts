@@ -23,8 +23,9 @@ import { openKanban } from './webviews/kanban';
 import { quickAskChooser, askOneAgent, autoFix } from './directTask';
 import { AtruneStatusBar } from './statusBar';
 import { checkNewApprovals } from './approvals';
-import { maybePromptFirstLaunch, resetFirstLaunch } from './firstLaunch';
+import { resetFirstLaunch } from './firstLaunch';
 import { openConnectSubscription } from './webviews/connectSubscription';
+import { hasConsent, promptForConsent, revokeAndWipe } from './folderConsent';
 
 let server: AtruneServer | undefined;
 let pollHandle: NodeJS.Timeout | undefined;
@@ -88,6 +89,47 @@ export async function activate(ctx: vscode.ExtensionContext) {
     const connected = !!(claude?.ready || openai?.apiKeySet || copilotInstalled);
     await vscode.commands.executeCommand('setContext', 'atrune.connected', connected);
     return connected;
+  }
+  // Folder consent state — drives the `atrune.folderConsented` context key.
+  // True when <open-folder>/.atrune/.consent.json exists. Sidebar TreeViews
+  // ALSO gate on this — initial state shows only the Welcome view until the
+  // user explicitly clicks Allow.
+  //
+  // We also probe the running server: if consent says NO but the server still
+  // returns 200 on data routes, it was spawned with a stale ATRUNE_DB_PATH
+  // (its env doesn't update on tsx-watch reload). In that case we dispose
+  // and respawn so the server lines up with the truth on disk.
+  let lastConsentState: boolean | null = null;
+  async function checkConsentAndSetContext(): Promise<boolean> {
+    const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const consented = !!(folder && hasConsent(folder));
+    await vscode.commands.executeCommand('setContext', 'atrune.folderConsented', consented);
+
+    // Probe server vs consent. Only if we own the server — we never kill an
+    // external pnpm dev that the user might be running.
+    let serverMismatch = false;
+    if (server && server.weOwnProcesses) {
+      try {
+        const probe = await fetch(`http://localhost:${server.serverPort()}/api/workspaces`).catch(() => null);
+        const serverHasStorage = probe?.status === 200;
+        // Mismatch: consent says NO storage, but server returns workspaces (200).
+        // Or: consent says YES, but server returns 503.
+        if (serverHasStorage !== consented) serverMismatch = true;
+      } catch {}
+    }
+
+    const transition = lastConsentState !== null && lastConsentState !== consented;
+    if (transition || serverMismatch) {
+      try {
+        await server?.dispose();
+        server = new AtruneServer();
+        await server.ensureRunning();
+        await refreshActiveWorkspaceImmediate();
+        refreshAll();
+      } catch {}
+    }
+    lastConsentState = consented;
+    return consented;
   }
   async function refreshActiveWorkspace() {
     const list = await api.listWorkspaces();
@@ -188,11 +230,69 @@ export async function activate(ctx: vscode.ExtensionContext) {
       );
     }),
     vscode.commands.registerCommand('atrune.resetFirstLaunch', async () => {
+      // Clear the first-launch flag and re-check context so the Welcome view
+      // surfaces the connect button. We deliberately do NOT pop a modal here —
+      // the user re-engages via the sidebar Welcome view buttons.
       await resetFirstLaunch(ctx);
-      await maybePromptFirstLaunch(ctx, api, async () => { await checkConnectionAndSetContext(); });
+      await checkConnectionAndSetContext();
+      await checkConsentAndSetContext();
     }),
     vscode.commands.registerCommand('atrune.connectSubscription', async () => {
       await openConnectSubscription(ctx, api, async () => { await checkConnectionAndSetContext(); });
+    }),
+    vscode.commands.registerCommand('atrune.allowFolderStorage', async () => {
+      const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
+      if (folder && hasConsent(folder)) {
+        const re = await vscode.window.showInformationMessage(
+          `Atrune storage is already enabled for:\n\n  ${folder}/.atrune/\n\n` +
+          `Do you want to re-prompt (e.g. switch to a different folder)?`,
+          { modal: true },
+          'Re-prompt',
+        );
+        if (re !== 'Re-prompt') return;
+      }
+      const consented = await promptForConsent();
+      if (consented) {
+        vscode.window.showInformationMessage(`Atrune storage enabled at ${consented}/.atrune/`);
+        // Restart the server so it picks up ATRUNE_DB_PATH for the consented folder.
+        await server?.dispose();
+        server = new AtruneServer();
+        await server.ensureRunning();
+        await refreshActiveWorkspaceImmediate();
+        refreshAll();
+      }
+    }),
+    vscode.commands.registerCommand('atrune.revokeFolderStorage', async () => {
+      const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!folder) {
+        vscode.window.showInformationMessage('No folder open — nothing to revoke.');
+        return;
+      }
+      if (!hasConsent(folder)) {
+        vscode.window.showInformationMessage(`No Atrune storage exists in ${folder}.`);
+        return;
+      }
+      const confirm = await vscode.window.showWarningMessage(
+        `Revoke Atrune storage for this folder?\n\n` +
+        `This DELETES ${folder}/.atrune/ — the project DB, events, transcripts, ` +
+        `and consent marker. Equivalent to running rm -rf .atrune/ yourself. ` +
+        `Subscription connection stays untouched.`,
+        { modal: true },
+        'Delete .atrune/ and revoke',
+      );
+      if (confirm !== 'Delete .atrune/ and revoke') return;
+      const result = revokeAndWipe(folder);
+      if (result.removed) {
+        vscode.window.showInformationMessage(`Removed ${result.path}. Atrune is now in initial state.`);
+        // Server was talking to the deleted DB. Respawn so it falls back to sandbox.
+        await server?.dispose();
+        server = new AtruneServer();
+        await server.ensureRunning();
+        await refreshActiveWorkspaceImmediate();
+        refreshAll();
+      } else {
+        vscode.window.showWarningMessage(`Couldn't remove ${result.path}.`);
+      }
     }),
     vscode.commands.registerCommand('atrune.switchToWorkspace', async (workspaceId?: string) => {
       if (typeof workspaceId !== 'string' || !workspaceId.trim()) return;
@@ -356,10 +456,11 @@ export async function activate(ctx: vscode.ExtensionContext) {
     }
   }
 
-  // Set the initial connection-context BEFORE the async startup so the
-  // sidebar's welcome view (`!atrune.connected`) renders immediately on
-  // first activation. We re-check after the server is up.
+  // Set the initial connection + consent context BEFORE the async startup
+  // so the sidebar's welcome view renders immediately on first activation.
+  // We re-check after the server is up + on every poll tick.
   void checkConnectionAndSetContext();
+  void checkConsentAndSetContext();
 
   // ── ASYNC STARTUP — runs in the background, doesn't block command use ──
   (async () => {
@@ -398,15 +499,21 @@ export async function activate(ctx: vscode.ExtensionContext) {
     }
     await refreshActiveWorkspace();
     void tick();
-    // Re-check after server is up (now that we can hit /api/integrations/*)
-    // and prompt first-launch if no provider is connected.
+    // Re-check context keys after the server is up. NO MODAL PROMPTS — the
+    // user opts into both gates by clicking the buttons in the Welcome view
+    // (atrune.welcome viewsWelcome). Activation must be silent so opening
+    // any repo doesn't ambush the user with popups.
     void (async () => {
       await checkConnectionAndSetContext();
-      await maybePromptFirstLaunch(ctx, api, async () => {
-        await checkConnectionAndSetContext();
-      });
+      await checkConsentAndSetContext();
     })();
-    pollHandle = setInterval(() => { void tick(); }, 5000);
+    pollHandle = setInterval(() => {
+      void tick();
+      // Re-check consent on every poll so deleting <repo>/.atrune/ outside
+      // the extension (e.g. `rm -rf .atrune/`) flips the sidebar back to the
+      // initial Welcome view within ~5s.
+      void checkConsentAndSetContext();
+    }, 5000);
   })();
 
   ctx.subscriptions.push({ dispose: () => { if (pollHandle) clearInterval(pollHandle); } });
