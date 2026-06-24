@@ -2,7 +2,7 @@
   "name": "atruneai",
   "displayName": "AtruneAI",
   "description": "Your AI workplace, inside VS Code. Brief your team, watch a 5-phase pipeline run, ship.",
-  "version": "0.1.7",
+  "version": "0.1.0",
   "publisher": "atrune-ai",
   "license": "AGPL-3.0",
   "main": "./dist/extension.js",
@@ -79,13 +79,18 @@
     "viewsWelcome": [
       {
         "view": "atrune.welcome",
-        "when": "!atrune.connected",
-        "contents": "**Step 1 / 2 · Connect a coding subscription**\n\nClaude · Copilot · Codex — pick whichever you already pay for.\n\n[$(plug) Connect a subscription](command:atrune.connectSubscription)\n\n---\n\n[Show me around](command:atrune.showWalkthrough)"
+        "when": "!atrune.folderConsented && !atrune.connected",
+        "contents": "**Set up Atrune for this folder**\n\nTwo one-time steps. Both required.\n\n---\n\n**Step 1 — Connect a coding subscription**\n\nClaude · Copilot · Codex — pick whichever you already pay for.\n\n[$(plug) Connect a subscription](command:atrune.connectSubscription)\n\n---\n\n**Step 2 — Allow project storage**\n\nAtrune stores this project's history, logs, transcripts, and configs inside `.atrune/` in this folder.\n\nDelete that folder anytime to reset Atrune to initial state. Nothing is written until you click Allow.\n\n[$(folder-active) Allow storage in this folder](command:atrune.allowFolderStorage)\n\n---\n\n[Show me around](command:atrune.showWalkthrough)"
       },
       {
         "view": "atrune.welcome",
-        "when": "atrune.connected && !atrune.folderConsented",
-        "contents": "**Step 2 / 2 · Allow project storage**\n\nAtrune stores this project's history, logs, transcripts, and configs inside the folder you choose.\n\nEverything lives in `.atrune/` — delete that folder anytime to reset Atrune to initial state. Nothing is written until you click Allow.\n\n[$(folder-active) Allow storage in this folder](command:atrune.allowFolderStorage)\n\n---\n\n[Show me around](command:atrune.showWalkthrough)"
+        "when": "!atrune.folderConsented && atrune.connected",
+        "contents": "**Set up Atrune for this folder**\n\n---\n\n**Step 1 — Connect a coding subscription** · $(check) connected\n\nA subscription is configured globally. Click to manage / switch providers.\n\n[$(plug) Manage subscription](command:atrune.connectSubscription)\n\n---\n\n**Step 2 — Allow project storage**\n\nAtrune stores this project's history, logs, transcripts, and configs inside `.atrune/` in this folder.\n\nDelete that folder anytime to reset Atrune to initial state. Nothing is written until you click Allow.\n\n[$(folder-active) Allow storage in this folder](command:atrune.allowFolderStorage)\n\n---\n\n[Show me around](command:atrune.showWalkthrough)"
+      },
+      {
+        "view": "atrune.welcome",
+        "when": "atrune.folderConsented && !atrune.connected",
+        "contents": "**Connect a coding subscription**\n\nFolder consent is set — just need to wire up Claude / Copilot / Codex.\n\n[$(plug) Connect a subscription](command:atrune.connectSubscription)\n\n---\n\n[Show me around](command:atrune.showWalkthrough)"
       }
     ],
     "configuration": {
@@ -174,6 +179,11 @@
         "command": "atrune.openKanban",
         "title": "Atrune: Open Kanban for brief…",
         "icon": "$(layout)"
+      },
+      {
+        "command": "atrune.newProject",
+        "title": "Atrune: New project…",
+        "icon": "$(add)"
       },
       {
         "command": "atrune.quickAsk",

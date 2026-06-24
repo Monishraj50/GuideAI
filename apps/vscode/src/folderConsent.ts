@@ -14,6 +14,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 const CONSENT_FILENAME = '.consent.json';
+const SUBSCRIPTION_FILENAME = '.subscription-authorized.json';
 
 export interface ConsentRecord {
   /** Absolute folder path that was consented to (matches the .atrune parent). */
@@ -26,6 +27,40 @@ export interface ConsentRecord {
 
 function consentFile(folder: string): string {
   return path.join(folder, '.atrune', CONSENT_FILENAME);
+}
+function subscriptionFile(folder: string): string {
+  return path.join(folder, '.atrune', SUBSCRIPTION_FILENAME);
+}
+
+/** True if this folder has the per-folder "subscription authorized" marker.
+ *  Independent of folder consent — user can authorize subscription without
+ *  yet granting storage, or vice versa. Both files live INSIDE .atrune/, so
+ *  deleting that folder wipes both signals (true reset to initial). */
+export function hasSubscriptionAuthorized(folder: string): boolean {
+  try {
+    return fs.existsSync(subscriptionFile(folder));
+  } catch {
+    return false;
+  }
+}
+
+/** Record per-folder subscription authorization. Creates .atrune/ if missing
+ *  — this is one of the two acts that establishes the folder's state. */
+export function grantSubscriptionAuthorization(folder: string): void {
+  const dir = path.join(folder, '.atrune');
+  fs.mkdirSync(dir, { recursive: true });
+  const rec = {
+    folder: path.resolve(folder),
+    grantedAt: Date.now(),
+    schemaVersion: 1 as const,
+  };
+  fs.writeFileSync(subscriptionFile(folder), JSON.stringify(rec, null, 2), 'utf-8');
+}
+
+/** Remove just the subscription marker. Folder consent (and the rest of
+ *  .atrune/) stays in place. Used by the modal's Disconnect handlers. */
+export function revokeSubscriptionAuthorization(folder: string): void {
+  try { fs.rmSync(subscriptionFile(folder), { force: true }); } catch {}
 }
 
 /** True if this folder has a written consent marker on disk. */

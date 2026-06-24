@@ -20,12 +20,13 @@ import { TeamProvider } from './views/team';
 import { openMissionControl } from './webviews/missionControl';
 import { openBriefComposer } from './webviews/briefComposer';
 import { openKanban } from './webviews/kanban';
+import { openNewProject } from './webviews/newProject';
 import { quickAskChooser, askOneAgent, autoFix } from './directTask';
 import { AtruneStatusBar } from './statusBar';
 import { checkNewApprovals } from './approvals';
 import { resetFirstLaunch } from './firstLaunch';
-import { openConnectSubscription } from './webviews/connectSubscription';
-import { hasConsent, promptForConsent, revokeAndWipe } from './folderConsent';
+import { openConnectSubscription, clearFolderSubscriptionAuthorization } from './webviews/connectSubscription';
+import { hasConsent, hasSubscriptionAuthorized, promptForConsent, revokeAndWipe } from './folderConsent';
 
 let server: AtruneServer | undefined;
 let pollHandle: NodeJS.Timeout | undefined;
@@ -82,7 +83,19 @@ export async function activate(ctx: vscode.ExtensionContext) {
   // Connection state — drives the `atrune.connected` context key. Sidebar
   // TreeViews are hidden until this is true. Set on activate + after any
   // provider connection succeeds.
+  //
+  // Per-folder gate: even if global creds exist, `atrune.connected` stays
+  // false until <folder>/.atrune/.subscription-authorized.json exists. That
+  // file is written when the user clicks Connect inside the modal, and is
+  // wiped when the user deletes .atrune/. Combined with .consent.json, this
+  // makes the entire authorization story disappear with one rm -rf .atrune/.
   async function checkConnectionAndSetContext(): Promise<boolean> {
+    const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const folderAuthorized = !!(folder && hasSubscriptionAuthorized(folder));
+    if (!folderAuthorized) {
+      await vscode.commands.executeCommand('setContext', 'atrune.connected', false);
+      return false;
+    }
     const claude = await api.getGlobalClaude();
     const openai = await api.getGlobalOpenAI();
     const copilotInstalled = !!vscode.extensions.getExtension('GitHub.copilot');
@@ -283,6 +296,10 @@ export async function activate(ctx: vscode.ExtensionContext) {
       if (confirm !== 'Delete .atrune/ and revoke') return;
       const result = revokeAndWipe(folder);
       if (result.removed) {
+        // Clear per-folder subscription authorization so the Connect modal
+        // starts from "Not Connected" again next time it's opened.
+        await clearFolderSubscriptionAuthorization(ctx);
+        await vscode.commands.executeCommand('setContext', 'atrune.connected', false);
         vscode.window.showInformationMessage(`Removed ${result.path}. Atrune is now in initial state.`);
         // Server was talking to the deleted DB. Respawn so it falls back to sandbox.
         await server?.dispose();
@@ -310,6 +327,14 @@ export async function activate(ctx: vscode.ExtensionContext) {
       }
       const route = `/projects/${args.workspaceId}`;
       await vscode.commands.executeCommand('atrune.openMissionControl', { route });
+    }),
+    vscode.commands.registerCommand('atrune.newProject', async () => {
+      await openNewProject(ctx, api, async (workspaceId) => {
+        setActiveWorkspaceId(workspaceId);
+        await refreshActiveWorkspaceImmediate();
+        refreshAll();
+        vscode.window.showInformationMessage(`Project created · ${workspaceId}`);
+      });
     }),
     vscode.commands.registerCommand('atrune.openKanban', async (args?: {
       workspaceId?: string; briefId?: string;

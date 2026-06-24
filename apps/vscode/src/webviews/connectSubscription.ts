@@ -35,6 +35,34 @@ async function setPrimary(p: ProviderId | null): Promise<void> {
   );
 }
 
+// Per-folder subscription authorization lives in a marker file INSIDE
+// .atrune/ (see folderConsent.ts). The presence of the file IS the signal.
+// Deleting .atrune/ wipes both subscription auth AND folder consent in one
+// step — exactly the "delete .atrune/ to reset" contract the user wants.
+import { hasSubscriptionAuthorized, grantSubscriptionAuthorization, revokeSubscriptionAuthorization } from '../folderConsent';
+
+function currentFolder(): string | null {
+  return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
+}
+function isAuthorizedForFolder(): boolean {
+  const folder = currentFolder();
+  return !!(folder && hasSubscriptionAuthorized(folder));
+}
+function authorizeFolder(): void {
+  const folder = currentFolder();
+  if (folder) grantSubscriptionAuthorization(folder);
+}
+function deauthorizeFolder(): void {
+  const folder = currentFolder();
+  if (folder) revokeSubscriptionAuthorization(folder);
+}
+
+/** Kept for the extension.ts revoke command — clears the marker explicitly.
+ *  In practice revokeAndWipe (rm -rf .atrune/) already takes the file with it. */
+export function clearFolderSubscriptionAuthorization(_ctx: vscode.ExtensionContext): void {
+  deauthorizeFolder();
+}
+
 export async function openConnectSubscription(
   ctx: vscode.ExtensionContext,
   api: AtruneApi,
@@ -51,11 +79,18 @@ export async function openConnectSubscription(
   panel.iconPath = vscode.Uri.joinPath(ctx.extensionUri, 'images', 'icon.svg');
 
   async function rerender() {
-    const state = await detectState(api);
+    // Show real global state ONLY if the user has authorized this folder for
+    // subscription use. Until then, force everything to "Not Connected" —
+    // the user must click Connect once per folder to opt in.
+    const authorized = isAuthorizedForFolder();
+    const state = authorized
+      ? await detectState(api)
+      : forceNotConnectedState();
     panel!.webview.html = renderHtml(state);
-    if (state.claude.connected || state.copilot.connected || state.codex.connected) {
-      onConnected();
-    }
+    const anyConnected =
+      state.claude.connected || state.copilot.connected || state.codex.connected;
+    await vscode.commands.executeCommand('setContext', 'atrune.connected', anyConnected);
+    if (anyConnected) onConnected();
   }
   await rerender();
 
@@ -74,6 +109,7 @@ export async function openConnectSubscription(
         if (!key?.trim()) return;
         const r = await api.setGlobalClaudeApiKey(key.trim());
         if (r.ok) {
+          authorizeFolder();
           vscode.window.showInformationMessage('Atrune · Claude connected.');
           await rerender();
         } else {
@@ -85,6 +121,7 @@ export async function openConnectSubscription(
       case 'connect-claude-cli': {
         const r = await api.connectGlobalClaudeCli();
         if (r.ok) {
+          authorizeFolder();
           vscode.window.showInformationMessage('Atrune · Claude CLI connected.');
           await rerender();
         } else {
@@ -112,6 +149,7 @@ export async function openConnectSubscription(
         try {
           const session = await vscode.authentication.getSession('github', ['read:user'], { createIfNone: true });
           if (session) {
+            authorizeFolder();
             vscode.window.showInformationMessage('Atrune · GitHub Copilot detected.');
             await rerender();
           }
@@ -132,6 +170,7 @@ export async function openConnectSubscription(
         if (!key?.trim()) return;
         const r = await api.setGlobalOpenAIApiKey(key.trim());
         if (r.ok) {
+          authorizeFolder();
           vscode.window.showInformationMessage('Atrune · OpenAI / Codex connected.');
           await rerender();
         } else {
@@ -201,6 +240,22 @@ export async function openConnectSubscription(
   });
 
   panel.onDidDispose(() => { panel = undefined; }, null, ctx.subscriptions);
+}
+
+/** Render the modal as if no provider is connected — used before the user
+ *  has clicked Connect at least once in this folder. We deliberately ignore
+ *  the global ~/.guideai/integrations/ tokens here. */
+function forceNotConnectedState(): ConnectionState {
+  const copilotExt = vscode.extensions.getExtension('GitHub.copilot');
+  return {
+    claude: { connected: false } as any,
+    copilot: {
+      connected: false,
+      reason: !copilotExt ? 'extension not installed' : 'click Connect to authorize this folder',
+    },
+    codex: { connected: false },
+    primary: getPrimary(),
+  };
 }
 
 async function detectState(api: AtruneApi): Promise<ConnectionState> {

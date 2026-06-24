@@ -301,7 +301,7 @@ function renderHtml(
   </form>
   ` : `
   <div class="empty">
-    No projects yet. Open Mission Control to create one, then come back.
+    No projects yet. Run <strong>Atrune: New project…</strong> from the command palette to open the intake form, then come back.
   </div>
   `}
 

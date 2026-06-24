@@ -59,15 +59,14 @@ export class ActiveWorkProvider implements vscode.TreeDataProvider<Node> {
     const all = await this.api.listWorkspaces();
     if (all.length === 0) {
       return [
-        { label: 'No projects yet', description: 'click + to create one', iconId: 'info' },
+        { label: 'No projects yet', iconId: 'info' },
         {
-          label: 'Open Mission Control →',
-          description: 'create a project there',
-          iconId: 'arrow-right',
+          label: 'Create a project →',
+          description: 'intake + discovery in a tab',
+          iconId: 'add',
           command: {
-            command: 'atrune.openMissionControl',
-            title: 'Open Mission Control',
-            arguments: [{}],
+            command: 'atrune.newProject',
+            title: 'Create a new project',
           },
         },
       ];
