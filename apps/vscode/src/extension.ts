@@ -250,7 +250,119 @@ export async function activate(ctx: vscode.ExtensionContext) {
       await checkConnectionAndSetContext();
       await checkConsentAndSetContext();
     }),
+    vscode.commands.registerCommand('atrune.actions', async () => {
+      // Persistent quick-access menu — invoked from the status bar click.
+      const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
+      const consented = !!(folder && hasConsent(folder));
+      const subAuthed = !!(folder && hasSubscriptionAuthorized(folder));
+      const serverAlive = await api.isAlive();
+      type Action =
+        | 'connect' | 'allow' | 'revoke' | 'disconnectAtrune'
+        | 'mission' | 'briefs' | 'kanban' | 'newProject' | 'restart';
+      const items: Array<{ label: string; description?: string; detail?: string; action: Action }> = [];
+      if (!consented) {
+        items.push({ label: '$(folder-active) Allow project storage', description: 'Step 1', action: 'allow' });
+      }
+      items.push({
+        label: subAuthed
+          ? '$(plug) Manage subscription · disconnect / switch provider'
+          : '$(plug) Connect a subscription',
+        description: consented ? (subAuthed ? 'connected' : 'Step 2') : '$(lock) requires Step 1',
+        action: 'connect',
+      });
+      if (consented) {
+        items.push({ label: '$(add) New project', description: 'intake + discovery', action: 'newProject' });
+        items.push({ label: '$(comment-discussion) New brief…', detail: 'opens the brief composer', action: 'briefs' });
+        items.push({ label: '$(layout) Open Kanban for active brief…', action: 'kanban' });
+      }
+      items.push({ label: '$(window) Open Mission Control (browser)', action: 'mission' });
+      items.push({ label: '$(refresh) Restart Atrune server', action: 'restart' });
+      // Disconnect Atrune — full shutdown: subscription cleared, server killed
+      // (port :4000 freed), per-folder subscription marker removed. .atrune/
+      // contents stay so reconnecting later resumes the same project state.
+      if (serverAlive || subAuthed) {
+        items.push({
+          label: '$(debug-disconnect) Disconnect Atrune',
+          description: 'stop the server + remove subscription · .atrune/ stays',
+          action: 'disconnectAtrune',
+        });
+      }
+      if (consented) {
+        items.push({ label: '$(trash) Revoke folder storage (delete .atrune/)', description: 'reset to initial state', action: 'revoke' });
+      }
+      const pick = await vscode.window.showQuickPick(items, {
+        placeHolder: 'Atrune actions',
+        matchOnDescription: true,
+      });
+      if (!pick) return;
+      switch (pick.action) {
+        case 'allow':   return vscode.commands.executeCommand('atrune.allowFolderStorage');
+        case 'connect': return vscode.commands.executeCommand('atrune.connectSubscription');
+        case 'newProject': return vscode.commands.executeCommand('atrune.newProject');
+        case 'briefs':  return vscode.commands.executeCommand('atrune.newBrief');
+        case 'kanban':  return vscode.commands.executeCommand('atrune.openKanban');
+        case 'mission': return vscode.commands.executeCommand('atrune.openMissionControl');
+        case 'restart': return vscode.commands.executeCommand('atrune.restartServer');
+        case 'revoke':  return vscode.commands.executeCommand('atrune.revokeFolderStorage');
+        case 'disconnectAtrune': return vscode.commands.executeCommand('atrune.disconnectAtrune');
+      }
+    }),
+    vscode.commands.registerCommand('atrune.disconnectAtrune', async () => {
+      const confirm = await vscode.window.showWarningMessage(
+        'Disconnect Atrune?\n\n' +
+        'This will:\n' +
+        '  • Disconnect your subscription (Claude / OpenAI tokens cleared)\n' +
+        '  • Stop the Atrune server and free port 4000\n' +
+        '  • Remove the per-folder subscription marker\n\n' +
+        'Your .atrune/ folder, project DB, briefs, and transcripts STAY.\n' +
+        'Click any connect / setup action later to bring it back.',
+        { modal: true },
+        'Disconnect',
+      );
+      if (confirm !== 'Disconnect') return;
+      // 1. Global creds cleared so the Connect modal starts from "Not Connected"
+      try { await api.disconnectGlobalClaude(); } catch {}
+      try { await api.disconnectGlobalOpenAI(); } catch {}
+      // 2. Per-folder subscription marker removed (folder consent stays)
+      const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (folder) {
+        try {
+          const { revokeSubscriptionAuthorization } = require('./folderConsent') as typeof import('./folderConsent');
+          revokeSubscriptionAuthorization(folder);
+        } catch {}
+      }
+      // 3. Server processes killed → port :4000 freed
+      await server?.dispose();
+      server = undefined;
+      // 4. Flip context keys so sidebar reflects the disconnected state
+      await vscode.commands.executeCommand('setContext', 'atrune.connected', false);
+      // (folderConsented stays true so the user keeps the Step 2-only Welcome view)
+      await checkConsentAndSetContext();
+      refreshAll();
+      vscode.window.showInformationMessage('Atrune disconnected. Click "Connect a subscription" anytime to bring it back.');
+    }),
     vscode.commands.registerCommand('atrune.connectSubscription', async () => {
+      // If the server was killed (Disconnect Atrune), bring it back up before
+      // opening the modal — the modal calls /api/integrations endpoints.
+      if (!server || !(await api.isAlive())) {
+        server?.dispose().catch(() => {});
+        server = new AtruneServer();
+        await server.ensureRunning();
+      }
+      // Gate Step 2 behind Step 1. Connect modal cannot open until the user
+      // has explicitly granted folder storage for this project.
+      const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
+      if (!folder || !hasConsent(folder)) {
+        const pick = await vscode.window.showInformationMessage(
+          'Allow project storage first. Atrune writes its DB + transcripts inside `.atrune/` — the folder needs to be opted in before any subscription can be wired up.',
+          { modal: true },
+          'Allow storage now',
+        );
+        if (pick === 'Allow storage now') {
+          await vscode.commands.executeCommand('atrune.allowFolderStorage');
+        }
+        return;
+      }
       await openConnectSubscription(ctx, api, async () => { await checkConnectionAndSetContext(); });
     }),
     vscode.commands.registerCommand('atrune.allowFolderStorage', async () => {
@@ -335,6 +447,22 @@ export async function activate(ctx: vscode.ExtensionContext) {
         refreshAll();
         vscode.window.showInformationMessage(`Project created · ${workspaceId}`);
       });
+    }),
+    vscode.commands.registerCommand('atrune.editProjectIntake', async (workspaceId?: string) => {
+      // Resume an "empty" project's intake from Active Work. Opens the same
+      // New Project tab in edit-mode — name is pre-filled and read-only,
+      // intake fields seeded from whatever was saved before.
+      if (typeof workspaceId !== 'string' || !workspaceId.trim()) return;
+      await openNewProject(
+        ctx, api,
+        async (id) => {
+          setActiveWorkspaceId(id);
+          await refreshActiveWorkspaceImmediate();
+          refreshAll();
+          vscode.window.showInformationMessage(`Intake saved · ${id}`);
+        },
+        { existingWorkspaceId: workspaceId },
+      );
     }),
     vscode.commands.registerCommand('atrune.openKanban', async (args?: {
       workspaceId?: string; briefId?: string;

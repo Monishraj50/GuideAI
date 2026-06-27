@@ -24,19 +24,34 @@ export async function openNewProject(
   ctx: vscode.ExtensionContext,
   api: AtruneApi,
   onCreated: (workspaceId: string) => void | Promise<void>,
+  options?: { existingWorkspaceId?: string },
 ): Promise<void> {
   if (panel) { panel.reveal(vscode.ViewColumn.One); return; }
 
   panel = vscode.window.createWebviewPanel(
     'atrune.newProject',
-    'AtruneAI · New project',
+    options?.existingWorkspaceId
+      ? `AtruneAI · Finish setup · ${options.existingWorkspaceId}`
+      : 'AtruneAI · New project',
     vscode.ViewColumn.One,
     { enableScripts: true, retainContextWhenHidden: true },
   );
   panel.iconPath = vscode.Uri.joinPath(ctx.extensionUri, 'images', 'icon.svg');
 
   const openFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
-  panel.webview.html = renderHtml({ defaultTargetFolder: openFolder });
+
+  // Edit-mode prefill: when re-opening an existing empty workspace, read the
+  // workspace's name + targetFolder + intake fields and seed the form so the
+  // user picks up where they left off.
+  let prefill: PrefillState | null = null;
+  if (options?.existingWorkspaceId) {
+    prefill = await loadPrefillFromWorkspace(options.existingWorkspaceId);
+  }
+  panel.webview.html = renderHtml({
+    defaultTargetFolder: openFolder,
+    prefill,
+    existingWorkspaceId: options?.existingWorkspaceId ?? null,
+  });
 
   panel.webview.onDidReceiveMessage(async (msg) => {
     if (!msg || typeof msg !== 'object') return;
@@ -90,12 +105,26 @@ export async function openNewProject(
 
         panel?.webview.postMessage({ type: 'submitting' });
         try {
-          // 1. Create workspace (server slugs the name + may suffix)
-          const created = await api.createWorkspace(name, targetFolder);
-          if (!created.ok || !created.id) {
-            throw new Error(created.error ?? 'workspace create failed');
+          // 1. Either reuse an existing workspace (edit-mode finish-setup
+          //    flow) or create a new one. In edit-mode we still PATCH the
+          //    targetFolder in case the user picked a different one.
+          let wsId: string;
+          if (options?.existingWorkspaceId) {
+            wsId = options.existingWorkspaceId;
+            if (targetFolder) {
+              await fetch(`http://localhost:4000/api/workspaces/${wsId}`, {
+                method: 'PATCH',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ targetFolder }),
+              }).catch(() => {});
+            }
+          } else {
+            const created = await api.createWorkspace(name, targetFolder);
+            if (!created.ok || !created.id) {
+              throw new Error(created.error ?? 'workspace create failed');
+            }
+            wsId = created.id;
           }
-          const wsId = created.id;
 
           // 2. Save intake fields
           const intakeResp = await fetch(`http://localhost:4000/api/workspaces/${wsId}/intake`, {
@@ -147,8 +176,59 @@ export async function openNewProject(
   panel.onDidDispose(() => { panel = undefined; }, null, ctx.subscriptions);
 }
 
-function renderHtml(opts: { defaultTargetFolder: string }): string {
-  const targetFolderJson = JSON.stringify(opts.defaultTargetFolder);
+interface PrefillState {
+  name: string;
+  targetFolder: string;
+  goal: string;
+  successCriteria: string[];
+  constraints: string[];
+  budgetHintUsd: number | null;
+  budgetHintUnit: BudgetUnit;
+  planningMode: PlanningMode;
+  hireMode: HireMode;
+}
+
+/** Edit-mode prefill: read workspace + intake + meta and shape it for the
+ *  form. Used when re-opening an empty workspace from Active Work. */
+async function loadPrefillFromWorkspace(workspaceId: string): Promise<PrefillState | null> {
+  try {
+    const [wsResp, intakeResp, metaResp] = await Promise.all([
+      fetch(`http://localhost:4000/api/workspaces`).catch(() => null),
+      fetch(`http://localhost:4000/api/workspaces/${workspaceId}/intake`).catch(() => null),
+      fetch(`http://localhost:4000/api/workspaces/${workspaceId}/meta`).catch(() => null),
+    ]);
+    const wsList = (wsResp?.ok ? ((await wsResp.json()) as any).workspaces ?? [] : []) as any[];
+    const ws = wsList.find((w: any) => w.id === workspaceId);
+    const intakeJson = intakeResp?.ok ? (await intakeResp.json() as any) : null;
+    const i = (intakeJson?.intake ?? {}) as any;
+    const metaJson = metaResp?.ok ? (await metaResp.json() as any) : null;
+    return {
+      name: ws?.name ?? workspaceId,
+      targetFolder: (metaJson?.targetFolder ?? '') as string,
+      goal: i.goal ?? '',
+      successCriteria: Array.isArray(i.successCriteria) ? i.successCriteria : [],
+      constraints: Array.isArray(i.constraints) ? i.constraints : [],
+      budgetHintUsd: i.budgetHintUsd ?? null,
+      budgetHintUnit: (i.budgetHintUnit ?? 'USD') as BudgetUnit,
+      planningMode: (i.planningMode ?? 'assisted') as PlanningMode,
+      hireMode: (i.hireMode ?? 'manual') as HireMode,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function renderHtml(opts: { defaultTargetFolder: string; prefill: PrefillState | null; existingWorkspaceId: string | null }): string {
+  const initial = opts.prefill;
+  const targetFolderJson = JSON.stringify(initial?.targetFolder || opts.defaultTargetFolder);
+  const initialJson = JSON.stringify(initial);
+  const headline = opts.existingWorkspaceId
+    ? `📋 Finish setup · <code>${opts.existingWorkspaceId}</code>`
+    : '📋 New project';
+  const sub = opts.existingWorkspaceId
+    ? "This project was created but its intake isn't filled in yet. Complete the fields below to run the round-table."
+    : 'Set the intake fields and (optionally) run the discovery round-table immediately.';
+  const nameReadonly = opts.existingWorkspaceId ? 'readonly' : '';
   return `<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8" />
@@ -230,12 +310,12 @@ function renderHtml(opts: { defaultTargetFolder: string }): string {
   .status.ok    { color: var(--ok); }
 </style>
 </head><body>
-  <h1>📋 New project</h1>
-  <p class="sub">Set the intake fields and (optionally) run the discovery round-table immediately.</p>
+  <h1>${headline}</h1>
+  <p class="sub">${sub}</p>
 
   <form id="form">
     <label class="field" for="name">Project name</label>
-    <input id="name" type="text" placeholder="e.g. Palette Picker" required />
+    <input id="name" type="text" placeholder="e.g. Palette Picker" required ${nameReadonly} />
 
     <label class="field" for="goal">Goal</label>
     <textarea id="goal" placeholder="Build a single-page color palette generator that…" required></textarea>
@@ -310,12 +390,26 @@ function renderHtml(opts: { defaultTargetFolder: string }): string {
   <script>
     const vscode = acquireVsCodeApi();
     const initialFolder = ${targetFolderJson};
+    const prefill = ${initialJson};
     const folderEl = document.getElementById('folder');
     folderEl.value = initialFolder;
 
-    // chip state
-    const criteria = [];
-    const constraints = [];
+    // chip state — seeded from prefill in edit-mode
+    const criteria = prefill && Array.isArray(prefill.successCriteria) ? [...prefill.successCriteria] : [];
+    const constraints = prefill && Array.isArray(prefill.constraints) ? [...prefill.constraints] : [];
+
+    // Apply scalar prefill values (name, goal, budget, modes) when the
+    // webview is opened in edit-mode for an existing empty workspace.
+    if (prefill) {
+      if (prefill.name) document.getElementById('name').value = prefill.name;
+      if (prefill.goal) document.getElementById('goal').value = prefill.goal;
+      if (prefill.budgetHintUsd != null) document.getElementById('budget-amount').value = prefill.budgetHintUsd;
+      if (prefill.budgetHintUnit) document.getElementById('budget-unit').value = prefill.budgetHintUnit;
+      const planRadio = document.querySelector('input[name="planning-mode"][value="' + (prefill.planningMode || 'assisted') + '"]');
+      if (planRadio) planRadio.checked = true;
+      const hireRadio = document.querySelector('input[name="hire-mode"][value="' + (prefill.hireMode || 'manual') + '"]');
+      if (hireRadio) hireRadio.checked = true;
+    }
 
     function renderCriteria() {
       const el = document.getElementById('criteria-chips');
@@ -359,6 +453,10 @@ function renderHtml(opts: { defaultTargetFolder: string }): string {
       document.getElementById('constraints-draft').value = '';
       renderConstraints();
     }
+    // Surface prefilled chips immediately (edit-mode).
+    renderCriteria();
+    renderConstraints();
+
     document.getElementById('criteria-add').addEventListener('click', addCriterion);
     document.getElementById('criteria-draft').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); addCriterion(); }

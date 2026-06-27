@@ -189,6 +189,11 @@ export async function openConnectSubscription(
         if (r.ok) {
           // If Claude was primary, clear the setting so the UI doesn't dangle.
           if (getPrimary() === 'claude') await setPrimary(null);
+          // Disconnect ALSO clears the per-folder subscription marker so the
+          // Welcome view flips back to "Step 2 · Connect a subscription".
+          // .atrune/.consent.json stays — folder storage is untouched.
+          deauthorizeFolder();
+          await vscode.commands.executeCommand('setContext', 'atrune.connected', false);
           vscode.window.showInformationMessage('Atrune · Claude disconnected.');
           await rerender();
         } else {
@@ -206,6 +211,8 @@ export async function openConnectSubscription(
         const r = await api.disconnectGlobalOpenAI();
         if (r.ok) {
           if (getPrimary() === 'codex') await setPrimary(null);
+          deauthorizeFolder();
+          await vscode.commands.executeCommand('setContext', 'atrune.connected', false);
           vscode.window.showInformationMessage('Atrune · Codex disconnected.');
           await rerender();
         } else {

@@ -79,18 +79,13 @@
     "viewsWelcome": [
       {
         "view": "atrune.welcome",
-        "when": "!atrune.folderConsented && !atrune.connected",
-        "contents": "**Set up Atrune for this folder**\n\nTwo one-time steps. Both required.\n\n---\n\n**Step 1 — Connect a coding subscription**\n\nClaude · Copilot · Codex — pick whichever you already pay for.\n\n[$(plug) Connect a subscription](command:atrune.connectSubscription)\n\n---\n\n**Step 2 — Allow project storage**\n\nAtrune stores this project's history, logs, transcripts, and configs inside `.atrune/` in this folder.\n\nDelete that folder anytime to reset Atrune to initial state. Nothing is written until you click Allow.\n\n[$(folder-active) Allow storage in this folder](command:atrune.allowFolderStorage)\n\n---\n\n[Show me around](command:atrune.showWalkthrough)"
-      },
-      {
-        "view": "atrune.welcome",
-        "when": "!atrune.folderConsented && atrune.connected",
-        "contents": "**Set up Atrune for this folder**\n\n---\n\n**Step 1 — Connect a coding subscription** · $(check) connected\n\nA subscription is configured globally. Click to manage / switch providers.\n\n[$(plug) Manage subscription](command:atrune.connectSubscription)\n\n---\n\n**Step 2 — Allow project storage**\n\nAtrune stores this project's history, logs, transcripts, and configs inside `.atrune/` in this folder.\n\nDelete that folder anytime to reset Atrune to initial state. Nothing is written until you click Allow.\n\n[$(folder-active) Allow storage in this folder](command:atrune.allowFolderStorage)\n\n---\n\n[Show me around](command:atrune.showWalkthrough)"
+        "when": "!atrune.folderConsented",
+        "contents": "**Set up Atrune for this folder**\n\n---\n\n**Step 1 — Allow project storage**\n\nAtrune stores this project's history, logs, transcripts, and configs inside `.atrune/` in this folder.\n\nDelete that folder anytime to reset Atrune to initial state. Nothing is written until you click Allow.\n\n[$(folder-active) Allow storage in this folder](command:atrune.allowFolderStorage)\n\n---\n\n**Step 2 — Connect a coding subscription**\n\n$(lock) Locked — finish Step 1 first.\n\n---\n\n[Show me around](command:atrune.showWalkthrough)"
       },
       {
         "view": "atrune.welcome",
         "when": "atrune.folderConsented && !atrune.connected",
-        "contents": "**Connect a coding subscription**\n\nFolder consent is set — just need to wire up Claude / Copilot / Codex.\n\n[$(plug) Connect a subscription](command:atrune.connectSubscription)\n\n---\n\n[Show me around](command:atrune.showWalkthrough)"
+        "contents": "**Set up Atrune for this folder**\n\n---\n\n**Step 1 — Allow project storage** · $(check) done\n\n.atrune/ is set up in this folder.\n\n---\n\n**Step 2 — Connect a coding subscription**\n\nClaude · Copilot · Codex — pick whichever you already pay for.\n\n[$(plug) Connect a subscription](command:atrune.connectSubscription)\n\n---\n\n[Show me around](command:atrune.showWalkthrough)"
       }
     ],
     "configuration": {
@@ -186,6 +181,11 @@
         "icon": "$(add)"
       },
       {
+        "command": "atrune.actions",
+        "title": "Atrune: Actions…",
+        "icon": "$(menu)"
+      },
+      {
         "command": "atrune.quickAsk",
         "title": "Atrune: Quick ask…",
         "icon": "$(zap)"
@@ -256,6 +256,11 @@
         "icon": "$(trash)"
       },
       {
+        "command": "atrune.disconnectAtrune",
+        "title": "Atrune: Disconnect Atrune (stop server + clear subscription)",
+        "icon": "$(debug-disconnect)"
+      },
+      {
         "command": "atrune.showAllSessions",
         "title": "Atrune: Show all sessions",
         "icon": "$(history)"
@@ -285,8 +290,18 @@
         },
         {
           "command": "atrune.connectSubscription",
-          "when": "view == atrune.activeWork || view == atrune.welcome",
+          "when": "view == atrune.activeWork || view == atrune.progress || view == atrune.team || view == atrune.welcome",
           "group": "navigation@5"
+        },
+        {
+          "command": "atrune.disconnectAtrune",
+          "when": "view == atrune.activeWork || view == atrune.progress || view == atrune.team",
+          "group": "navigation@6"
+        },
+        {
+          "command": "atrune.allowFolderStorage",
+          "when": "view == atrune.welcome && !atrune.folderConsented",
+          "group": "navigation@0"
         },
         {
           "command": "atrune.refresh",

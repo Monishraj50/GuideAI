@@ -116,17 +116,32 @@ export class ActiveWorkProvider implements vscode.TreeDataProvider<Node> {
       }
 
       const isActive = w.id === this.activeWorkspaceId();
+      // "Empty / needs setup" = no briefs dispatched yet. Click sends the
+      // user back into the New Project tab in edit-mode to finish intake.
+      // Empty projects render as a LEAF (no children) so the user sees only
+      // the "needs setup" action — no confusing "dispatch one to start" hint.
+      const needsSetup = w.totalBriefs === 0;
       return {
-        label: w.name + (isActive ? '  •' : ''),
-        description: `${w.totalBriefs} brief${w.totalBriefs !== 1 ? 's' : ''} · ${w.agents} agent${w.agents !== 1 ? 's' : ''}`,
-        tooltip: `Workspace: ${w.id}${isActive ? ' (active)' : ''}`,
-        iconId: isActive ? 'folder-active' : 'folder',
-        children: briefNodes,
-        command: {
-          command: 'atrune.switchToWorkspace',
-          title: 'Make this the active project',
-          arguments: [w.id],
-        },
+        label: w.name + (isActive ? '  •' : '') + (needsSetup ? '  ⚙' : ''),
+        description: needsSetup
+          ? 'needs setup · click to finish intake'
+          : `${w.totalBriefs} brief${w.totalBriefs !== 1 ? 's' : ''} · ${w.agents} agent${w.agents !== 1 ? 's' : ''}`,
+        tooltip: needsSetup
+          ? `Workspace: ${w.id}\nNo briefs yet — click to open the intake form (name + goal + criteria + constraints).`
+          : `Workspace: ${w.id}${isActive ? ' (active)' : ''}`,
+        iconId: needsSetup ? 'gear' : (isActive ? 'folder-active' : 'folder'),
+        children: needsSetup ? undefined : briefNodes,
+        command: needsSetup
+          ? {
+              command: 'atrune.editProjectIntake',
+              title: 'Finish project setup',
+              arguments: [w.id],
+            }
+          : {
+              command: 'atrune.switchToWorkspace',
+              title: 'Make this the active project',
+              arguments: [w.id],
+            },
       };
     }));
 

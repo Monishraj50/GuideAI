@@ -19,7 +19,11 @@ export class AtruneStatusBar {
       vscode.StatusBarAlignment.Right,
       100,
     );
-    this.item.command = 'atrune.openMissionControl';
+    // Click → Quick Pick of common Atrune actions (manage subscription,
+    // open Mission Control, open Kanban, revoke folder storage). Gives the
+    // user a persistent always-visible entry point without dedicating sidebar
+    // real estate to it.
+    this.item.command = 'atrune.actions';
     this.item.show();
     this.renderConnecting();
   }
@@ -69,7 +73,7 @@ export class AtruneStatusBar {
     md.appendMarkdown(`- Briefs: ${plan.briefs.active} running / ${plan.briefs.total} total\n`);
     md.appendMarkdown(`- Spend: \`$${plan.usd.toFixed(2)}\` · ${plan.tokens.toLocaleString()} tokens\n`);
     md.appendMarkdown(`- Pending approvals: ${plan.pendingApprovals.length}\n\n`);
-    md.appendMarkdown(`_Click to open Mission Control_`);
+    md.appendMarkdown(`_Click for Atrune actions (connect / disconnect / open Mission Control / open Kanban / revoke)_`);
     return md;
   }
 
