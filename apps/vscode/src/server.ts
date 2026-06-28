@@ -120,45 +120,22 @@ export class AtruneServer {
     );
     this.pipe('server', this.procs.server);
 
-    this.log('Spawning Next.js dev server…');
-    const webDir = path.join(root, 'apps', 'web');
-    this.procs.web = spawn(
-      path.join(webDir, 'node_modules', '.bin', 'next'),
-      ['dev', '-p', String(this.webPort())],
-      { cwd: webDir, env: { ...process.env }, stdio: 'pipe' },
-    );
-    this.pipe('web', this.procs.web);
+    // S0 cleanup: Mission Control (apps/web) is gone. We only spawn the
+    // Fastify API server now — every UI surface lives inside VS Code.
 
     this.weOwnProcesses = true;
 
-    // Wait up to 10s for the API server. Web (Next.js dev) takes longer to
-    // boot but we don't block on it here — Mission Control probes it itself
-    // and shows a friendly loading/retry overlay if it isn't ready yet.
+    // Wait up to 10s for the API server to come up.
     const deadline = Date.now() + 10_000;
     while (Date.now() < deadline) {
       if (await this.api.isAlive()) {
         this.log('Server is up.');
-        // Kick off a non-blocking web-port log so the user sees progress.
-        void this.logWebReady();
         return { ok: true, spawned: true };
       }
       await new Promise((r) => setTimeout(r, 250));
     }
     this.log('Timed out waiting for the server to come up after 10s.');
     return { ok: false, spawned: true, reason: 'timeout' };
-  }
-
-  /** Periodically log when the Next.js dev server becomes reachable. */
-  private async logWebReady(): Promise<void> {
-    const deadline = Date.now() + 60_000;
-    while (Date.now() < deadline) {
-      if (await this.api.isWebAlive()) {
-        this.log('Web (Next.js dev) is up.');
-        return;
-      }
-      await new Promise((r) => setTimeout(r, 500));
-    }
-    this.log('Web (Next.js dev) did not respond within 60s.');
   }
 
   private pipe(label: string, proc: ChildProcess) {
@@ -182,11 +159,13 @@ export class AtruneServer {
    *  Consent is required so we never silently create .atrune/ in a folder
    *  the user hasn't explicitly opted in to. */
   projectDbPath(): string | null {
-    const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (!folder) return null;
     // Lazy-require so a circular import doesn't bite during construction.
-    const { hasConsent } = require('./folderConsent') as typeof import('./folderConsent');
-    if (!hasConsent(folder)) return null;
+    const { getActiveConsentedFolder } = require('./folderConsent') as typeof import('./folderConsent');
+    // Prefer the explicitly-consented folder (which may be different from
+    // the open VS Code folder if the user picked one via "Pick a different
+    // folder…"). Falls back to the open folder if it's also consented.
+    const folder = getActiveConsentedFolder();
+    if (!folder) return null;
     return path.join(folder, '.atrune', 'db.sqlite');
   }
 
@@ -202,3 +181,4 @@ export class AtruneServer {
     }
   }
 }
+

@@ -261,6 +261,11 @@ function baseArgs(opts: SpawnOpts): string[] {
   if (opts.allowedTools && opts.allowedTools.length > 0) {
     args.push('--allowedTools', opts.allowedTools.join(','));
   }
+  // Per-brief Claude session: every phase of a brief reuses the same id so
+  // the conversation history is preserved + recoverable via `claude --resume`.
+  if (opts.sessionId) args.push('--session-id', opts.sessionId);
+  // Human-readable label for the picker — e.g. "frontend-developer · auth-flow".
+  if (opts.sessionName) args.push('--name', opts.sessionName);
   return args;
 }
 
@@ -366,7 +371,15 @@ export const ClaudeAdapter: RuntimeAdapter = {
 
     const chunks: Chunk[] = [];
     const listeners = new Set<(c: Chunk) => void>();
+    // Buffer for the eventual RunOnceResult.
     listeners.add((c) => chunks.push(c));
+    // Streaming fan-out: caller-supplied callback runs for every chunk as
+    // soon as it arrives — used by the orchestrator to live-append to the
+    // transcript file so the user sees turns + tool calls in real time.
+    if (typeof opts.onChunk === 'function') {
+      const cb = opts.onChunk;
+      listeners.add((c) => { try { cb(c); } catch { /* ignore listener errors */ } });
+    }
     attachStream(proc, opts.workspaceId, opts.agentId, listeners);
 
     const exitCode = await new Promise<number>((resolve) => {

@@ -32,12 +32,10 @@
   },
   "dependencies": {
     "@guideai/agents-catalog": "workspace:*",
-    "@guideai/evals": "workspace:*",
     "@guideai/messaging": "workspace:*",
     "@guideai/policies": "workspace:*",
     "@guideai/runtime-claude": "workspace:*",
     "@guideai/runtime-core": "workspace:*",
-    "@guideai/runtime-openai": "workspace:*",
     "@guideai/shared": "workspace:*",
     "@guideai/skills": "workspace:*",
     "drizzle-orm": "^0.36.4"

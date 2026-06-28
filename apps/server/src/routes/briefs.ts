@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import { submitBrief } from '@guideai/orchestrator/cos';
+import { submitBrief, resumeBrief } from '@guideai/orchestrator/cos';
+import { isPipelineAlive } from '@guideai/orchestrator/wbs';
 import * as taskGate from '@guideai/orchestrator/taskGate';
 
 export function registerBriefRoutes(app: FastifyInstance) {
@@ -78,11 +79,23 @@ export function registerBriefRoutes(app: FastifyInstance) {
 
   // Release a single phase gate (Manual mode) — fired when the user drags
   // a phase card from Inactive → Active in the Kanban.
+  //
+  // Auto-resume: if no live runPipeline is driving this brief (heartbeat
+  // stale or never set), kick off resumeBrief BEFORE releasing the gate.
+  // Otherwise the gate-release would have nothing listening, the in_progress
+  // task would sit until the sweeper reverts it, and the user would see
+  // "task fell back to inactive" with no agent ever running.
   app.post<{ Params: { briefId: string; phase: string } }>(
     '/api/briefs/:briefId/phases/:phase/release',
     async (req) => {
-      const released = taskGate.release(req.params.briefId, req.params.phase);
-      return { ok: true, released, briefId: req.params.briefId, phase: req.params.phase };
+      const { briefId, phase } = req.params;
+      let resumed = false;
+      if (!isPipelineAlive(briefId)) {
+        const r = await resumeBrief(briefId);
+        resumed = r.ok;
+      }
+      const released = taskGate.release(briefId, phase);
+      return { ok: true, released, resumed, briefId, phase };
     },
   );
 
@@ -100,6 +113,27 @@ export function registerBriefRoutes(app: FastifyInstance) {
   app.get<{ Params: { briefId: string } }>(
     '/api/briefs/:briefId/gates',
     async (req) => ({ briefId: req.params.briefId, mode: taskGate.modeOf(req.params.briefId), gates: taskGate.gateStates(req.params.briefId) }),
+  );
+
+  // Resume a brief whose pipeline died (server crash, manual kill, etc.).
+  // Reuses the brief's stored Claude session UUID and skips phases whose
+  // artifact .md is already on disk. Safe to call when nothing is stuck —
+  // becomes a noop because every phase artifact exists.
+  app.post<{ Params: { briefId: string } }>(
+    '/api/briefs/:briefId/resume',
+    async (req, reply) => {
+      try {
+        const result = await resumeBrief(req.params.briefId);
+        if (!result.ok) {
+          reply.code(result.reason === 'brief-not-found' ? 404 : 409);
+        }
+        return result;
+      } catch (err: any) {
+        req.log.error(err);
+        reply.code(500);
+        return { ok: false, error: String(err?.message ?? err) };
+      }
+    },
   );
 
   // Reopen a completed phase in verify-and-repair mode. Today this records

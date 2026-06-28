@@ -68,6 +68,12 @@ export const briefs = sqliteTable('briefs', {
   body: text('body').notNull(),
   status: text('status').notNull().default('pending'),  // pending|active|done|cancelled
   createdAt: integer('created_at').notNull(),
+  // One Claude session per brief. Generated as a UUID at submitBrief() and
+  // passed to every Claude CLI invocation via --session-id, so all 5 phases
+  // share a single conversation. The user can later run
+  //   claude --resume <claude_session_id>
+  // to pick up where the brief left off.
+  claudeSessionId: text('claude_session_id'),
 });
 
 export const tasks = sqliteTable('tasks', {
@@ -210,6 +216,23 @@ export const workItems = sqliteTable('work_items', {
   updatedAt: integer('updated_at').notNull(),
   startedAt: integer('started_at'),
   completedAt: integer('completed_at'),
+  // Bumped every ~10s by runPipeline while this item's phase is actively
+  // running. If it goes stale (no bump for > N seconds) and the orchestrator
+  // is not actively working, the sweeper reverts the item to 'todo' so it
+  // doesn't sit forever in the "in_progress" column with no agent on it.
+  lastHeartbeatAt: integer('last_heartbeat_at'),
+  // Written by the fixer agent when this item ends up blocked. Surfaces in
+  // the Kanban tooltip + acts as the prompt seed when the user clicks Retry.
+  failureDiagnosis: text('failure_diagnosis'),
+  // Workspace-scoped feature label (e.g. 'build-coin-flip-page'). All tasks
+  // with the same (featureTag, assignedRole) share a Claude session so the
+  // conversation persists across phases AND across briefs that touch the
+  // same feature.
+  featureTag: text('feature_tag'),
+  // The Claude session UUID resolved for this task. Populated lazily at run
+  // time by resolveTaskSession() — the first task with a given (featureTag,
+  // role) mints a fresh UUID; subsequent tasks reuse it.
+  claudeSessionId: text('claude_session_id'),
   githubIssueNumber: integer('github_issue_number'),
   githubIssueUrl: text('github_issue_url'),
 });

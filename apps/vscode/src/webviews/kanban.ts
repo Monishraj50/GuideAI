@@ -65,6 +65,11 @@ export async function openKanban(args: { workspaceId: string; briefId: string })
         const phase = String(msg.phase ?? '');
         if (!PHASES.includes(phase as Phase)) return;
         await fetch(`${SERVER}/api/briefs/${args.briefId}/phases/${phase}/release`, { method: 'POST' });
+        // Auto-open the live chat tail so the user immediately sees the
+        // agent at work. No-op if the panel is already open for this brief.
+        vscode.commands.executeCommand('atrune.openLiveSessionTail', {
+          workspaceId: args.workspaceId, briefId: args.briefId,
+        });
         void tick();
         return;
       }
@@ -76,6 +81,17 @@ export async function openKanban(args: { workspaceId: string; briefId: string })
         if (j?.note) {
           vscode.window.showInformationMessage(`Reopened ${phase} — ${j.note}`);
         }
+        void tick();
+        return;
+      }
+      case 'retry': {
+        // Hits /resume which un-blocks failed items + re-runs the pipeline.
+        // Same path is used by "Resume brief pipeline" Quick Pick — one entry
+        // point covers both crash recovery and explicit retry.
+        await fetch(`${SERVER}/api/briefs/${args.briefId}/resume`, { method: 'POST' });
+        vscode.commands.executeCommand('atrune.openLiveSessionTail', {
+          workspaceId: args.workspaceId, briefId: args.briefId,
+        });
         void tick();
         return;
       }
@@ -348,7 +364,7 @@ function renderHtml(briefId: string): string {
             meta = '✓ done · drag back to Active to re-verify';
           } else if (k === 'failed') {
             isDraggable = true;
-            meta = '🛑 failed · drag to Active to retry';
+            meta = '🛑 failed · fixer agent diagnosis in chat · drag to Active to retry';
           } else {
             // inactive — only releasable if dependencies are met
             if (releasable[p]) {
@@ -408,7 +424,12 @@ function renderHtml(briefId: string): string {
         }
         if (phaseStatus !== 'inactive') return;
         vscode.postMessage({ type: 'release', phase });
-      } else if (bucket === 'completed' || bucket === 'failed') {
+      } else if (bucket === 'failed') {
+        // Retry — un-blocks failed work items + restarts pipeline. The
+        // orchestrator's runPipeline skips phases whose artifact is already
+        // on disk so completed earlier phases aren't redone.
+        vscode.postMessage({ type: 'retry', phase });
+      } else if (bucket === 'completed') {
         vscode.postMessage({ type: 'reopen', phase });
       }
     });

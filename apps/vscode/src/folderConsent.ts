@@ -11,10 +11,108 @@
 
 import * as vscode from 'vscode';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 const CONSENT_FILENAME = '.consent.json';
 const SUBSCRIPTION_FILENAME = '.subscription-authorized.json';
+
+// Legacy global pointer location. We DO NOT write to it anymore — each
+// VS Code window must resolve scope purely from its own open folder, so
+// that deleting `<repo>/.atrune` actually clears that repo's logs and
+// nothing leaks across repos. We still read this on activation only to
+// delete it (one-time cleanup).
+const LEGACY_ACTIVE_FOLDER_FILE = path.join(
+  process.env.GUIDEAI_HOME ?? path.join(os.homedir(), '.guideai'),
+  'active-folder.json',
+);
+
+/** Delete the legacy global pointer if present. Called on activation so
+ *  upgrading from a previous build flushes stale leak vectors. */
+export function deleteLegacyActiveFolderPointer(): { removed: boolean } {
+  try {
+    if (fs.existsSync(LEGACY_ACTIVE_FOLDER_FILE)) {
+      fs.rmSync(LEGACY_ACTIVE_FOLDER_FILE, { force: true });
+      return { removed: true };
+    }
+  } catch {}
+  return { removed: false };
+}
+
+/** Defensive normalization: if a caller hands us "/path/to/foo/.atrune"
+ *  by mistake (e.g. the user picked .atrune itself in the open dialog),
+ *  strip that suffix so we store the project folder, not the storage dir. */
+function normalizeFolder(folder: string): string {
+  const resolved = path.resolve(folder);
+  if (path.basename(resolved) === '.atrune') return path.dirname(resolved);
+  return resolved;
+}
+
+/** The folder we should treat as the active consented project.
+ *  Strictly per-window: only the currently-open VS Code folder counts.
+ *  If it has no `.atrune/.consent.json`, return null — never fall back
+ *  to any other repo's data. Deleting `.atrune/` in the open repo
+ *  cleanly clears the sidebar without leakage. */
+export function getActiveConsentedFolder(): string | null {
+  const open = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
+  if (!open) return null;
+  const normalized = normalizeFolder(open);
+  return hasConsent(normalized) ? normalized : null;
+}
+
+/** Back-compat shim — older callers expected this. Now a no-op since we
+ *  don't persist any global pointer. */
+export function clearActiveFolder(): void { /* no-op */ }
+
+/**
+ * Per-window cleanup: if the currently-open folder has NO `.atrune/`
+ * directory, wipe every Claude session jsonl tied to that folder so
+ * deleting `.atrune` truly clears all logs/cache. Called on activation.
+ * Returns a summary the caller can log.
+ */
+export function reapOrphanedClaudeSessions(): { reaped: number; folder: string | null } {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
+  if (!folder) return { reaped: 0, folder: null };
+  if (fs.existsSync(path.join(folder, '.atrune'))) return { reaped: 0, folder };  // still alive
+
+  // .atrune is gone — wipe every byte that could leak back into the UI.
+  let reaped = 0;
+
+  // 1. Claude session jsonls tied to this folder (the file dirs encode the
+  //    cwd; subagent runs land under '<enc>--atrune-agents-…-cwd/').
+  const projectsRoot = path.join(os.homedir(), '.claude', 'projects');
+  const enc = path.resolve(folder).replace(/[/\\]/g, '-');
+  if (fs.existsSync(projectsRoot)) {
+    for (const child of fs.readdirSync(projectsRoot)) {
+      if (child === enc || child.startsWith(enc + '--atrune-agents-')) {
+        try { fs.rmSync(path.join(projectsRoot, child), { recursive: true, force: true }); reaped++; } catch {}
+      }
+    }
+  }
+
+  // 2. Global workspace registry entries whose meta.json.targetFolder
+  //    matches this folder. ~/.guideai/workspaces/<id>/meta.json is the
+  //    only pointer back from the global registry → the project folder,
+  //    so this removes anything that could surface the deleted repo's
+  //    workspace in another VS Code window.
+  const guideaiHome = process.env.GUIDEAI_HOME ?? path.join(os.homedir(), '.guideai');
+  const wsRoot = path.join(guideaiHome, 'workspaces');
+  if (fs.existsSync(wsRoot)) {
+    for (const child of fs.readdirSync(wsRoot)) {
+      const metaFile = path.join(wsRoot, child, 'meta.json');
+      try {
+        if (!fs.existsSync(metaFile)) continue;
+        const meta = JSON.parse(fs.readFileSync(metaFile, 'utf-8'));
+        if (typeof meta?.targetFolder === 'string' && path.resolve(meta.targetFolder) === path.resolve(folder)) {
+          fs.rmSync(path.join(wsRoot, child), { recursive: true, force: true });
+          reaped++;
+        }
+      } catch {}
+    }
+  }
+
+  return { reaped, folder };
+}
 
 export interface ConsentRecord {
   /** Absolute folder path that was consented to (matches the .atrune parent). */
@@ -98,6 +196,8 @@ export function grantConsent(folder: string): ConsentRecord {
     schemaVersion: 1,
   };
   fs.writeFileSync(consentFile(folder), JSON.stringify(rec, null, 2), 'utf-8');
+  // No global pointer to update anymore — server reads scope per-window
+  // from the open folder's `.atrune/.consent.json`. Keeps deletes clean.
   return rec;
 }
 
@@ -105,17 +205,53 @@ export function grantConsent(folder: string): ConsentRecord {
  *  This is the "reset to initial state" path: the user can either click a
  *  command (atrune.revokeFolderConsent) or rm -rf .atrune/ themselves.
  *  Equivalent net result. */
-export function revokeAndWipe(folder: string): { removed: boolean; path: string } {
+export function revokeAndWipe(folder: string): {
+  removed: boolean; path: string; claudeSessionsRemoved: number;
+} {
   const dir = path.join(folder, '.atrune');
+  let claudeSessionsRemoved = 0;
   try {
     if (fs.existsSync(dir)) {
       fs.rmSync(dir, { recursive: true, force: true });
-      return { removed: true, path: dir };
+      clearActiveFolder();
+      // Also wipe every Claude session jsonl tied to this folder. They live
+      // under ~/.claude/projects/<encoded-cwd>/ — the cwd is the user's
+      // folder path with '/' replaced by '-'. Subagent runs land under
+      // <encoded-cwd>--atrune-agents-…-cwd/ so we match a prefix.
+      const projectsRoot = path.join(os.homedir(), '.claude', 'projects');
+      const enc = path.resolve(folder).replace(/[/\\]/g, '-');
+      if (fs.existsSync(projectsRoot)) {
+        for (const child of fs.readdirSync(projectsRoot)) {
+          if (child === enc || child.startsWith(enc + '--atrune-agents-')) {
+            try {
+              fs.rmSync(path.join(projectsRoot, child), { recursive: true, force: true });
+              claudeSessionsRemoved++;
+            } catch {}
+          }
+        }
+      }
+      // Also drop the global workspace registry entries pointing at this
+      // folder — otherwise a future VS Code window could re-surface them.
+      const guideaiHome = process.env.GUIDEAI_HOME ?? path.join(os.homedir(), '.guideai');
+      const wsRoot = path.join(guideaiHome, 'workspaces');
+      if (fs.existsSync(wsRoot)) {
+        for (const child of fs.readdirSync(wsRoot)) {
+          const metaFile = path.join(wsRoot, child, 'meta.json');
+          try {
+            if (!fs.existsSync(metaFile)) continue;
+            const meta = JSON.parse(fs.readFileSync(metaFile, 'utf-8'));
+            if (typeof meta?.targetFolder === 'string' && path.resolve(meta.targetFolder) === path.resolve(folder)) {
+              fs.rmSync(path.join(wsRoot, child), { recursive: true, force: true });
+            }
+          } catch {}
+        }
+      }
+      return { removed: true, path: dir, claudeSessionsRemoved };
     }
   } catch (e) {
     // Best-effort; report what we tried.
   }
-  return { removed: false, path: dir };
+  return { removed: false, path: dir, claudeSessionsRemoved };
 }
 
 /** Prompt the user for consent on the currently-open folder. Called from

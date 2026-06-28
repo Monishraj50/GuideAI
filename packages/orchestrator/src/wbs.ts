@@ -36,6 +36,9 @@ export interface WorkItem {
   updatedAt: number;
   startedAt: number | null;
   completedAt: number | null;
+  failureDiagnosis: string | null;
+  featureTag: string | null;
+  claudeSessionId: string | null;
 }
 
 const STATUSES: WorkStatus[] = ['todo', 'in_progress', 'blocked', 'done', 'cancelled'];
@@ -51,6 +54,9 @@ function rowToItem(row: any): WorkItem {
     source: row.source,
     createdAt: row.createdAt, updatedAt: row.updatedAt,
     startedAt: row.startedAt, completedAt: row.completedAt,
+    failureDiagnosis: row.failureDiagnosis ?? null,
+    featureTag: row.featureTag ?? null,
+    claudeSessionId: row.claudeSessionId ?? null,
   };
 }
 
@@ -92,6 +98,7 @@ export interface CreateWorkItemInput {
   priority?: WorkPriority;
   estimateHours?: number | null;
   source?: 'auto' | 'manual';
+  featureTag?: string | null;
 }
 
 export function createWorkItem(input: CreateWorkItemInput): WorkItem {
@@ -119,6 +126,7 @@ export function createWorkItem(input: CreateWorkItemInput): WorkItem {
     createdAt: now, updatedAt: now,
     startedAt: status === 'in_progress' ? now : null,
     completedAt: status === 'done' ? now : null,
+    featureTag: input.featureTag ?? null,
   } as any).run();
   return getWorkItem(id)!;
 }
@@ -178,6 +186,7 @@ export function autoSeedFromPlan(args: {
   briefId: string;
   planId: string;
   synthesis: DiscoverySynthesis;
+  featureTag?: string | null;
 }): WorkItem[] {
   const db = getDb();
   // Idempotency: if any auto items already exist for this brief, skip.
@@ -186,8 +195,8 @@ export function autoSeedFromPlan(args: {
   if (existing.length > 0) return existing.map(rowToItem);
 
   const items: WorkItem[] = [];
-  const { workspaceId, briefId, planId, synthesis } = args;
-  const common = { workspaceId, briefId, planId, source: 'auto' as const };
+  const { workspaceId, briefId, planId, synthesis, featureTag } = args;
+  const common = { workspaceId, briefId, planId, source: 'auto' as const, featureTag: featureTag ?? null };
 
   // Roles: 1 research + 1 implement per recommended role.
   for (const role of synthesis.recommendedRoles.slice(0, 8)) {
@@ -230,6 +239,27 @@ export function autoSeedFromPlan(args: {
   return items;
 }
 
+/** Mark all auto items matching a (briefId, phase) as in_progress at phase
+ *  start. Without this, cards visibly skip from Inactive → Done because the
+ *  pipeline only updates state on phase completion. Called from runPipeline
+ *  right before runOnce. */
+export function markPhaseStarted(args: {
+  workspaceId: string;
+  briefId: string;
+  phase: WorkPhase;
+}): WorkItem[] {
+  const db = getDb();
+  const matching = db.select().from(schema.workItems).all()
+    .filter((r) => r.workspaceId === args.workspaceId
+      && r.briefId === args.briefId
+      && r.phase === args.phase
+      && (r.status === 'todo' || r.status === 'blocked'));
+  for (const r of matching) {
+    updateWorkItem(r.id, { status: 'in_progress' });
+  }
+  return matching.map((r) => getWorkItem(r.id)!);
+}
+
 /** Mark all auto items matching a (briefId, phase) as done. Used when the
  *  pipeline finishes a phase so progress reflects real state. */
 export function markPhaseComplete(args: {
@@ -267,6 +297,144 @@ export function markPhaseFailed(args: {
     updateWorkItem(r.id, { status: 'blocked' });
   }
   return matching.map((r) => getWorkItem(r.id)!);
+}
+
+/**
+ * Bump last_heartbeat_at on every in_progress item for a brief. Called on
+ * an interval by runPipeline so the sweeper can tell a phase is alive.
+ * Returns how many rows were touched.
+ */
+export function bumpHeartbeatFor(args: { workspaceId: string; briefId: string }): number {
+  const db = getDb();
+  const now = Date.now();
+  const items = db.select().from(schema.workItems).all()
+    .filter((r) => r.workspaceId === args.workspaceId
+      && r.briefId === args.briefId
+      && r.status === 'in_progress');
+  for (const it of items) {
+    db.update(schema.workItems).set({ lastHeartbeatAt: now } as any)
+      .where(eq(schema.workItems.id, it.id)).run();
+  }
+  return items.length;
+}
+
+/**
+ * Revert any in_progress item whose heartbeat is stale back to 'todo'. Runs
+ * on server boot + on a periodic timer. Catches:
+ *   - Server crashed mid-phase (heartbeat frozen)
+ *   - User killed the orchestrator manually
+ *   - A user dragged a card to Active but never released the gate
+ * Stale = no heartbeat ever recorded AND startedAt > staleMs ago, OR
+ *         heartbeat > staleMs ago.
+ */
+export function sweepStuckTasks(staleMs = 60_000): {
+  reverted: Array<{ id: string; workspaceId: string; briefId: string | null; phase: string | null }>;
+} {
+  const db = getDb();
+  const now = Date.now();
+  const cutoff = now - staleMs;
+  const stuck = db.select().from(schema.workItems).all()
+    .filter((r) => r.status === 'in_progress')
+    .filter((r) => {
+      const hb = (r as any).lastHeartbeatAt as number | null | undefined;
+      if (hb != null) return hb < cutoff;
+      // No heartbeat ever — only revert if it's been in_progress for a while.
+      const st = (r as any).startedAt as number | null;
+      return st != null && st < cutoff;
+    });
+  for (const r of stuck) {
+    db.update(schema.workItems).set({
+      status: 'todo', updatedAt: now,
+    }).where(eq(schema.workItems.id, r.id)).run();
+  }
+  return {
+    reverted: stuck.map((r) => ({
+      id: r.id, workspaceId: r.workspaceId,
+      briefId: r.briefId ?? null, phase: r.phase ?? null,
+    })),
+  };
+}
+
+/**
+ * Resolve which Claude session a task should use, keyed by
+ * (workspaceId, featureTag, assignedRole). The first task with that combo
+ * mints a fresh UUID; every subsequent task with the same combo — including
+ * tasks under a DIFFERENT brief — reuses it so the conversation grows
+ * across briefs that touch the same feature.
+ *
+ * Side effect: writes the resolved UUID back onto the work_item row so the
+ * project / feature .md generators can list it.
+ */
+export function resolveTaskSession(args: {
+  workspaceId: string;
+  featureTag: string | null;
+  role: string | null;
+  taskId: string;          // the work_item being run right now
+}): string {
+  const db = getDb();
+  if (!args.featureTag || !args.role) {
+    // Fallback for legacy rows without a featureTag — mint a per-task UUID
+    // so behaviour at least keeps the per-task isolation the user asked for.
+    const fresh = randomUUID();
+    db.update(schema.workItems).set({ claudeSessionId: fresh, updatedAt: Date.now() } as any)
+      .where(eq(schema.workItems.id, args.taskId)).run();
+    return fresh;
+  }
+  const existing = db.select().from(schema.workItems).all().find((r) => {
+    if (r.workspaceId !== args.workspaceId) return false;
+    if ((r as any).featureTag !== args.featureTag) return false;
+    if (r.assignedRole !== args.role) return false;
+    const sid = (r as any).claudeSessionId;
+    return typeof sid === 'string' && sid.length > 0;
+  });
+  const sessionId = existing ? (existing as any).claudeSessionId as string : randomUUID();
+  db.update(schema.workItems).set({ claudeSessionId: sessionId, updatedAt: Date.now() } as any)
+    .where(eq(schema.workItems.id, args.taskId)).run();
+  return sessionId;
+}
+
+/**
+ * Is a runPipeline actively driving this brief right now? Yes iff any of
+ * its work items has a heartbeat newer than `freshMs`. We use this on the
+ * release-gate endpoint so dragging a phase to Active auto-spawns the
+ * pipeline if the previous orchestrator process is gone.
+ */
+export function isPipelineAlive(briefId: string, freshMs = 30_000): boolean {
+  const db = getDb();
+  const cutoff = Date.now() - freshMs;
+  return db.select().from(schema.workItems).all()
+    .some((r) => r.briefId === briefId
+      && (r as any).lastHeartbeatAt != null
+      && (r as any).lastHeartbeatAt >= cutoff);
+}
+
+/**
+ * Briefs whose pipeline appears to have died mid-flight — they have at least
+ * one work item that's been through 'in_progress' (i.e. has startedAt set)
+ * and no terminal state for any phase. The Resume action shows up for these.
+ */
+export function findResumableBriefs(workspaceId: string): Array<{ briefId: string; pendingPhases: string[] }> {
+  const db = getDb();
+  const rows = db.select().from(schema.workItems).all()
+    .filter((r) => r.workspaceId === workspaceId && r.briefId);
+  const byBrief = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const arr = byBrief.get(r.briefId!) ?? [];
+    arr.push(r);
+    byBrief.set(r.briefId!, arr);
+  }
+  const result: Array<{ briefId: string; pendingPhases: string[] }> = [];
+  for (const [briefId, items] of byBrief) {
+    const hasOpen = items.some((r) => r.status === 'todo' || r.status === 'in_progress');
+    const wasStarted = items.some((r) => (r as any).startedAt != null);
+    if (!hasOpen || !wasStarted) continue;
+    const pendingPhases = Array.from(new Set(
+      items.filter((r) => r.status !== 'done' && r.status !== 'cancelled')
+        .map((r) => r.phase).filter(Boolean) as string[]
+    ));
+    result.push({ briefId, pendingPhases });
+  }
+  return result;
 }
 
 // ---------- helpers ----------

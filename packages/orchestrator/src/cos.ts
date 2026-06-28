@@ -11,7 +11,8 @@ import { promoteSkillFromTrace } from '@guideai/skills';
 import { harvestBriefDeliverables } from './deliverables.js';
 import { loadTarget, runValidation } from './validate.js';
 import { loadIntake } from './discovery.js';
-import { isDesignTagged } from './designShotgun.js';
+// designShotgun deleted in S0; isDesignTagged always returns false.
+const isDesignTagged = (_body: string): boolean => false;
 import { hireAgent } from './hiring.js';
 import { writeBriefAnalyses, appendAgentSummary, writeBriefChat } from './projectContext.js';
 import * as taskGate from './taskGate.js';
@@ -149,9 +150,66 @@ export async function submitBrief(args: {
 
   const db = getDb();
   const briefId = `brief-${randomUUID().slice(0, 8)}`;
+  // One Claude session per brief. The UUID is what Claude Code's
+  // `--session-id <uuid>` flag accepts and what `claude --resume <uuid>`
+  // will list in its picker. Every phase of this brief reuses it so the
+  // conversation history stays continuous.
+  const claudeSessionId = randomUUID();
   db.insert(schema.briefs).values({
     id: briefId, workspaceId, body, status: 'active', createdAt: now(),
-  }).run();
+    claudeSessionId,
+  } as any).run();
+
+  // Quick-seed work_items so the Project Plan section + the Kanban have
+  // SOMETHING to render before the pipeline finishes. The detailed flow
+  // (planReview) seeds richer items from a critiqued synthesis; this is
+  // the minimal fallback for Quick brief, which skips planning entirely.
+  // Idempotent — skipped if the planReview path already seeded auto items
+  // for this briefId.
+  try {
+    const existing = db.select().from(schema.workItems).all()
+      .filter((r) => r.briefId === briefId && r.source === 'auto');
+    if (existing.length === 0) {
+      const featureTag = slugifyFeatureTag(body);
+      // Pick the most-recently-hired non-CoS role for this workspace, or
+      // null if none yet — the orchestrator still routes to the default
+      // worker but the items show up tagged with whatever's on roster.
+      const rosterRoles = db.select().from(schema.agents).all()
+        .filter((a) => a.workspaceId === workspaceId && a.status !== 'retired' && a.role !== 'chief-of-staff')
+        .map((a) => a.role);
+      const primaryRole = rosterRoles[0] ?? null;
+      const phases: Array<{ phase: string; title: string; role: string | null }> = [
+        { phase: 'research',  title: 'Scope the work',           role: primaryRole },
+        { phase: 'plan',      title: 'Outline the approach',     role: primaryRole },
+        { phase: 'implement', title: 'Build the solution',       role: primaryRole },
+        { phase: 'review',    title: 'Review for risks',         role: 'risk-officer' },
+        { phase: 'verify',    title: 'Verify success criteria',  role: 'qa-expert' },
+      ];
+      let pos = 0;
+      for (const p of phases) {
+        const wid = `wi-${randomUUID().slice(0, 8)}`;
+        db.insert(schema.workItems).values({
+          id: wid,
+          workspaceId,
+          briefId,
+          planId: null,
+          parentId: null,
+          title: p.title,
+          description: null,
+          assignedRole: p.role,
+          assignedAgentId: null,
+          phase: p.phase,
+          status: 'todo',
+          priority: 'normal',
+          position: pos++,
+          source: 'auto',
+          createdAt: now(),
+          updatedAt: now(),
+          featureTag,
+        } as any).run();
+      }
+    }
+  } catch {}
 
   // Register the brief's execution mode before any phase awaits a release.
   taskGate.registerBrief(briefId, args.mode ?? 'auto');
@@ -385,4 +443,82 @@ export async function submitBrief(args: {
     securityTagged,
     pipeline: 'started',
   };
+}
+
+/**
+ * Re-run a previously-dispatched brief from where it left off.
+ * Re-derives the routing plan from the current roster and re-invokes
+ * runPipeline. Phases whose artifact .md is already on disk are skipped
+ * inside runPipeline. The brief's stored claudeSessionId is reused so the
+ * conversation context is preserved across the disruption.
+ */
+export async function resumeBrief(briefId: string): Promise<{
+  ok: boolean;
+  reason?: string;
+  briefId: string;
+  workspaceId?: string;
+  agentId?: string;
+}> {
+  const db = getDb();
+  const brief = db.select().from(schema.briefs).all().find((b) => b.id === briefId);
+  if (!brief) return { ok: false, reason: 'brief-not-found', briefId };
+  const { workspaceId, body } = brief;
+  const agentId = await ensureCosAgent(workspaceId);
+  const cwd = readWorkspaceTargetFolder(workspaceId)
+    || path.join(paths.home, 'sandbox', workspaceId);
+  const rosterRows = db.select().from(schema.agents).all()
+    .filter((a) => a.workspaceId === workspaceId && a.status !== 'retired');
+  const roster: RoutableAgent[] = rosterRows.map((a) => ({
+    id: a.id, role: a.role, displayName: a.displayName,
+    systemPrompt: a.systemPrompt,
+    toolWhitelist: safeArray(a.toolWhitelist),
+    model: a.model,
+  }));
+  const cosLite: RoutableAgent = { id: agentId, role: COS_AGENT_ROLE, displayName: 'Chief of Staff' };
+  const route = routeRoster({ brief: body, roster, cos: cosLite, phases: PHASE_ORDER });
+  appendEvent(workspaceId, {
+    ...base(workspaceId, agentId), kind: 'system', level: 'info',
+    text: `resume: rehydrating pipeline for ${briefId} (skips any phase whose artifact is on disk)`,
+  } as SystemChunk);
+  // Re-active the brief in case it was marked done/failed by a partial run.
+  db.update(schema.briefs).set({ status: 'active' })
+    .where(eq(schema.briefs.id, briefId)).run();
+  // Unblock any work items that were marked failed (blocked) — set them
+  // back to 'todo' so the pipeline picks them up. The Kanban's Retry
+  // affordance routes here, so this same call covers both "resume from
+  // crash" and "retry a failed phase".
+  const blocked = db.select().from(schema.workItems).all()
+    .filter((r) => r.workspaceId === workspaceId && r.briefId === briefId && r.status === 'blocked');
+  for (const r of blocked) {
+    db.update(schema.workItems).set({
+      status: 'todo', updatedAt: Date.now(),
+    }).where(eq(schema.workItems.id, r.id)).run();
+  }
+  if (blocked.length > 0) {
+    appendEvent(workspaceId, {
+      ...base(workspaceId, agentId), kind: 'system', level: 'info',
+      text: `resume: un-blocked ${blocked.length} failed task(s) for retry`,
+    } as SystemChunk);
+  }
+  // Fire-and-forget: identical pattern to submitBrief's pipeline.
+  void runPipeline({
+    workspaceId, agentId, briefId, brief: body, cwd,
+    securityTagged: false,
+    designTagged: isDesignTagged(body),
+    route,
+  }).catch((err) => {
+    appendEvent(workspaceId, {
+      ...base(workspaceId, agentId), kind: 'system', level: 'error',
+      text: `resume failed: ${String(err?.message ?? err)}`,
+    } as SystemChunk);
+  });
+  return { ok: true, briefId, workspaceId, agentId };
+}
+
+/** Slug from brief body's first heading-ish line. Same shape planReview.ts
+ *  uses so Quick + Detailed briefs share session-resolution keys. */
+function slugifyFeatureTag(body: string): string {
+  const firstLine = (body.split('\n').find((l) => l.trim()) ?? '').replace(/^#+\s*/, '').trim();
+  const slug = firstLine.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+  return slug || 'untitled';
 }

@@ -186,6 +186,31 @@
         "icon": "$(menu)"
       },
       {
+        "command": "atrune.openLiveClaude",
+        "title": "Atrune: Open live Claude session for task…",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "atrune.openLiveSessionTail",
+        "title": "Atrune: Open live chat for brief…",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "atrune.openTaskClaudeTerminal",
+        "title": "Atrune: Open `claude --resume` for task…",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "atrune.resumeClaudeSession",
+        "title": "Atrune: Resume Claude session…",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "atrune.resumeBriefPipeline",
+        "title": "Atrune: Resume brief pipeline (after crash)",
+        "icon": "$(debug-continue)"
+      },
+      {
         "command": "atrune.quickAsk",
         "title": "Atrune: Quick ask…",
         "icon": "$(zap)"

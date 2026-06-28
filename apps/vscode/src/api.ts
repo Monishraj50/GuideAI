@@ -21,7 +21,11 @@ export interface PlanResp {
   agents: { active: number; total: number };
   pendingApprovals: { id: string; tool: string; argsJson: string; decidedAt: number }[];
   briefs: {
-    recent: { id: string; body: string; status: string; createdAt: number; tasks: number; tokens: number }[];
+    recent: {
+      id: string; body: string; status: string; createdAt: number;
+      tasks: number; tokens: number;
+      claudeSessionId?: string | null;
+    }[];
     total: number;
     active: number;
   };
@@ -128,6 +132,43 @@ export class AtruneApi {
     }
   }
 
+  /** Save (merge) intake fields for a workspace. Used by the Detailed brief
+   *  flow to set the goal before kicking off discovery. */
+  async saveIntake(workspaceId: string, intake: { goal?: string; criteria?: string[]; constraints?: string[] }): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const r = await fetch(`${base()}/api/workspaces/${workspaceId}/intake`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(intake),
+      });
+      if (!r.ok) {
+        const j = (await r.json().catch(() => ({}))) as { error?: string };
+        return { ok: false, error: j?.error ?? `http ${r.status}` };
+      }
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }
+
+  /** Run the round-table discovery → auto-creates a plan. The user then
+   *  reviews + approves the plan in Mission Control (or the project page)
+   *  to actually dispatch the brief. */
+  async runDiscovery(workspaceId: string, revisionNote?: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const r = await fetch(`${base()}/api/workspaces/${workspaceId}/discovery`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ revisionNote }),
+      });
+      if (!r.ok) {
+        const j = (await r.json().catch(() => ({}))) as { error?: string };
+        return { ok: false, error: j?.error ?? `http ${r.status}` };
+      }
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }
+
   /** Get top-N catalog agents that match a brief body. Used by the composer to
    *  auto-tag suggestions. Returns flag whether each is already hired in the
    *  given workspace (no marketplace hire needed on dispatch). */
@@ -229,6 +270,19 @@ export class AtruneApi {
     }
   }
 
+  /** Resume a brief whose pipeline died. The server re-runs runPipeline and
+   *  skips any phase whose artifact .md is already on disk. */
+  async resumeBrief(briefId: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const r = await fetch(`${base()}/api/briefs/${briefId}/resume`, { method: 'POST' });
+      const j = (await r.json().catch(() => ({}))) as { ok?: boolean; reason?: string; error?: string };
+      if (!r.ok) return { ok: false, error: j?.error ?? `HTTP ${r.status}` };
+      return { ok: !!j.ok, ...(j.reason ? { error: j.reason } : {}) };
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }
+
   /** Zero-config workspace creation from a task title. Server generates the
    *  slug + date suffix; client just supplies the human-readable task. The
    *  extension always passes targetFolder so agents write into the open repo
@@ -273,13 +327,11 @@ export class AtruneApi {
     }
   }
 
-  /** Global OpenAI integration — used by the Codex card on the connect screen. */
+  /** Global OpenAI integration — disabled in S0 (Claude-only).
+   *  Callers get null so the OpenAI/Codex card disappears from the
+   *  subscription wizard. The server route is gone too. */
   async getGlobalOpenAI(): Promise<{ apiKeySet: boolean; ready: boolean } | null> {
-    try {
-      const r = await fetch(`${base()}/api/integrations/openai/global`);
-      if (!r.ok) return null;
-      return await r.json() as any;
-    } catch { return null; }
+    return null;
   }
 
   async setGlobalOpenAIApiKey(apiKey: string): Promise<{ ok: boolean; error?: string }> {
@@ -444,6 +496,8 @@ export interface WorkItem {
   assignedRole: string | null;
   createdAt: number;
   updatedAt: number;
+  featureTag?: string | null;
+  claudeSessionId?: string | null;
 }
 
 export interface AgentSuggestion {

@@ -16,6 +16,8 @@
 // Mission Control to /projects/<workspaceId> in the browser.
 
 import * as vscode from 'vscode';
+import * as path from 'node:path';
+import * as os from 'node:os';
 import { AtruneApi, type WorkspaceSummary } from '../api';
 
 interface Node {
@@ -100,8 +102,8 @@ export class ActiveWorkProvider implements vscode.TreeDataProvider<Node> {
           tooltip: b.body,
           iconId: briefIconFor(b.status),
           command: {
-            command: 'atrune.openBriefInMissionControl',
-            title: 'Open brief in Mission Control',
+            command: 'atrune.openBriefOverallPlan',
+            title: 'Open overallplan.md',
             arguments: [{ workspaceId: w.id, briefId: b.id }],
           },
         };

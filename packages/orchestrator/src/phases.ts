@@ -10,16 +10,16 @@ import {
   loadBudget, summarizeUsage, forecastPhaseCost, checkBudget, recordUsage, modelToTier,
   type Tier,
 } from '@guideai/policies/budgets';
-import { markPhaseComplete, markPhaseFailed, type WorkPhase } from './wbs.js';
-import { writeTaskTranscript } from './transcriptWriter.js';
+import { markPhaseComplete, markPhaseFailed, markPhaseStarted, bumpHeartbeatFor, resolveTaskSession, type WorkPhase } from './wbs.js';
+import { writeTaskTranscript, makeStreamingAppender } from './transcriptWriter.js';
+import { writeOverallPlanMd, writeProjectIndexMd, writeFeatureContextMd } from './projectContext.js';
+import { diagnoseFailure } from './diagnoseFailure.js';
+import { normalizeSessionJsonl } from './normalizeSessionJsonl.js';
+import { getDb as getDbForOverall, schema as schemaForOverall } from '@guideai/shared/db';
 import * as taskGate from './taskGate.js';
-import { setupCrossVendor, type CrossVendorContext } from './secondOpinion.js';
+// secondOpinion / designShotgun / pass@k removed in S0 (Claude-only).
 import { renderMemoryBlock } from './memory.js';
-import {
-  DESIGN_LENSES, DESIGN_VARIANTS, persistVariant, renderTasteMemory,
-} from './designShotgun.js';
 import { loadSkills, skillsForPhase, renderSkillsAsContext } from '@guideai/skills';
-import { runPassK } from '@guideai/evals';
 import type { AIChunk, Chunk, PhaseChunk, SystemChunk } from '@guideai/shared/chunks';
 import type { RoutableAgent, RouteDecision } from './routing.js';
 
@@ -125,6 +125,20 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
   const { workspaceId, agentId, briefId, brief, cwd, securityTagged, designTagged, route } = args;
   ensureBriefDir(workspaceId, briefId);
 
+  // Sessions are now keyed per-task by (workspaceId, featureTag, role).
+  // We resolve at the top of each phase loop iteration. The brief-row's
+  // claudeSessionId stays populated by submitBrief() for legacy callers
+  // (Resume Quick Pick) but is NOT the source of truth anymore.
+  // Helper: pull the feature tag from any work item of this brief — every
+  // auto-seeded item for the same brief shares the same tag.
+  const featureTagForBrief: string | null = (() => {
+    try {
+      const wi = getDbForOverall().select().from(schemaForOverall.workItems).all()
+        .find((r) => r.briefId === briefId && (r as any).featureTag);
+      return ((wi as any)?.featureTag ?? null) as string | null;
+    } catch { return null; }
+  })();
+
   // Phase C — defer-dispatch flow. If the brief was registered with
   // mode='pending', this awaits until the user clicks "Start Implementing"
   // (which calls taskGate.start(briefId, 'auto' | 'manual')). 'auto' and
@@ -173,9 +187,37 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
     });
   };
 
+  // Liveness heartbeat — bumps last_heartbeat_at on every in_progress
+  // work item for this brief every ~10s, so the stuck-task sweeper can tell
+  // the pipeline is actually alive. Cleared in the `finally` block below.
+  const heartbeat = setInterval(() => {
+    try { bumpHeartbeatFor({ workspaceId, briefId }); } catch {}
+  }, 10_000);
+  // Bump once immediately so newly-released items don't look stale.
+  try { bumpHeartbeatFor({ workspaceId, briefId }); } catch {}
+
+  try {
   for (const phase of PHASE_ORDER) {
+    // Resume support — if a previous run already finished this phase (the
+    // canonical artifact is on disk), skip it. Lets the user kick off
+    // POST /api/briefs/:briefId/resume after a crash without redoing work.
+    const expectedArtifact = artifactPath(workspaceId, briefId, phase);
+    if (fs.existsSync(expectedArtifact)) {
+      appendEvent(workspaceId, {
+        id: randomUUID(), ts: Date.now(), workspaceId, agentId,
+        kind: 'system', level: 'info',
+        text: `resume: skipping phase ${phase} (artifact already on disk)`,
+      });
+      // Make sure WBS reflects this even on resume.
+      try { markPhaseComplete({ workspaceId, briefId, phase: phase as WorkPhase }); } catch {}
+      continue;
+    }
     const decision = route?.[phase];
     const worker: RoutableAgent = decision?.agent ?? defaultAgent;
+    // Per-phase session resolution moved BELOW markPhaseStarted — see the
+    // declaration just before runOnce — so the work_items are guaranteed
+    // seeded by then (autoSeedFromPlan races against runPipeline).
+    let claudePhaseSessionId: string | null = null;
 
     // Handoff note: phase N → phase N+1 with a worker change → surface as
     // a routing-channel note so #channels shows real "who passed what".
@@ -191,9 +233,8 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
 
     // Budget + rate-limit gate. May downgrade the model tier, warn, or pause.
     {
-      const evalCfgForGate = securityTagged && phase === 'review'
-        ? CAPS.evals.security
-        : CAPS.evals[phase as 'implement' | 'review'] ?? { k: 1, requireAgreement: 1 };
+      // S0: k is always 1 (no pass@k fan-out). Budget gate forecasts a
+      // single-call phase. Tier sizing in S1 will replace this entirely.
       let currentTier = modelToTier(routing.tier as Tier);
       let downgrades = 0;
       while (downgrades < 3) {
@@ -201,7 +242,7 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
           tier: currentTier,
           briefLength: brief.length,
           artifactsLength: Object.values(artifacts).reduce((s, t) => s + (t?.length ?? 0), 0),
-          k: evalCfgForGate.k,
+          k: 1,
         });
         const usage = summarizeUsage(workspaceId, budgetCfg);
         const outcome = checkBudget({ cfg: budgetCfg, usage, forecast, tier: currentTier });
@@ -248,6 +289,36 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
 
     const phaseStartedAt = Date.now();
 
+    // Flip every work_item of this phase to in_progress so the Kanban
+    // shows the active column populated while the agent runs. Without
+    // this, items go straight Inactive → Done on phase completion.
+    try { markPhaseStarted({ workspaceId, briefId, phase: phase as WorkPhase }); } catch {}
+
+    // Per-phase session resolution. We do this AFTER markPhaseStarted so
+    // by now autoSeedFromPlan has populated the work_items table — the
+    // resolver stamps a (featureTag, role) session UUID on every row.
+    // Keyed across the workspace so the same (feature, role) reuses the
+    // same Claude conversation across briefs.
+    const phaseWorkItems = getDbForOverall().select().from(schemaForOverall.workItems).all()
+      .filter((r) => r.briefId === briefId && r.phase === phase);
+    for (const wi of phaseWorkItems) {
+      const sid = resolveTaskSession({
+        workspaceId,
+        featureTag: ((wi as any).featureTag as string | null) ?? featureTagForBrief,
+        role: wi.assignedRole ?? worker.role,
+        taskId: wi.id,
+      });
+      if (!claudePhaseSessionId) claudePhaseSessionId = sid;
+    }
+    if (!claudePhaseSessionId) {
+      claudePhaseSessionId = resolveTaskSession({
+        workspaceId,
+        featureTag: featureTagForBrief,
+        role: worker.role,
+        taskId: `${briefId}-${phase}-virtual`,
+      });
+    }
+
     // Phase metadata chunk is owned by CoS (the conductor).
     appendEvent(workspaceId, makePhaseChunk(workspaceId, agentId, briefId, phase, 'started'));
 
@@ -279,155 +350,18 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
       ? worker.toolWhitelist
       : READ_ONLY_TOOLS;
 
-    // pass@k for security-tagged review. Default elsewhere is k=1 which we
-    // run as a single direct call (avoids spinning up the runner for nothing).
-    // Design-tagged briefs also fan-out implement at k=DESIGN_VARIANTS — the
-    // "design-shotgun" variant generation lane.
-    const isDesignImplement = !!designTagged && phase === 'implement';
-    const evalCfg = isDesignImplement
-      ? { k: DESIGN_VARIANTS, requireAgreement: 1 }
-      : (securityTagged && phase === 'review' ? CAPS.evals.security : CAPS.evals[phase as 'implement' | 'review'] ?? { k: 1, requireAgreement: 1 });
-    const k = evalCfg.k;
-
-    if (k > 1) {
-      appendEvent(workspaceId, {
-        id: randomUUID(), ts: Date.now(), workspaceId, agentId,
-        kind: 'system', level: 'info',
-        text: `phase ${phase} running pass@${k} (security-tagged)`,
-      });
-      // Cross-vendor mix: when enabled, swap one attempt for OpenAI.
-      const crossVendor = setupCrossVendor({
-        workspaceId, k,
-        isSecurityReview: phase === 'review' && !!securityTagged,
-      });
-      if (crossVendor) {
-        appendEvent(workspaceId, {
-          id: randomUUID(), ts: Date.now(), workspaceId, agentId,
-          kind: 'system', level: 'info',
-          text: `second opinion: ${crossVendor.reason}${crossVendor.mock ? ' [mock]' : ''}`,
-        });
-      }
-      const attemptProvider: ('claude' | 'openai')[] = [];
-      // For design-shotgun: precompute the taste-memory block once so every
-      // variant attempt gets the same context.
-      const tasteBlock = isDesignImplement
-        ? renderTasteMemory(workspaceId) : '';
-      const passK = await runPassK<Chunk[]>({
-        k, requireAgreement: evalCfg.requireAgreement,
-        attempt: async (i: number) => {
-          const useOpenAI = !!crossVendor?.crossVendorIdx.has(i);
-          attemptProvider[i] = useOpenAI ? 'openai' : 'claude';
-          const adapter = useOpenAI ? crossVendor!.adapter : resolveActiveAdapter();
-          // Per-variant lens for design-shotgun. Each variant gets a distinct
-          // design persona prepended to the system prompt + a taste-memory block.
-          const lens = isDesignImplement
-            ? DESIGN_LENSES[i % DESIGN_LENSES.length]!
-            : null;
-          const variantPrompt = lens
-            ? [
-                `## Design lens for this variant: **${lens.lens}**\n${lens.instructions}`,
-                tasteBlock,
-                systemPrompt,
-                'Produce ONE coherent variant in your assigned lens. Be opinionated.',
-              ].filter(Boolean).join('\n\n')
-            : systemPrompt;
-          const res = await adapter.runOnce({
-            agentId: useOpenAI ? `${worker.id}-openai` : (lens ? `${worker.id}-${lens.lens}` : worker.id),
-            workspaceId, cwd, systemPrompt: variantPrompt,
-            allowedTools: workerTools, model: routing.tier,
-          }, context);
-          const text = res.chunks.filter((c): c is AIChunk => c.kind === 'ai').map((c) => c.text).join('\n');
-          const tIn = res.chunks.filter((c): c is AIChunk => c.kind === 'ai').reduce((s, c) => s + (c.tokensIn ?? 0), 0);
-          const tOut = res.chunks.filter((c): c is AIChunk => c.kind === 'ai').reduce((s, c) => s + (c.tokensOut ?? 0), 0);
-          // Account the cross-vendor call separately so the ledger reflects it.
-          if (useOpenAI) {
-            recordUsage({
-              workspaceId, agentId: `${worker.id}-openai`, briefId,
-              phase: `${phase}:openai`,
-              model: routing.tier, tokensIn: tIn, tokensOut: tOut,
-            });
-          }
-          // Persist each design variant as its own deliverable so the UI can
-          // show them as a gallery + the picker can record taste.
-          if (lens && text.trim().length > 0) {
-            try {
-              persistVariant({
-                workspaceId, briefId, lens: lens.lens, body: text, index: i,
-              });
-            } catch (err: any) {
-              appendEvent(workspaceId, {
-                id: randomUUID(), ts: Date.now(), workspaceId, agentId,
-                kind: 'system', level: 'warn',
-                text: `variant ${i + 1} persist skipped: ${err?.message ?? err}`,
-              });
-            }
-          }
-          return { text, tokensIn: tIn, tokensOut: tOut, durationMs: res.durationMs, passthrough: res.chunks };
-        },
-        parallel: true,
-      });
-
-      // Forward chunks from ALL attempts so the feed shows everything.
-      for (const chunks of passK.passthroughs) for (const c of chunks) appendEvent(workspaceId, c);
-
-      const tokensIn = passK.attempts.reduce((s, a) => s + a.tokensIn, 0);
-      const tokensOut = passK.attempts.reduce((s, a) => s + a.tokensOut, 0);
-      totalIn += tokensIn; totalOut += tokensOut;
-      account(routing.tier, tokensIn, tokensOut, worker.id, phase);
-
-      // Provider-aware verdict breakdown: who passed, who refused.
-      const breakdownParts: string[] = [];
-      if (crossVendor) {
-        const byProv = (prov: 'claude' | 'openai') => {
-          const idxs = passK.attempts.map((_, i) => i).filter((i) => attemptProvider[i] === prov);
-          if (idxs.length === 0) return null;
-          const pass = idxs.filter((i) => passK.attempts[i]?.passed).length;
-          return `${prov}: ${pass}/${idxs.length}`;
-        };
-        const c = byProv('claude'); const o = byProv('openai');
-        if (c) breakdownParts.push(c);
-        if (o) breakdownParts.push(o);
-      }
-      const breakdown = breakdownParts.length ? ` · ${breakdownParts.join(' + ')}` : '';
-      appendEvent(workspaceId, {
-        id: randomUUID(), ts: Date.now(), workspaceId, agentId,
-        kind: 'system', level: passK.verdict === 'pass' ? 'info' : 'warn',
-        text: `pass@${k} verdict: ${passK.verdict} · ${passK.passes}/${k} attempts passed (req ${evalCfg.requireAgreement})${breakdown}`,
-      });
-
-      const artifact = artifactPath(workspaceId, briefId, phase);
-      const attemptsBlock = passK.attempts.map((a, i) => {
-        const prov = attemptProvider[i] ?? 'claude';
-        return `### attempt ${i + 1} (${a.passed ? 'pass' : 'fail'}) · provider: ${prov} · ${a.tokensIn}↓/${a.tokensOut}↑\n\n${a.text.trim() || '(empty)'}`;
-      }).join('\n\n---\n\n');
-      const crossVendorLine = crossVendor
-        ? `_cross-vendor: ${breakdownParts.join(' + ')}${crossVendor.mock ? ' (mock)' : ''}_\n\n`
-        : '';
-      const md = `# ${phase} — brief ${briefId}\n\n` +
-        `_worker: ${worker.displayName} (${worker.role}) · model: ${routing.tier} · pass@${k} · verdict: ${passK.verdict} (${passK.passes}/${k}) · tokens: ${tokensIn} in / ${tokensOut} out_\n\n` +
-        crossVendorLine +
-        `## canonical (longest passing)\n\n${passK.canonical.text.trim() || '(empty)'}\n\n---\n\n${attemptsBlock}\n`;
-      fs.writeFileSync(artifact, md);
-
-      artifacts[phase] = passK.canonical.text;
-      const phaseEndedAt = Date.now();
-      phaseResults.push({
-        phase, tier: routing.tier, artifactPath: artifact,
-        text: passK.canonical.text,
-        startedAt: phaseStartedAt,
-        endedAt: phaseEndedAt,
-        durationMs: phaseEndedAt - phaseStartedAt,
-        tokensIn, tokensOut,
-        workerAgentId: worker.id, workerRole: worker.role, workerDisplayName: worker.displayName,
-        k, passes: passK.passes, verdict: passK.verdict,
-      });
-      appendEvent(workspaceId, makePhaseChunk(workspaceId, agentId, briefId, phase, 'completed', artifact));
-      try { markPhaseComplete({ workspaceId, briefId, phase: phase as WorkPhase }); } catch {}
-      continue;
-    }
-
-    // k=1: original single-call path.
+    // S0 cleanup: pass@k, cross-vendor second-opinion and design-shotgun
+    // variant fan-out are gone. Every phase runs as a single direct call.
+    // Tier-aware sizing replaces this in S1 (tiny/small/medium/big).
     let result;
+    // Stream chunks directly to the transcript file as they arrive — so VS
+    // Code's markdown preview shows the live "Claude chat" view (turns +
+    // tool calls + file edits) the moment the agent emits them.
+    const streamer = makeStreamingAppender({
+      workspaceId, role: worker.role, taskId: `${briefId}-${phase}`,
+      taskTitle: `${phase} — ${worker.displayName}`,
+      briefId, systemPrompt,
+    });
     try {
       result = await resolveActiveAdapter().runOnce(
         {
@@ -437,6 +371,8 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
           systemPrompt,
           allowedTools: workerTools,
           model: routing.tier,
+          onChunk: (c) => streamer.append(c),
+          ...(claudePhaseSessionId ? { sessionId: claudePhaseSessionId } : {}),
         },
         context,
       );
@@ -455,22 +391,35 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
       // Cascade per-task: every work-item in this phase moves to 'blocked'
       // so the Task Kanban shows them in the Failed column.
       try { markPhaseFailed({ workspaceId, briefId, phase: phase as WorkPhase }); } catch {}
+      // Fixer agent — explains why it broke + suggests a one-line fix. Runs
+      // in the same Claude session so the diagnosis appears as the next
+      // turn in the live chat tail. Surfaces on blocked work_items as a
+      // Retry tooltip in the Kanban.
+      try {
+        await diagnoseFailure({
+          workspaceId, briefId, agentId, cwd, brief,
+          phase: phase as WorkPhase,
+          errorMessage: String(err?.message ?? err),
+          claudeSessionId: claudePhaseSessionId,
+        });
+      } catch {}
       throw err;
     }
 
     // Forward all chunks the adapter emitted so the live feed shows them.
     for (const c of result.chunks) appendEvent(workspaceId, c);
 
-    // Persist a per-task chat-history transcript so the Team sidebar can
-    // surface it via markdown preview. Phase-scoped today (one file per
-    // brief × phase × worker role).
-    try {
-      writeTaskTranscript({
-        workspaceId, role: worker.role, taskId: `${briefId}-${phase}`,
-        taskTitle: `${phase} — ${worker.displayName}`,
-        briefId, systemPrompt,
-      }, result.chunks);
-    } catch {}
+    // Transcript already streamed live via `streamer.append` above. Just
+    // finalize (no-op today; reserved for future "task complete" footer).
+    try { streamer.finalize(); } catch {}
+
+    // Normalize the session jsonl so it shows up in Claude's interactive
+    // `--resume` picker. SDK-spawned sessions open with a `queue-operation`
+    // record which the picker filters out; we prepend the two-line `mode`
+    // header that interactive sessions emit. Cheap idempotent op.
+    if (claudePhaseSessionId) {
+      try { normalizeSessionJsonl({ cwd, sessionId: claudePhaseSessionId }); } catch {}
+    }
 
     const aiText = result.chunks
       .filter((c): c is AIChunk => c.kind === 'ai')
@@ -506,6 +455,19 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
 
     appendEvent(workspaceId, makePhaseChunk(workspaceId, agentId, briefId, phase, 'completed', artifact));
     try { markPhaseComplete({ workspaceId, briefId, phase: phase as WorkPhase }); } catch {}
+    // Refresh overallplan.md after each phase completion. The user has it
+    // open as a markdown preview from Active Work and sees the live tasks /
+    // status updates as the pipeline marches.
+    try { refreshOverallPlan(workspaceId, briefId, brief); } catch {}
+    // Refresh PROJECT.md + per-feature .md so the per-(feature, role)
+    // session UUIDs reflect the just-resolved session for this phase.
+    try { writeProjectIndexMd(workspaceId); } catch {}
+    if (featureTagForBrief) {
+      try { writeFeatureContextMd(workspaceId, featureTagForBrief); } catch {}
+    }
+  }
+  } finally {
+    clearInterval(heartbeat);
   }
 
   return {
@@ -516,4 +478,25 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
     totalTokensOut: totalOut,
     totalDurationMs: Date.now() - startedAt,
   };
+}
+
+/** Re-render <mdRoot>/briefs/<id>/overallplan.md using the current DB state.
+ *  Called after each phase completes so the file the user has open in the
+ *  preview reflects the latest task statuses. */
+function refreshOverallPlan(workspaceId: string, briefId: string, body: string): void {
+  const db = getDbForOverall();
+  const items = db.select().from(schemaForOverall.workItems).all()
+    .filter((w) => w.briefId === briefId);
+  writeOverallPlanMd({
+    workspaceId, briefId, body,
+    workItems: items.map((w) => ({
+      id: w.id,
+      title: w.title,
+      description: w.description,
+      assignedRole: w.assignedRole,
+      phase: w.phase,
+      status: w.status,
+      parentId: w.parentId,
+    })),
+  });
 }

@@ -262,8 +262,16 @@ export function initDb(): void {
   fs.mkdirSync(paths.workspaces, { recursive: true });
   fs.mkdirSync(paths.skills, { recursive: true });
   fs.mkdirSync(paths.agentsCustom, { recursive: true });
+  initDbAt(paths.db);
+}
 
-  const db = new Database(paths.db);
+/** Initialize a SQLite DB at an arbitrary path (DDL + idempotent migrations).
+ *  Used by the request-scoped DB router so each workspace folder gets its
+ *  own properly-schema'd .atrune/db.sqlite without needing to be the
+ *  process-wide active DB. */
+export function initDbAt(dbPath: string): void {
+  fs.mkdirSync(require('node:path').dirname(dbPath), { recursive: true });
+  const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(DDL);
@@ -273,7 +281,6 @@ export function initDb(): void {
       if (!/duplicate column/i.test(String(e?.message ?? ''))) throw e;
     }
   }
-
   db.close();
 }
 
@@ -305,6 +312,11 @@ const MIGRATIONS = [
   "ALTER TABLE project_intakes ADD COLUMN locked_at INTEGER",
   "ALTER TABLE project_intakes ADD COLUMN discovery_context TEXT NOT NULL DEFAULT ''",
   "ALTER TABLE discoveries ADD COLUMN revision_note TEXT",
+  "ALTER TABLE briefs ADD COLUMN claude_session_id TEXT",
+  "ALTER TABLE work_items ADD COLUMN last_heartbeat_at INTEGER",
+  "ALTER TABLE work_items ADD COLUMN failure_diagnosis TEXT",
+  "ALTER TABLE work_items ADD COLUMN feature_tag TEXT",
+  "ALTER TABLE work_items ADD COLUMN claude_session_id TEXT",
 ];
 
 function main() {

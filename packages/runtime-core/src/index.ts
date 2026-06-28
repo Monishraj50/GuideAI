@@ -10,6 +10,20 @@ export interface SpawnOpts {
   allowedTools?: string[];
   model?: string;
   env?: Record<string, string>;
+  /** Optional streaming callback. When set, the adapter calls this for every
+   *  chunk as soon as it arrives, BEFORE batching them into RunOnceResult.
+   *  Used by the orchestrator to live-write the per-task transcript file as
+   *  the agent works (so VS Code's markdown preview shows real-time output). */
+  onChunk?: (chunk: Chunk) => void;
+  /** Optional persistent session id. When set, the Claude adapter passes
+   *  --session-id <uuid> so the conversation is recoverable via
+   *  `claude --resume <uuid>`. The orchestrator passes one uuid per brief so
+   *  every phase shares the same session. */
+  sessionId?: string;
+  /** Optional display name passed via `-n/--name <name>`. Shown in the
+   *  prompt box + the `--resume` picker so the user can tell sessions apart
+   *  at a glance (otherwise it's just a UUID prefix). */
+  sessionName?: string;
 }
 
 export interface RunOnceResult {

@@ -21,16 +21,48 @@ import { openMissionControl } from './webviews/missionControl';
 import { openBriefComposer } from './webviews/briefComposer';
 import { openKanban } from './webviews/kanban';
 import { openNewProject } from './webviews/newProject';
+import { openLiveClaudeSession } from './liveClaudeTerminal';
+import { openLiveSessionTail } from './sessionTail';
 import { quickAskChooser, askOneAgent, autoFix } from './directTask';
 import { AtruneStatusBar } from './statusBar';
 import { checkNewApprovals } from './approvals';
 import { resetFirstLaunch } from './firstLaunch';
 import { openConnectSubscription, clearFolderSubscriptionAuthorization } from './webviews/connectSubscription';
-import { hasConsent, hasSubscriptionAuthorized, promptForConsent, revokeAndWipe } from './folderConsent';
+import { hasConsent, hasSubscriptionAuthorized, promptForConsent, revokeAndWipe, getActiveConsentedFolder } from './folderConsent';
 
 let server: AtruneServer | undefined;
 let pollHandle: NodeJS.Timeout | undefined;
 let statusBar: AtruneStatusBar | undefined;
+
+/**
+ * `claude --resume` only lists sessions whose project dir matches the
+ * current cwd. So to open a specific session we must spawn the terminal
+ * in the cwd Claude originally used. We can't decode the project dir name
+ * back to a path (slashes and original dashes collide), so we read the
+ * `cwd` field from the first JSON record of the .jsonl itself.
+ */
+function findCwdForSession(sessionId: string): string | null {
+  const root = path.join(os.homedir(), '.claude', 'projects');
+  if (!fs.existsSync(root)) return null;
+  let dirs: string[];
+  try { dirs = fs.readdirSync(root); } catch { return null; }
+  for (const dir of dirs) {
+    const jsonl = path.join(root, dir, `${sessionId}.jsonl`);
+    if (!fs.existsSync(jsonl)) continue;
+    try {
+      const head = fs.readFileSync(jsonl, 'utf8').slice(0, 8192);
+      for (const line of head.split('\n')) {
+        if (!line) continue;
+        try {
+          const obj = JSON.parse(line);
+          if (typeof obj.cwd === 'string' && obj.cwd) return obj.cwd;
+        } catch {}
+      }
+    } catch {}
+    return null;
+  }
+  return null;
+}
 
 /** On-disk path for a brief's saved chat transcript. */
 function briefChatPath(workspaceId: string, briefId: string): string {
@@ -68,6 +100,46 @@ async function openBriefChatFile(workspaceId: string, briefId: string): Promise<
 export async function activate(ctx: vscode.ExtensionContext) {
   server = new AtruneServer();
   server.log('Atrune extension activating…');
+
+  // Per-window workspace routing: tag every localhost API call with the
+  // header `X-Atrune-Workspace: <open-folder>`. The Fastify server uses
+  // it to pick `<folder>/.atrune/db.sqlite` per request — so two VS Code
+  // windows hitting the same `:4000` see DIFFERENT data. Done by patching
+  // globalThis.fetch once at activation so api.ts, kanban.ts, sessionTail.ts,
+  // liveClaudeTerminal.ts etc. all pick it up without per-file edits.
+  if (!(globalThis as any).__atruneFetchPatched) {
+    const _origFetch = globalThis.fetch.bind(globalThis);
+    (globalThis as any).fetch = (input: any, init?: any) => {
+      try {
+        const u = typeof input === 'string'
+          ? input
+          : (input?.url ?? String(input));
+        if (typeof u === 'string' && /^https?:\/\/(localhost|127\.0\.0\.1)\b/i.test(u)) {
+          const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+          if (folder) {
+            const headers = new Headers(init?.headers ?? {});
+            headers.set('X-Atrune-Workspace', folder);
+            return _origFetch(input, { ...(init ?? {}), headers });
+          }
+        }
+      } catch {}
+      return _origFetch(input, init);
+    };
+    (globalThis as any).__atruneFetchPatched = true;
+  }
+
+  // Per-repo isolation: every window resolves consent purely from its own
+  // open folder's `.atrune/.consent.json`. On activation:
+  //   1. Delete the legacy global pointer so old builds can't leak.
+  //   2. If the open folder has no `.atrune/`, wipe the matching Claude
+  //      session jsonls so deleting .atrune truly clears every cache.
+  try {
+    const { deleteLegacyActiveFolderPointer, reapOrphanedClaudeSessions } = await import('./folderConsent');
+    const ptr = deleteLegacyActiveFolderPointer();
+    if (ptr.removed) server.log('removed legacy global active-folder pointer (per-repo isolation enforced now)');
+    const r = reapOrphanedClaudeSessions();
+    if (r.reaped > 0) server.log(`reaped ${r.reaped} orphan Claude session dir(s) tied to ${r.folder}`);
+  } catch {}
 
   const api = new AtruneApi();
 
@@ -114,8 +186,10 @@ export async function activate(ctx: vscode.ExtensionContext) {
   // and respawn so the server lines up with the truth on disk.
   let lastConsentState: boolean | null = null;
   async function checkConsentAndSetContext(): Promise<boolean> {
-    const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    const consented = !!(folder && hasConsent(folder));
+    // Prefer the persisted "active" folder so the consent state stays true
+    // even when the user picked a folder DIFFERENT from the open one.
+    const active = getActiveConsentedFolder();
+    const consented = !!active;
     await vscode.commands.executeCommand('setContext', 'atrune.folderConsented', consented);
 
     // Probe server vs consent. Only if we own the server — we never kill an
@@ -252,13 +326,15 @@ export async function activate(ctx: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('atrune.actions', async () => {
       // Persistent quick-access menu — invoked from the status bar click.
-      const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
-      const consented = !!(folder && hasConsent(folder));
+      const activeFolder = getActiveConsentedFolder();
+      const folder = activeFolder ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
+      const consented = !!activeFolder;
       const subAuthed = !!(folder && hasSubscriptionAuthorized(folder));
       const serverAlive = await api.isAlive();
       type Action =
         | 'connect' | 'allow' | 'revoke' | 'disconnectAtrune'
-        | 'mission' | 'briefs' | 'kanban' | 'newProject' | 'restart';
+        | 'mission' | 'briefs' | 'kanban' | 'newProject' | 'restart'
+        | 'resumeClaude' | 'resumePipeline';
       const items: Array<{ label: string; description?: string; detail?: string; action: Action }> = [];
       if (!consented) {
         items.push({ label: '$(folder-active) Allow project storage', description: 'Step 1', action: 'allow' });
@@ -274,6 +350,8 @@ export async function activate(ctx: vscode.ExtensionContext) {
         items.push({ label: '$(add) New project', description: 'intake + discovery', action: 'newProject' });
         items.push({ label: '$(comment-discussion) New brief…', detail: 'opens the brief composer', action: 'briefs' });
         items.push({ label: '$(layout) Open Kanban for active brief…', action: 'kanban' });
+        items.push({ label: '$(debug-restart) Resume Claude session…', description: 'pick a saved brief', action: 'resumeClaude' });
+        items.push({ label: '$(debug-continue) Resume brief pipeline…', description: 'recover a brief that got stuck after a crash', action: 'resumePipeline' });
       }
       items.push({ label: '$(window) Open Mission Control (browser)', action: 'mission' });
       items.push({ label: '$(refresh) Restart Atrune server', action: 'restart' });
@@ -305,6 +383,30 @@ export async function activate(ctx: vscode.ExtensionContext) {
         case 'restart': return vscode.commands.executeCommand('atrune.restartServer');
         case 'revoke':  return vscode.commands.executeCommand('atrune.revokeFolderStorage');
         case 'disconnectAtrune': return vscode.commands.executeCommand('atrune.disconnectAtrune');
+        case 'resumeClaude': return vscode.commands.executeCommand('atrune.resumeClaudeSession');
+        case 'resumePipeline': {
+          // Quick Pick across all recent briefs that are 'active' (i.e. haven't
+          // been marked done/failed). Most relevant target after a crash.
+          const wsId = activeWorkspaceId;
+          if (!wsId) { vscode.window.showInformationMessage('No active project.'); return; }
+          const plan = await api.getPlan(wsId);
+          const candidates = (plan?.briefs.recent ?? []).filter((b) => b.status === 'active');
+          if (candidates.length === 0) {
+            vscode.window.showInformationMessage('No active briefs to resume.');
+            return;
+          }
+          const picked = await vscode.window.showQuickPick(
+            candidates.map((b) => ({
+              label: `$(debug-continue) ${(b.body.split('\n')[0] ?? b.id).slice(0, 80)}`,
+              description: `${b.id.slice(-6)} · ${b.status}`,
+              detail: new Date(b.createdAt).toLocaleString(),
+              briefId: b.id,
+            })),
+            { placeHolder: 'Pick a brief to resume' },
+          );
+          if (!picked) return;
+          return vscode.commands.executeCommand('atrune.resumeBriefPipeline', { briefId: picked.briefId });
+        }
       }
     }),
     vscode.commands.registerCommand('atrune.disconnectAtrune', async () => {
@@ -350,9 +452,12 @@ export async function activate(ctx: vscode.ExtensionContext) {
         await server.ensureRunning();
       }
       // Gate Step 2 behind Step 1. Connect modal cannot open until the user
-      // has explicitly granted folder storage for this project.
-      const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
-      if (!folder || !hasConsent(folder)) {
+      // has explicitly granted folder storage for this project. The active
+      // folder may be DIFFERENT from the open VS Code folder if the user
+      // picked one via "Pick a different folder…" — check that, not the
+      // open folder.
+      const activeFolder = getActiveConsentedFolder();
+      if (!activeFolder) {
         const pick = await vscode.window.showInformationMessage(
           'Allow project storage first. Atrune writes its DB + transcripts inside `.atrune/` — the folder needs to be opted in before any subscription can be wired up.',
           { modal: true },
@@ -366,10 +471,10 @@ export async function activate(ctx: vscode.ExtensionContext) {
       await openConnectSubscription(ctx, api, async () => { await checkConnectionAndSetContext(); });
     }),
     vscode.commands.registerCommand('atrune.allowFolderStorage', async () => {
-      const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
-      if (folder && hasConsent(folder)) {
+      const activeFolder = getActiveConsentedFolder();
+      if (activeFolder) {
         const re = await vscode.window.showInformationMessage(
-          `Atrune storage is already enabled for:\n\n  ${folder}/.atrune/\n\n` +
+          `Atrune storage is already enabled for:\n\n  ${activeFolder}/.atrune/\n\n` +
           `Do you want to re-prompt (e.g. switch to a different folder)?`,
           { modal: true },
           'Re-prompt',
@@ -388,13 +493,11 @@ export async function activate(ctx: vscode.ExtensionContext) {
       }
     }),
     vscode.commands.registerCommand('atrune.revokeFolderStorage', async () => {
-      const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      // Revoke the ACTIVE consented folder (which may differ from the open
+      // VS Code folder if the user picked one via "Pick a different folder…").
+      const folder = getActiveConsentedFolder();
       if (!folder) {
-        vscode.window.showInformationMessage('No folder open — nothing to revoke.');
-        return;
-      }
-      if (!hasConsent(folder)) {
-        vscode.window.showInformationMessage(`No Atrune storage exists in ${folder}.`);
+        vscode.window.showInformationMessage('No consented folder — nothing to revoke.');
         return;
       }
       const confirm = await vscode.window.showWarningMessage(
@@ -412,7 +515,12 @@ export async function activate(ctx: vscode.ExtensionContext) {
         // starts from "Not Connected" again next time it's opened.
         await clearFolderSubscriptionAuthorization(ctx);
         await vscode.commands.executeCommand('setContext', 'atrune.connected', false);
-        vscode.window.showInformationMessage(`Removed ${result.path}. Atrune is now in initial state.`);
+        const extra = result.claudeSessionsRemoved > 0
+          ? ` · Wiped ${result.claudeSessionsRemoved} Claude session dir(s) under ~/.claude/projects/`
+          : '';
+        vscode.window.showInformationMessage(
+          `Removed ${result.path}. Atrune is now in initial state.${extra}`,
+        );
         // Server was talking to the deleted DB. Respawn so it falls back to sandbox.
         await server?.dispose();
         server = new AtruneServer();
@@ -473,6 +581,189 @@ export async function activate(ctx: vscode.ExtensionContext) {
       }
       await openKanban({ workspaceId: args.workspaceId, briefId: args.briefId });
     }),
+    vscode.commands.registerCommand('atrune.resumeClaudeSession', async () => {
+      // Sessions are now per-(feature_tag, role) and stamped on work_items.
+      // List every DISTINCT session UUID across this workspace's work_items
+      // so the user picks one and we open the right `claude --resume <uuid>`.
+      const wsId = activeWorkspaceId;
+      if (!wsId) {
+        vscode.window.showInformationMessage('No active project. Open one in Active Work first.');
+        return;
+      }
+      const items = await api.listWorkItems(wsId);
+      // Group by sessionId → take one representative item per session.
+      const bySession = new Map<string, typeof items[number]>();
+      for (const w of items) {
+        if (!w.claudeSessionId) continue;
+        const prev = bySession.get(w.claudeSessionId);
+        if (!prev || w.updatedAt > prev.updatedAt) bySession.set(w.claudeSessionId, w);
+      }
+      if (bySession.size === 0) {
+        vscode.window.showInformationMessage('No saved Claude sessions yet for this project. Dispatch a brief first.');
+        return;
+      }
+      const picked = await vscode.window.showQuickPick(
+        [...bySession.entries()].map(([sid, w]) => ({
+          label: `$(comment-discussion) ${w.assignedRole ?? '(no role)'} · ${w.featureTag ?? '(no feature)'}`,
+          description: `${sid.slice(0, 8)}…`,
+          detail: `last activity: ${new Date(w.updatedAt).toLocaleString()} · status: ${w.status}`,
+          sessionId: sid,
+        })),
+        { placeHolder: 'Pick a Claude session to resume', matchOnDescription: true, matchOnDetail: true },
+      );
+      if (!picked) return;
+      // Spawn in the cwd the original Claude session used — `claude --resume`
+      // only lists sessions whose project dir matches the cwd. Read it from
+      // the .jsonl itself; fall back to workspace targetFolder / open folder.
+      const meta = await api.getWorkspaceMeta(wsId);
+      const cwd = findCwdForSession(picked.sessionId)
+        ?? meta?.targetFolder?.trim()
+        ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      const t = vscode.window.createTerminal({
+        name: `claude --resume ${picked.sessionId.slice(0, 8)}`,
+        cwd,
+        iconPath: new vscode.ThemeIcon('comment-discussion'),
+      });
+      t.sendText(`claude --resume ${picked.sessionId}`, true);
+      t.show(true);
+    }),
+    vscode.commands.registerCommand('atrune.openTaskClaudeTerminal', async (args?: {
+      workspaceId?: string; taskId?: string; briefId?: string;
+    }) => {
+      // Click handler for a task in Progress Tracker / Team. Resolves the
+      // task's per-(feature, role) Claude session UUID, finds the cwd it
+      // was originally launched from (read from the jsonl), and opens a
+      // VS Code terminal running `claude --resume <uuid>` there.
+      const wsId = args?.workspaceId ?? activeWorkspaceId;
+      if (!wsId) { vscode.window.showInformationMessage('No active project.'); return; }
+      const items = await api.listWorkItems(wsId);
+      let sessionId: string | null = null;
+      let label = '';
+      if (args?.taskId) {
+        const item = items.find((w) => w.id === args.taskId);
+        sessionId = item?.claudeSessionId ?? null;
+        label = `${item?.assignedRole ?? ''} · ${item?.phase ?? ''}`;
+      } else if (args?.briefId) {
+        const briefItems = items
+          .filter((w) => w.briefId === args.briefId && w.claudeSessionId)
+          .sort((a, b) => b.updatedAt - a.updatedAt);
+        sessionId = briefItems[0]?.claudeSessionId ?? null;
+        label = `${briefItems[0]?.assignedRole ?? ''} · ${briefItems[0]?.phase ?? ''}`;
+      }
+      if (!sessionId) {
+        vscode.window.showInformationMessage('No Claude session yet for this task — drag a phase card to Active to start the agent.');
+        return;
+      }
+      // Spawn in the cwd the original session used so `claude --resume`
+      // resolves correctly. Read the cwd from the jsonl (lossy slash-to-
+      // dash encoding can't be inverted; the jsonl stores the real cwd).
+      const cwd = findCwdForSession(sessionId)
+        ?? (await api.getWorkspaceMeta(wsId))?.targetFolder?.trim()
+        ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      const t = vscode.window.createTerminal({
+        name: `claude · ${label || sessionId.slice(0, 8)}`,
+        cwd,
+        iconPath: new vscode.ThemeIcon('comment-discussion'),
+      });
+      t.sendText(`claude --resume ${sessionId}`, true);
+      t.show(true);
+    }),
+    vscode.commands.registerCommand('atrune.openLiveSessionTail', async (args?: {
+      workspaceId?: string; briefId?: string; taskId?: string;
+    }) => {
+      const wsId = args?.workspaceId ?? activeWorkspaceId;
+      if (!wsId) {
+        vscode.window.showInformationMessage('No active project.');
+        return;
+      }
+      // taskId is the preferred selector — opens THIS work_item's session,
+      // so two tasks under the same brief but different roles open
+      // different sessions. briefId is the legacy fallback.
+      if (!args?.taskId && !args?.briefId) {
+        vscode.window.showInformationMessage('No task/brief context for live session.');
+        return;
+      }
+      await openLiveSessionTail(api, {
+        workspaceId: wsId,
+        taskId: args?.taskId,
+        briefId: args?.briefId,
+      });
+    }),
+    vscode.commands.registerCommand('atrune.resumeBriefPipeline', async (args?: {
+      briefId?: string;
+    }) => {
+      // Re-run the brief's pipeline from where it left off. Used when the
+      // server died mid-phase and tasks are stuck. The orchestrator skips
+      // phases whose artifact is already on disk, so it's safe to call.
+      const briefId = args?.briefId;
+      if (!briefId) {
+        vscode.window.showInformationMessage('No brief context for resume.');
+        return;
+      }
+      const confirm = await vscode.window.showWarningMessage(
+        `Resume pipeline for ${briefId}?\n\n` +
+        'Re-runs runPipeline for this brief. Phases whose artifact is already on disk are skipped, ' +
+        'so this is safe even if some phases completed before the disruption.',
+        { modal: true }, 'Resume',
+      );
+      if (confirm !== 'Resume') return;
+      const r = await api.resumeBrief(briefId);
+      if (r.ok) {
+        vscode.window.showInformationMessage(`Resumed ${briefId}. Watch the Progress Tracker for live updates.`);
+        vscode.commands.executeCommand('atrune.refresh');
+      } else {
+        vscode.window.showErrorMessage(`Resume failed: ${r.error ?? 'unknown error'}`);
+      }
+    }),
+    vscode.commands.registerCommand('atrune.resumeBriefSession', async (args?: {
+      workspaceId?: string; briefId?: string;
+    }) => {
+      // Click handler for a task in Progress Tracker / Team. Looks up the
+      // brief's stored Claude session UUID and opens a VS Code terminal
+      // running `claude --resume <uuid>` in the cwd Claude originally used —
+      // identical UX to typing it in a shell yourself.
+      const wsId = args?.workspaceId ?? activeWorkspaceId;
+      const briefId = args?.briefId;
+      if (!wsId || !briefId) {
+        vscode.window.showInformationMessage('No brief context for this task.');
+        return;
+      }
+      const plan = await api.getPlan(wsId);
+      const brief = (plan?.briefs.recent ?? []).find((b) => b.id === briefId);
+      if (!brief?.claudeSessionId) {
+        vscode.window.showInformationMessage(
+          `No Claude session for ${briefId} yet — it gets created when the first phase runs.`,
+        );
+        return;
+      }
+      // `claude --resume` only lists sessions matching the current cwd, so
+      // we MUST spawn the terminal in the same dir Claude was launched in.
+      // The jsonl encodes its cwd in the first JSON record — read it.
+      const cwd = findCwdForSession(brief.claudeSessionId)
+        ?? (await api.getWorkspaceMeta(wsId))?.targetFolder?.trim()
+        ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      const t = vscode.window.createTerminal({
+        name: `claude --resume ${brief.claudeSessionId.slice(0, 8)}`,
+        cwd,
+        iconPath: new vscode.ThemeIcon('comment-discussion'),
+      });
+      t.sendText(`claude --resume ${brief.claudeSessionId}`, true);
+      t.show(true);
+    }),
+    vscode.commands.registerCommand('atrune.openLiveClaude', async (args?: {
+      workspaceId?: string; briefId?: string; phase?: string; role?: string;
+    }) => {
+      if (!args?.workspaceId || !args?.briefId || !args?.phase || !args?.role) {
+        vscode.window.showInformationMessage('No task selected — pick a task from Progress Tracker or Team.');
+        return;
+      }
+      await openLiveClaudeSession(api, {
+        workspaceId: args.workspaceId,
+        briefId: args.briefId,
+        phase: args.phase as any,
+        role: args.role,
+      });
+    }),
     vscode.commands.registerCommand('atrune.openTaskTranscript', async (args?: { filePath?: string }) => {
       const fp = args?.filePath?.trim();
       if (!fp || !fs.existsSync(fp)) {
@@ -482,6 +773,32 @@ export async function activate(ctx: vscode.ExtensionContext) {
       const uri = vscode.Uri.file(fp);
       const doc = await vscode.workspace.openTextDocument(uri);
       await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+      try { await vscode.commands.executeCommand('markdown.showPreviewToSide', uri); } catch {}
+    }),
+    vscode.commands.registerCommand('atrune.openBriefOverallPlan', async (args?: {
+      workspaceId?: string; briefId?: string;
+    }) => {
+      if (!args?.workspaceId || !args?.briefId) return;
+      // Resolve the workspace's md root (visible atrune/ if folder-bound,
+      // else sandbox under ~/.guideai/workspaces/<id>/).
+      const meta = await api.getWorkspaceMeta(args.workspaceId);
+      const mdRoot = meta?.targetFolder?.trim()
+        ? path.join(meta.targetFolder, 'atrune')
+        : path.join(process.env.GUIDEAI_HOME || path.join(os.homedir(), '.guideai'), 'workspaces', args.workspaceId);
+      const file = path.join(mdRoot, 'briefs', args.briefId, 'overallplan.md');
+      if (!fs.existsSync(file)) {
+        const pick = await vscode.window.showInformationMessage(
+          `overallplan.md not found yet for ${args.briefId}. The orchestrator writes it on dispatch.`,
+          'Open Kanban instead',
+        );
+        if (pick === 'Open Kanban instead') {
+          await vscode.commands.executeCommand('atrune.openKanban', args);
+        }
+        return;
+      }
+      const uri = vscode.Uri.file(file);
+      const doc = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One, preview: false });
       try { await vscode.commands.executeCommand('markdown.showPreviewToSide', uri); } catch {}
     }),
     vscode.commands.registerCommand('atrune.showAgentWork', async (args?: {

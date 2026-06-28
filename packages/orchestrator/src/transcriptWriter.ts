@@ -60,6 +60,49 @@ export function writeTaskTranscript(ctx: TranscriptContext, chunks: Chunk[]): st
   return file;
 }
 
+/** Make a streaming appender for a single task run. Returns a function the
+ *  caller (orchestrator) invokes for every chunk as it arrives from the
+ *  adapter's onChunk callback. The header + system prompt are written on
+ *  the FIRST chunk so the file exists immediately — VS Code's markdown
+ *  preview can open it from the start, and content fills in live.
+ *
+ *  The append is fs.appendFileSync (sync) — chunks arrive at human-scale
+ *  rates (Claude's stream), not millions per second, so blocking briefly
+ *  per chunk is fine and keeps order deterministic. */
+export function makeStreamingAppender(ctx: TranscriptContext) {
+  const file = transcriptPath(ctx.workspaceId, ctx.role, ctx.taskId);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  let aiTurn = 1;
+  let headerWritten = fs.existsSync(file);
+
+  function ensureHeader() {
+    if (headerWritten) return;
+    const parts: string[] = [];
+    parts.push(renderHeader(ctx));
+    if (ctx.systemPrompt?.trim()) {
+      parts.push(`## 🧑 System prompt\n\n${fence(ctx.systemPrompt.trim())}\n`);
+    }
+    fs.appendFileSync(file, parts.join('\n'), 'utf-8');
+    headerWritten = true;
+  }
+
+  return {
+    path: file,
+    /** Append a single chunk's rendered Markdown to the transcript. */
+    append(chunk: Chunk): void {
+      ensureHeader();
+      const rendered = renderChunk(chunk, aiTurn);
+      if (!rendered) return;
+      fs.appendFileSync(file, '\n' + rendered, 'utf-8');
+      if (chunk.kind === 'ai') aiTurn++;
+    },
+    /** Called when the run finishes. Currently a no-op (header already
+     *  written, all chunks already appended) — kept as a hook for future
+     *  "task finished" markers if we want them. */
+    finalize(): void {},
+  };
+}
+
 function renderHeader(ctx: TranscriptContext): string {
   const lines = [
     `# Task: ${ctx.taskTitle}`,

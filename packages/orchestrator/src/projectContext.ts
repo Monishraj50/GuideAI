@@ -301,6 +301,360 @@ export function briefChatPath(workspaceId: string, briefId: string): string {
   return path.join(wsRoot(workspaceId), 'briefs', briefId, 'chat.md');
 }
 
+/** Workspace-level index: <wsRoot>/PROJECT.md — lists every feature in the
+ *  workspace with the per-role Claude session UUIDs. Rebuilt on every brief
+ *  dispatch + every phase completion. */
+export function projectIndexPath(workspaceId: string): string {
+  return path.join(wsRoot(workspaceId), 'PROJECT.md');
+}
+
+/** Per-feature context: <wsRoot>/features/<feature_tag>.md — lists all
+ *  briefs that touch this feature + every (role → session_id) for it. */
+export function featureContextPath(workspaceId: string, featureTag: string): string {
+  return path.join(wsRoot(workspaceId), 'features', `${featureTag}.md`);
+}
+
+/**
+ * Rebuild PROJECT.md from current DB state. One section per feature tag,
+ * each section listing roles + the Claude session UUID for that
+ * (feature, role) combo, plus the briefs that touched the feature.
+ */
+export function writeProjectIndexMd(workspaceId: string): void {
+  const db = getDb();
+  const meta = readMeta(workspaceId);
+  const ws = db.select().from(schema.workspaces).all().find((w) => w.id === workspaceId);
+  if (!ws) return;
+  const allItems = db.select().from(schema.workItems).all()
+    .filter((r) => r.workspaceId === workspaceId);
+  const briefs = db.select().from(schema.briefs).all()
+    .filter((b) => b.workspaceId === workspaceId)
+    .sort((a, b) => b.createdAt - a.createdAt);
+
+  // Group work items by featureTag.
+  const byFeature = new Map<string, typeof allItems>();
+  for (const wi of allItems) {
+    const tag = ((wi as any).featureTag as string | null) ?? '(untagged)';
+    const arr = byFeature.get(tag) ?? [];
+    arr.push(wi);
+    byFeature.set(tag, arr);
+  }
+
+  const lines: string[] = [];
+  lines.push(`# ${ws.name}`, '');
+  if (meta.targetFolder) lines.push(`**Target folder:** \`${meta.targetFolder}\``, '');
+  lines.push(`**Created:** ${new Date(ws.createdAt).toISOString()}`, '');
+  lines.push(`**Features:** ${byFeature.size} · **Briefs:** ${briefs.length} · **Work items:** ${allItems.length}`, '');
+  lines.push('---', '');
+  lines.push('## Features');
+  lines.push('');
+
+  if (byFeature.size === 0) {
+    lines.push('_No features yet. Dispatch a brief to create one._', '');
+  }
+
+  // Sort features by most recent activity.
+  const sortedFeatures = [...byFeature.entries()].sort((a, b) => {
+    const ma = Math.max(...a[1].map((w) => w.updatedAt));
+    const mb = Math.max(...b[1].map((w) => w.updatedAt));
+    return mb - ma;
+  });
+
+  for (const [tag, items] of sortedFeatures) {
+    lines.push(`### \`${tag}\``);
+    const briefIds = Array.from(new Set(items.map((i) => i.briefId).filter(Boolean)));
+    lines.push('');
+    lines.push(`**Briefs:** ${briefIds.map((b) => `\`${b}\``).join(', ') || '(none)'}`);
+    lines.push('');
+
+    // Group by role → list session UUIDs
+    const byRole = new Map<string, Set<string>>();
+    for (const wi of items) {
+      const role = wi.assignedRole ?? '(unassigned)';
+      const sid = (wi as any).claudeSessionId as string | null;
+      if (!sid) continue;
+      if (!byRole.has(role)) byRole.set(role, new Set());
+      byRole.get(role)!.add(sid);
+    }
+    if (byRole.size === 0) {
+      lines.push('_No Claude sessions yet for this feature._', '');
+    } else {
+      lines.push('| Role | Claude session | Resume command |');
+      lines.push('|------|---------------|---------------|');
+      for (const [role, sids] of byRole) {
+        for (const sid of sids) {
+          lines.push(`| \`${role}\` | \`${sid}\` | \`claude --resume ${sid}\` |`);
+        }
+      }
+      lines.push('');
+    }
+
+    // Tasks summary
+    const buckets = { todo: 0, in_progress: 0, done: 0, blocked: 0, cancelled: 0 } as Record<string, number>;
+    for (const wi of items) buckets[wi.status] = (buckets[wi.status] ?? 0) + 1;
+    lines.push(`**Tasks:** ${items.length} total · `
+      + `${buckets.done} done · ${buckets.in_progress} in progress · `
+      + `${buckets.todo} todo · ${buckets.blocked} blocked`);
+    lines.push('');
+    lines.push(`See [features/${tag}.md](features/${tag}.md) for the full context.`);
+    lines.push('', '---', '');
+  }
+
+  fs.mkdirSync(path.dirname(projectIndexPath(workspaceId)), { recursive: true });
+  fs.writeFileSync(projectIndexPath(workspaceId), lines.join('\n'), 'utf-8');
+}
+
+/**
+ * Rebuild features/<feature_tag>.md — one document per feature listing
+ * every (role → session) pair, every brief that touched the feature, and
+ * the latest status per role.
+ */
+export function writeFeatureContextMd(workspaceId: string, featureTag: string): void {
+  const db = getDb();
+  const items = db.select().from(schema.workItems).all()
+    .filter((r) => r.workspaceId === workspaceId && (r as any).featureTag === featureTag);
+  if (items.length === 0) return;
+
+  const ws = db.select().from(schema.workspaces).all().find((w) => w.id === workspaceId);
+  const briefRows = db.select().from(schema.briefs).all();
+  const briefIds = Array.from(new Set(items.map((i) => i.briefId).filter(Boolean) as string[]));
+  const briefs = briefIds.map((id) => briefRows.find((b) => b.id === id)).filter(Boolean) as typeof briefRows;
+
+  const lines: string[] = [];
+  lines.push(`# Feature: \`${featureTag}\``, '');
+  if (ws) lines.push(`**Project:** ${ws.name}`, '');
+  lines.push(`**Briefs touching this feature:** ${briefs.length}`, '');
+  lines.push('');
+  for (const b of briefs) {
+    const title = (b.body.split('\n').find((l) => l.trim()) ?? b.id).slice(0, 80);
+    lines.push(`- \`${b.id}\` · ${b.status} · ${title}`);
+  }
+  lines.push('', '---', '');
+
+  // Per-role sessions
+  const byRole = new Map<string, { sessionId: string | null; items: typeof items }>();
+  for (const wi of items) {
+    const role = wi.assignedRole ?? '(unassigned)';
+    const sid = (wi as any).claudeSessionId as string | null;
+    if (!byRole.has(role)) byRole.set(role, { sessionId: sid, items: [] });
+    byRole.get(role)!.items.push(wi);
+    // Prefer a non-null sid if any item under the role has one (resolver
+    // ensures all items under the same (feature, role) share one UUID).
+    if (sid && !byRole.get(role)!.sessionId) byRole.get(role)!.sessionId = sid;
+  }
+  lines.push('## Claude sessions');
+  lines.push('');
+  if (byRole.size === 0) {
+    lines.push('_No sessions yet._');
+  } else {
+    for (const [role, info] of byRole) {
+      lines.push(`### Role: \`${role}\``);
+      if (info.sessionId) {
+        lines.push('');
+        lines.push(`Session: \`${info.sessionId}\``);
+        lines.push('');
+        lines.push('```bash');
+        lines.push(`claude --resume ${info.sessionId}`);
+        lines.push('```');
+      } else {
+        lines.push('');
+        lines.push('_No session yet — tasks pending._');
+      }
+      lines.push('');
+      lines.push('**Tasks:**');
+      for (const wi of info.items) {
+        lines.push(`- [${wi.status}] \`${wi.phase ?? '(no phase)'}\` · ${wi.title}`);
+      }
+      lines.push('');
+    }
+  }
+
+  fs.mkdirSync(path.dirname(featureContextPath(workspaceId, featureTag)), { recursive: true });
+  fs.writeFileSync(featureContextPath(workspaceId, featureTag), lines.join('\n'), 'utf-8');
+}
+
+/** On-disk path for a brief's overallplan.md — the single document the
+ *  Active Work sidebar opens when the user clicks a brief. */
+export function overallPlanPath(workspaceId: string, briefId: string): string {
+  return path.join(wsRoot(workspaceId), 'briefs', briefId, 'overallplan.md');
+}
+
+/** Write/refresh <mdRoot>/briefs/<id>/overallplan.md — a single human-readable
+ *  document summarising the brief, the round-table synthesis (if any), and the
+ *  work items the orchestrator seeded. Called at dispatch time and after each
+ *  phase completes so the markdown preview the user has open auto-updates.
+ *
+ *  Idempotent — rewrites the file from scratch on every call. */
+export function writeOverallPlanMd(args: {
+  workspaceId: string;
+  briefId: string;
+  body: string;                            // the brief body that was dispatched
+  synthesis?: {
+    summary?: string;
+    recommendedRoles?: string[];
+    riskFlags?: string[];
+    successMetrics?: string[];
+    costEstimateUsd?: number | null;
+    costVerdict?: string;
+  } | null;
+  workItems?: Array<{
+    id: string;
+    title: string;
+    description?: string | null;
+    assignedRole?: string | null;
+    phase?: string | null;
+    status: string;
+    parentId?: string | null;
+  }>;
+  phaseArtifacts?: Array<{ phase: string; status: string; tokensIn?: number; tokensOut?: number }>;
+}): string {
+  const file = overallPlanPath(args.workspaceId, args.briefId);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+
+  // Pull brief + sessions from DB so we can render the status badge,
+  // per-role session UUIDs, and progress bar — without changing the
+  // function signature.
+  const db = getDb();
+  const briefRow = db.select().from(schema.briefs).all()
+    .find((b) => b.id === args.briefId);
+  const wsItems = db.select().from(schema.workItems).all()
+    .filter((r) => r.workspaceId === args.workspaceId && r.briefId === args.briefId);
+  const statusBadge: Record<string, string> = {
+    active: '🟢 active', done: '✅ done', failed: '🛑 failed',
+    pending: '🟡 pending', archived: '📦 archived',
+  };
+
+  // Strip a leading `# …` from the body so we don't render two H1s.
+  const briefBody = args.body.trim().replace(/^#\s+[^\n]+\n*/, '').trim();
+  const briefTitle = (args.body.split('\n').find((l) => l.trim()) ?? args.briefId)
+    .replace(/^#+\s+/, '').slice(0, 100).trim();
+
+  // Header card.
+  const lines: string[] = [];
+  lines.push(`# ${briefTitle}`);
+  lines.push('');
+  lines.push(`> Brief \`${args.briefId}\` · ${briefRow ? (statusBadge[briefRow.status] ?? briefRow.status) : 'unknown'}` +
+    (briefRow ? ` · created ${new Date(briefRow.createdAt).toLocaleString()}` : ''));
+  lines.push(`> _Updated ${new Date().toISOString().replace('T', ' ').slice(0, 19)} UTC_`);
+  lines.push('');
+
+  // Phase progress bar — one block per phase, coloured by status.
+  const phasesInOrder = ['research', 'plan', 'implement', 'review', 'verify'];
+  const phaseStatusOf = (p: string): 'done' | 'active' | 'todo' | 'blocked' => {
+    const items = wsItems.filter((w) => w.phase === p);
+    if (items.length === 0) return 'todo';
+    if (items.every((w) => w.status === 'done')) return 'done';
+    if (items.some((w) => w.status === 'blocked')) return 'blocked';
+    if (items.some((w) => w.status === 'in_progress')) return 'active';
+    return 'todo';
+  };
+  const icon: Record<string, string> = { done: '🟢', active: '🟡', todo: '⚪', blocked: '🔴' };
+  lines.push('## Progress');
+  lines.push('');
+  lines.push(phasesInOrder.map((p) => `${icon[phaseStatusOf(p)]} **${p}**`).join('  →  '));
+  lines.push('');
+
+  lines.push('## Brief');
+  lines.push('');
+  lines.push(briefBody || args.body.trim());
+  lines.push('');
+
+  if (args.synthesis) {
+    lines.push('## Round-table synthesis');
+    lines.push('');
+    if (args.synthesis.summary?.trim()) {
+      lines.push(args.synthesis.summary.trim());
+      lines.push('');
+    }
+    if (args.synthesis.recommendedRoles?.length) {
+      lines.push(`**Recommended roles:** ${args.synthesis.recommendedRoles.map((r) => `\`${r}\``).join(' · ')}`);
+      lines.push('');
+    }
+    if (args.synthesis.costEstimateUsd != null) {
+      lines.push(`**Ballpark cost:** $${args.synthesis.costEstimateUsd.toFixed(2)} (${args.synthesis.costVerdict ?? 'unknown'})`);
+      lines.push('');
+    }
+    if (args.synthesis.riskFlags?.length) {
+      lines.push('**Risks:**');
+      for (const r of args.synthesis.riskFlags) lines.push(`- ${r}`);
+      lines.push('');
+    }
+    if (args.synthesis.successMetrics?.length) {
+      lines.push('**Success metrics:**');
+      for (const m of args.synthesis.successMetrics) lines.push(`- ${m}`);
+      lines.push('');
+    }
+  }
+
+  // Per-role Claude sessions — one row per (role) with the session UUID and
+  // a copy-pasteable resume command. Skipped when no sessions exist yet.
+  const sessionsByRole = new Map<string, string>();
+  for (const w of wsItems) {
+    const role = w.assignedRole ?? '(unassigned)';
+    const sid = (w as any).claudeSessionId as string | null;
+    if (!sid) continue;
+    if (!sessionsByRole.has(role)) sessionsByRole.set(role, sid);
+  }
+  if (sessionsByRole.size > 0) {
+    lines.push('## Claude sessions');
+    lines.push('');
+    lines.push('| Role | Session | Resume command |');
+    lines.push('|---|---|---|');
+    for (const [role, sid] of sessionsByRole) {
+      lines.push(`| \`${role}\` | \`${sid.slice(0, 8)}…\` | \`claude --resume ${sid}\` |`);
+    }
+    lines.push('');
+  }
+
+  if (args.phaseArtifacts?.length) {
+    lines.push('## Phases');
+    lines.push('');
+    lines.push('| Phase | Status | Tokens |');
+    lines.push('|---|---|---|');
+    for (const p of args.phaseArtifacts) {
+      const tokens = (p.tokensIn || p.tokensOut)
+        ? `${p.tokensIn ?? 0}↓ / ${p.tokensOut ?? 0}↑`
+        : '—';
+      lines.push(`| ${p.phase} | ${p.status} | ${tokens} |`);
+    }
+    lines.push('');
+  }
+
+  if (args.workItems?.length) {
+    // Group by phase, render each as a small status table.
+    const statusIcon: Record<string, string> = {
+      done: '✅', in_progress: '🟡', todo: '⚪', blocked: '🔴', cancelled: '⊘',
+    };
+    const byPhase: Record<string, typeof args.workItems> = {};
+    for (const w of args.workItems) {
+      const key = w.phase || 'other';
+      (byPhase[key] ||= [] as any).push(w);
+    }
+    const totalCount = args.workItems.length;
+    const doneCount = args.workItems.filter((w) => w.status === 'done').length;
+    lines.push(`## Tasks · ${doneCount}/${totalCount} done`);
+    lines.push('');
+    for (const phase of ['research', 'plan', 'implement', 'review', 'verify', 'other']) {
+      const items = byPhase[phase];
+      if (!items?.length) continue;
+      const phaseDone = items.filter((w) => w.status === 'done').length;
+      lines.push(`### ${phase} _(${phaseDone}/${items.length})_`);
+      lines.push('');
+      lines.push('| | Task | Role |');
+      lines.push('|---|---|---|');
+      for (const w of items) {
+        const icon = statusIcon[w.status] ?? '·';
+        const title = w.title.replace(/\|/g, '\\|');
+        const role = w.assignedRole ? `\`${w.assignedRole}\`` : '—';
+        lines.push(`| ${icon} | ${title} | ${role} |`);
+      }
+      lines.push('');
+    }
+  }
+
+  fs.writeFileSync(file, lines.join('\n'), 'utf-8');
+  return file;
+}
+
 // ─── agents/<role>/summary.md (rolling) ───────────────────────────────────
 
 /**

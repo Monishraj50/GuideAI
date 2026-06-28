@@ -148,6 +148,39 @@ export async function openBriefComposer(
         }
         return;
       }
+
+      case 'detailed': {
+        // Detailed brief = run intake → discovery → critique → plan-review,
+        // then the user approves the plan which dispatches the brief. Same
+        // pipeline as initial project setup. The body becomes intake.goal.
+        const wsId = String(msg.workspaceId ?? '');
+        const body = String(msg.body ?? '').trim();
+        if (!wsId || !body) {
+          panel?.webview.postMessage({ type: 'error', error: 'workspace + brief body are required' });
+          return;
+        }
+        panel?.webview.postMessage({ type: 'submitting' });
+        // 1) Stamp the body as the workspace's intake goal so discovery
+        //    has the right starting context.
+        const intakeResult = await api.saveIntake(wsId, { goal: body });
+        if (!intakeResult.ok) {
+          panel?.webview.postMessage({ type: 'error', error: intakeResult.error ?? 'intake save failed' });
+          return;
+        }
+        // 2) Kick off round-table discovery + auto-create a plan.
+        const discResult = await api.runDiscovery(wsId);
+        if (!discResult.ok) {
+          panel?.webview.postMessage({ type: 'error', error: discResult.error ?? 'discovery failed' });
+          return;
+        }
+        // 3) Close composer + open Mission Control on the project page so
+        //    the user can review + approve the plan → that triggers the
+        //    actual brief dispatch.
+        panel?.webview.postMessage({ type: 'success' });
+        await vscode.commands.executeCommand('atrune.openMissionControl', { route: `/projects/${wsId}` });
+        setTimeout(() => panel?.dispose(), 800);
+        return;
+      }
     }
   });
 
@@ -294,9 +327,13 @@ function renderHtml(
     </div>
 
     <div class="actions">
-      <button type="submit" id="submit">Dispatch brief</button>
+      <button type="submit" id="submit">▶ Quick brief</button>
+      <button type="button" id="detailed" title="Round-table discovery → plan → critique → approval before tasks run">🔍 Detailed brief</button>
       <button type="button" class="secondary" id="cancel">Cancel</button>
       <span class="status" id="status"></span>
+    </div>
+    <div class="hint" style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 4px;">
+      Quick = tasks dispatch immediately. Detailed = round-table + plan + critique, then you approve.
     </div>
   </form>
   ` : `
@@ -400,6 +437,19 @@ function renderHtml(
           budget: amount > 0
             ? { mode: tokensMode ? 'tokens' : 'currency', amount }
             : undefined,
+          securityTagged: document.getElementById('security').checked,
+        });
+      });
+      document.getElementById('detailed').addEventListener('click', () => {
+        const tokensMode = document.getElementById('budget-tokens').checked;
+        const rawAmount = parseFloat(document.getElementById('budget-amount').value);
+        const amount = isNaN(rawAmount) ? 0 : (tokensMode ? Math.round(rawAmount * 1000) : rawAmount);
+        vscode.postMessage({
+          type: 'detailed',
+          workspaceId: document.getElementById('workspace').value,
+          body: document.getElementById('body').value,
+          taggedAgents: [...tagged.keys()],
+          budget: amount > 0 ? { mode: tokensMode ? 'tokens' : 'currency', amount } : undefined,
           securityTagged: document.getElementById('security').checked,
         });
       });

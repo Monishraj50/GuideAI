@@ -22,15 +22,19 @@ export function registerWorkItemRoutes(app: FastifyInstance) {
   // Cross-workspace board view. Filters via querystring; items enriched with
   // the workspace's display name so the UI can render a workspace pill per card.
   app.get<{ Querystring: {
-    workspaceId?: string; status?: WorkStatus; phase?: WorkPhase;
+    workspaceId?: string; briefId?: string; status?: WorkStatus; phase?: WorkPhase;
     priority?: WorkPriority; assignedRole?: string; q?: string;
   } }>('/api/work-items', async (req) => {
     const db = getDb();
     const workspaces = db.select().from(schema.workspaces).all();
     const nameByWs = new Map(workspaces.map((w) => [w.id, w.name]));
+    const briefRows = db.select().from(schema.briefs).all();
+    const briefById = new Map(briefRows.map((b) => [b.id, b]));
     let rows = db.select().from(schema.workItems).all();
     if (req.query.workspaceId)
       rows = rows.filter((r) => r.workspaceId === req.query.workspaceId);
+    if (req.query.briefId)
+      rows = rows.filter((r) => r.briefId === req.query.briefId);
     if (STATUSES.includes(req.query.status as WorkStatus))
       rows = rows.filter((r) => r.status === req.query.status);
     if (PHASES.includes(req.query.phase as WorkPhase))
@@ -46,11 +50,22 @@ export function registerWorkItemRoutes(app: FastifyInstance) {
     const items = rows
       .map((r) => ({ ...r, workspaceName: nameByWs.get(r.workspaceId) ?? r.workspaceId }))
       .sort((a, b) => b.updatedAt - a.updatedAt);
-    // Distinct facets — handy for the filter chips.
+    // Distinct facets — handy for the filter chips. Briefs are scoped to
+    // the workspace filter if one is set, otherwise all briefs.
+    const briefsForFacet = (req.query.workspaceId
+      ? briefRows.filter((b) => b.workspaceId === req.query.workspaceId)
+      : briefRows
+    ).sort((a, b) => b.createdAt - a.createdAt);
     const facets = {
       workspaces: workspaces
         .filter((w) => rows.some((r) => r.workspaceId === w.id))
         .map((w) => ({ id: w.id, name: w.name })),
+      briefs: briefsForFacet.map((b) => ({
+        id: b.id,
+        title: (b.body.split('\n').find((l) => l.trim()) ?? b.id).replace(/^#+\s*/, '').slice(0, 80),
+        status: b.status,
+        createdAt: b.createdAt,
+      })),
       phases: Array.from(new Set(rows.map((r) => r.phase).filter(Boolean))) as string[],
       priorities: Array.from(new Set(rows.map((r) => r.priority))),
       roles: Array.from(new Set(rows.map((r) => r.assignedRole).filter(Boolean))) as string[],

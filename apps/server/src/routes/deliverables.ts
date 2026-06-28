@@ -5,7 +5,8 @@ import {
   harvestBriefDeliverables,
   type DeliverableKind,
 } from '@guideai/orchestrator/deliverables';
-import { pickVariant, listDesignPicks } from '@guideai/orchestrator/designShotgun';
+// designShotgun deleted in S0 (Claude-only); design-variant routes
+// are stubbed-out 410 Gone responses below.
 
 const KINDS: DeliverableKind[] = ['artifact', 'slide-deck', 'explainer', 'link', 'file', 'regression-test', 'design-variant'];
 
@@ -50,24 +51,13 @@ export function registerDeliverableRoutes(app: FastifyInstance) {
     }
   });
 
-  // Pick a design variant (gstack-style design-shotgun) — siblings become rejected.
-  app.post<{ Params: { id: string }; Body?: { notes?: string } }>(
-    '/api/deliverables/:id/pick', async (req, reply) => {
-      try {
-        const pick = pickVariant({
-          pickedDeliverableId: req.params.id,
-          notes: req.body?.notes,
-        });
-        return { pick };
-      } catch (err: any) {
-        reply.code(400); return { error: String(err?.message ?? err) };
-      }
-    });
-
-  app.get<{ Params: { id: string } }>(
-    '/api/workspaces/:id/design-picks', async (req) => {
-      return { picks: listDesignPicks(req.params.id) };
-    });
+  // Design-variant routes removed in S0 (Claude-only, no design-shotgun).
+  app.post('/api/deliverables/:id/pick', async (_req, reply) => {
+    reply.code(410); return { error: 'design-variant routes removed' };
+  });
+  app.get('/api/workspaces/:id/design-picks', async (_req, reply) => {
+    reply.code(410); return { error: 'design-variant routes removed' };
+  });
 
   app.delete<{ Params: { id: string } }>('/api/deliverables/:id', async (req, reply) => {
     try {

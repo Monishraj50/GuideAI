@@ -13,6 +13,7 @@ import type { SystemChunk } from '@guideai/shared/chunks';
 import { hireAgent } from './hiring.js';
 import { submitBrief } from './cos.js';
 import { autoSeedFromPlan } from './wbs.js';
+import { writeOverallPlanMd, writeProjectIndexMd, writeFeatureContextMd } from './projectContext.js';
 import { runCritiques, type CritiqueBundle } from './critique.js';
 import {
   loadIntake, latestDiscovery, type DiscoverySynthesis,
@@ -434,21 +435,54 @@ export async function approvePlan(args: {
     // blocks at the synthetic _start_ gate. The Start Implementing panel in
     // the project UI promotes the brief to auto/manual when the user clicks.
     const result = await submitBrief({
-      workspaceId: plan.workspaceId, body, securityTagged, mode: 'pending',
+      workspaceId: plan.workspaceId, body, securityTagged, mode: 'auto',
     });
     briefId = result.briefId;
     status = 'dispatched';
     appendEvent(plan.workspaceId, sys(plan.workspaceId,
       `plan ${plan.id} dispatched → brief ${briefId} (awaiting Start Implementing)`));
     // Phase 4 — seed the WBS so the dashboard has something to show.
+    // Derive a stable feature tag from the brief body's first heading-ish
+    // line so all work items for this feature get the same tag → the
+    // session resolver (resolveTaskSession) groups them by (tag, role).
+    const featureTag = slugifyFeature(body);
+    let seededItems: ReturnType<typeof autoSeedFromPlan> = [];
     try {
-      autoSeedFromPlan({
+      seededItems = autoSeedFromPlan({
         workspaceId: plan.workspaceId, briefId, planId: plan.id,
         synthesis: plan.synthesis,
+        featureTag,
       });
     } catch (err: any) {
       appendEvent(plan.workspaceId, sys(plan.workspaceId,
         `WBS seed skipped: ${err?.message ?? err}`, 'warn'));
+    }
+    // Write overallplan.md right after seeding — the Active Work sidebar
+    // opens this file when the user clicks the brief. Updated again as
+    // phases complete (see phases.ts).
+    try {
+      writeOverallPlanMd({
+        workspaceId: plan.workspaceId,
+        briefId,
+        body,
+        synthesis: plan.synthesis,
+        workItems: seededItems.map((w: any) => ({
+          id: w.id, title: w.title, description: w.description,
+          assignedRole: w.assignedRole, phase: w.phase, status: w.status, parentId: w.parentId,
+        })),
+      });
+    } catch (err: any) {
+      appendEvent(plan.workspaceId, sys(plan.workspaceId,
+        `overallplan.md write skipped: ${err?.message ?? err}`, 'warn'));
+    }
+    // Refresh PROJECT.md + the per-feature context so the user sees the
+    // new feature show up immediately after dispatch.
+    try {
+      writeProjectIndexMd(plan.workspaceId);
+      writeFeatureContextMd(plan.workspaceId, featureTag);
+    } catch (err: any) {
+      appendEvent(plan.workspaceId, sys(plan.workspaceId,
+        `project index write skipped: ${err?.message ?? err}`, 'warn'));
     }
   } else {
     appendEvent(plan.workspaceId, sys(plan.workspaceId,
@@ -506,3 +540,18 @@ function sys(workspaceId: string, text: string, level: SystemChunk['level'] = 'i
 }
 
 export { SAFE_DEFAULT_ROLES };
+
+/**
+ * Derive a stable, URL-safe feature tag from the brief body. Strips markdown
+ * heading prefix, lowercases, slugifies non-alphanumerics. Used as the
+ * grouping key for per-(feature, role) Claude sessions.
+ *
+ *   "# Build a coin-flip web app\n…"  →  "build-a-coin-flip-web-app"
+ *   "Add login OAuth"                  →  "add-login-oauth"
+ *   ""                                 →  "untitled"
+ */
+function slugifyFeature(body: string): string {
+  const firstLine = (body.split('\n').find((l) => l.trim()) ?? '').replace(/^#+\s*/, '').trim();
+  const slug = firstLine.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+  return slug || 'untitled';
+}

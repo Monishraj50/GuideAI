@@ -22,6 +22,12 @@ interface TaskNode {
   label: string;
   filePath: string;
   description?: string;
+  // Live-Claude terminal coords (set when we can parse them from the
+  // transcript filename `<briefId>-<phase>.md`).
+  workspaceId?: string;
+  briefId?: string;
+  phase?: string;
+  role?: string;
 }
 
 interface InfoNode {
@@ -59,14 +65,20 @@ export class TeamProvider implements vscode.TreeDataProvider<Node> {
     if (node.kind === 'task') {
       const item = new vscode.TreeItem(node.label, vscode.TreeItemCollapsibleState.None);
       item.description = node.description;
-      item.tooltip = `Open transcript: ${node.filePath}`;
+      item.tooltip = `Open Claude session for this brief (claude --resume)`;
       item.iconPath = new vscode.ThemeIcon('comment-discussion');
       item.contextValue = 'taskTranscript';
-      item.command = {
-        command: 'atrune.openTaskTranscript',
-        title: 'Open task transcript',
-        arguments: [{ filePath: node.filePath }],
-      };
+      item.command = (node.workspaceId && node.briefId)
+        ? {
+            command: 'atrune.openTaskClaudeTerminal',
+            title: 'Open claude --resume <session> for this task',
+            arguments: [{ workspaceId: node.workspaceId, briefId: node.briefId }],
+          }
+        : {
+            command: 'atrune.openTaskTranscript',
+            title: 'Open task transcript',
+            arguments: [{ filePath: node.filePath }],
+          };
       return item;
     }
     // info
@@ -108,21 +120,49 @@ export class TeamProvider implements vscode.TreeDataProvider<Node> {
     const mdRoot = await resolveMdRoot(this.api, workspaceId);
     if (!mdRoot) return [{ kind: 'info', label: 'No transcripts yet', description: 'agent hasn’t run', iconId: 'info' }];
     const dir = path.join(mdRoot, 'agents', role, 'sessions');
-    let files: string[] = [];
+    let files: { name: string; mtime: number; size: number }[] = [];
     try {
-      files = fs.readdirSync(dir).filter((f) => f.endsWith('.md'));
+      files = fs.readdirSync(dir)
+        .filter((f) => f.endsWith('.md'))
+        .map((f) => {
+          const st = fs.statSync(path.join(dir, f));
+          return { name: f, mtime: st.mtimeMs, size: st.size };
+        });
     } catch { /* directory doesn't exist yet */ }
     if (files.length === 0) {
       return [{ kind: 'info', label: 'No transcripts yet', description: 'agent hasn’t run', iconId: 'info' }];
     }
-    files.sort();
+    // Cross-reference work-items so we can show task title + live/done state.
+    const allWorkItems = await this.api.listWorkItems(workspaceId).catch(() => []);
+    // Group: items still running for this role go to the top with "● live".
+    const inProgressIds = new Set(
+      allWorkItems
+        .filter((w) => w.assignedRole === role && w.status === 'in_progress')
+        .map((w) => w.briefId && w.phase ? `${w.briefId}-${w.phase}` : null)
+        .filter(Boolean) as string[],
+    );
+    // Sort by mtime descending — newest first, naturally putting active runs first.
+    files.sort((a, b) => b.mtime - a.mtime);
+
     return files.map((f): TaskNode => {
-      const taskId = f.replace(/\.md$/, '');
+      const taskId = f.name.replace(/\.md$/, '');
+      const isLive = inProgressIds.has(taskId);
+      const matchingItem = allWorkItems.find(
+        (w) => w.assignedRole === role && w.briefId && w.phase && `${w.briefId}-${w.phase}` === taskId,
+      );
+      // Transcript file naming convention is "<briefId>-<phase>.md".
+      const m = taskId.match(/^(brief-[a-z0-9]+)-(research|plan|implement|review|verify)$/);
+      const briefId = m?.[1];
+      const phase = m?.[2];
       return {
         kind: 'task',
-        label: taskId,
-        description: 'transcript',
-        filePath: path.join(dir, f),
+        label: matchingItem?.title ?? taskId,
+        description: isLive ? '● live · click for live Claude session' : 'done · click to replay session',
+        filePath: path.join(dir, f.name),
+        workspaceId,
+        briefId,
+        phase,
+        role,
       };
     });
   }

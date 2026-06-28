@@ -10,7 +10,6 @@ export * from './deliverables.js';
 export * from './github.js';
 export * from './critique.js';
 export * from './validate.js';
-export * from './secondOpinion.js';
+// secondOpinion + designShotgun deleted in S0 (Claude-only).
 export * from './memory.js';
-export * from './designShotgun.js';
 export * from './directTask.js';
