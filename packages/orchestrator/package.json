@@ -17,6 +17,7 @@
     "./directTask": "./src/directTask.ts",
     "./routing": "./src/routing.ts",
     "./projectContext": "./src/projectContext.ts",
+    "./contextStore": "./src/contextStore.ts",
     "./transcriptWriter": "./src/transcriptWriter.ts",
     "./taskGate": "./src/taskGate.ts"
   },

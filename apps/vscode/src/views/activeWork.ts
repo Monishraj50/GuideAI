@@ -64,7 +64,7 @@ export class ActiveWorkProvider implements vscode.TreeDataProvider<Node> {
         { label: 'No projects yet', iconId: 'info' },
         {
           label: 'Create a project →',
-          description: 'intake + discovery in a tab',
+          description: 'open the new-project form',
           iconId: 'add',
           command: {
             command: 'atrune.newProject',

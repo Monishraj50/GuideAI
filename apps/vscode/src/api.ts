@@ -133,7 +133,7 @@ export class AtruneApi {
   }
 
   /** Save (merge) intake fields for a workspace. Used by the Detailed brief
-   *  flow to set the goal before kicking off discovery. */
+   *  flow to set the goal before dispatching the brief. */
   async saveIntake(workspaceId: string, intake: { goal?: string; criteria?: string[]; constraints?: string[] }): Promise<{ ok: boolean; error?: string }> {
     try {
       const r = await fetch(`${base()}/api/workspaces/${workspaceId}/intake`, {
@@ -150,28 +150,9 @@ export class AtruneApi {
     }
   }
 
-  /** Run the round-table discovery → auto-creates a plan. The user then
-   *  reviews + approves the plan in Mission Control (or the project page)
-   *  to actually dispatch the brief. */
-  async runDiscovery(workspaceId: string, revisionNote?: string): Promise<{ ok: boolean; error?: string }> {
-    try {
-      const r = await fetch(`${base()}/api/workspaces/${workspaceId}/discovery`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ revisionNote }),
-      });
-      if (!r.ok) {
-        const j = (await r.json().catch(() => ({}))) as { error?: string };
-        return { ok: false, error: j?.error ?? `http ${r.status}` };
-      }
-      return { ok: true };
-    } catch (err: any) {
-      return { ok: false, error: String(err?.message ?? err) };
-    }
-  }
-
   /** Get top-N catalog agents that match a brief body. Used by the composer to
-   *  auto-tag suggestions. Returns flag whether each is already hired in the
-   *  given workspace (no marketplace hire needed on dispatch). */
+   *  auto-tag suggestions. Returns flag whether each is already on the workspace
+   *  roster (avoids creating duplicate agent records on dispatch). */
   async suggestAgents(args: {
     taskBody: string;
     workspaceId?: string;
@@ -327,29 +308,6 @@ export class AtruneApi {
     }
   }
 
-  /** Global OpenAI integration — disabled in S0 (Claude-only).
-   *  Callers get null so the OpenAI/Codex card disappears from the
-   *  subscription wizard. The server route is gone too. */
-  async getGlobalOpenAI(): Promise<{ apiKeySet: boolean; ready: boolean } | null> {
-    return null;
-  }
-
-  async setGlobalOpenAIApiKey(apiKey: string): Promise<{ ok: boolean; error?: string }> {
-    try {
-      const r = await fetch(`${base()}/api/integrations/openai/global`, {
-        method: 'PUT', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ apiKey }),
-      });
-      if (!r.ok) {
-        const j = await r.json() as any;
-        return { ok: false, error: j?.error ?? `http ${r.status}` };
-      }
-      return { ok: true };
-    } catch (err: any) {
-      return { ok: false, error: String(err?.message ?? err) };
-    }
-  }
-
   async connectGlobalClaudeCli(): Promise<{ ok: boolean; error?: string }> {
     try {
       const r = await fetch(`${base()}/api/integrations/claude/global/cli/connect`, { method: 'POST' });
@@ -371,17 +329,6 @@ export class AtruneApi {
         fetch(`${base()}/api/integrations/claude/global/apikey`, { method: 'DELETE' }),
         fetch(`${base()}/api/integrations/claude/global/cli/disconnect`, { method: 'POST' }),
       ]);
-      return { ok: true };
-    } catch (err: any) {
-      return { ok: false, error: String(err?.message ?? err) };
-    }
-  }
-
-  /** Disconnect the global OpenAI / Codex integration. */
-  async disconnectGlobalOpenAI(): Promise<{ ok: boolean; error?: string }> {
-    try {
-      const r = await fetch(`${base()}/api/integrations/openai/global`, { method: 'DELETE' });
-      if (!r.ok) return { ok: false, error: `http ${r.status}` };
       return { ok: true };
     } catch (err: any) {
       return { ok: false, error: String(err?.message ?? err) };

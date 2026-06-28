@@ -13,6 +13,10 @@ import { harvestBriefDeliverables } from './deliverables.js';
 const isDesignTagged = (_body: string): boolean => false;
 import { hireAgent } from './hiring.js';
 import { writeBriefAnalyses, appendAgentSummary, writeBriefChat } from './projectContext.js';
+import {
+  ensureProjectMd, upsertFeature, appendSessionPointer, rebuildProjectTOC,
+  featureSlugFromBrief,
+} from './contextStore.js';
 import * as taskGate from './taskGate.js';
 import { eq } from 'drizzle-orm';
 
@@ -212,6 +216,24 @@ export async function submitBrief(args: {
   // Register the brief's execution mode before any phase awaits a release.
   taskGate.registerBrief(briefId, args.mode ?? 'auto');
 
+  // S2 · Hierarchical context store: scaffold PROJECT.md + FEATURE.md on the
+  // first brief for this workspace, then upsert the feature with whatever
+  // we can derive from the brief now (more fields land at completion).
+  const featureSlug = featureSlugFromBrief(body);
+  try {
+    ensureProjectMd(workspaceId);
+    upsertFeature(workspaceId, featureSlug, {
+      status: 'in-progress',
+      goal: body.split('\n').find((l) => l.trim()) ?? body.slice(0, 200),
+    });
+    rebuildProjectTOC(workspaceId);
+  } catch (err: any) {
+    appendEvent(workspaceId, {
+      ...base(workspaceId, agentId), kind: 'system', level: 'warn',
+      text: `context store scaffold skipped: ${err?.message ?? err}`,
+    } as SystemChunk);
+  }
+
   const userChunk: UserChunk = { ...base(workspaceId), kind: 'user', text: body };
   appendEvent(workspaceId, userChunk);
 
@@ -383,6 +405,21 @@ export async function submitBrief(args: {
 
       // Browser validation removed in S1.
 
+      // S2 — append the session pointer to FEATURE.md + refresh PROJECT.md.
+      try {
+        appendSessionPointer({
+          workspaceId, slug: featureSlug, sessionId: claudeSessionId,
+          briefBody: body, outcome: 'shipped',
+        });
+        upsertFeature(workspaceId, featureSlug, { status: 'shipped' });
+        rebuildProjectTOC(workspaceId);
+      } catch (err: any) {
+        appendEvent(workspaceId, {
+          ...base(workspaceId, agentId), kind: 'system', level: 'warn',
+          text: `context store update skipped: ${err?.message ?? err}`,
+        } as SystemChunk);
+      }
+
       const doneNote: SystemChunk = {
         ...base(workspaceId, agentId),
         kind: 'system', level: 'info',
@@ -398,6 +435,14 @@ export async function submitBrief(args: {
       appendEvent(workspaceId, fail);
       db.update(schema.briefs).set({ status: 'failed' })
         .where(eq(schema.briefs.id, briefId)).run();
+      // S2 — record the failed session in FEATURE.md (outcome: partial).
+      try {
+        appendSessionPointer({
+          workspaceId, slug: featureSlug, sessionId: claudeSessionId,
+          briefBody: body, outcome: 'partial',
+        });
+        rebuildProjectTOC(workspaceId);
+      } catch {}
       // Phase E — unfreeze the intake so the user can revise + retry. The
       // 4 core fields go back to editable; UI also reads brief.status to flip
       // the dispatched/in-flight freeze state for budget/planning/hire/etc.

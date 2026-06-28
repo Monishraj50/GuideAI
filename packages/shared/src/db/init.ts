@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import nodePath from 'node:path';
 import Database from 'better-sqlite3';
 import { paths } from '../paths.js';
 
@@ -270,7 +271,7 @@ export function initDb(): void {
  *  own properly-schema'd .atrune/db.sqlite without needing to be the
  *  process-wide active DB. */
 export function initDbAt(dbPath: string): void {
-  fs.mkdirSync(require('node:path').dirname(dbPath), { recursive: true });
+  fs.mkdirSync(nodePath.dirname(dbPath), { recursive: true });
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');

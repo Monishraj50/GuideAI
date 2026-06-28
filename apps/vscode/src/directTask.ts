@@ -2,7 +2,7 @@
 //
 // Two entry shapes:
 //   askOneAgent — user picks an agent from the roster, types a prompt, agent runs.
-//   autoFix     — user types a description; server picks/hires a relevant agent.
+//   autoFix     — user types a description; server picks/adds a relevant agent.
 //
 // After a successful run we show the response in an untitled Markdown editor
 // tab (no webview chrome — pure VS Code), with a follow-up popup offering to
@@ -38,17 +38,14 @@ export async function askOneAgent(
     preselectedPrompt = provisionalPrompt;
   }
 
-  // Pick an agent from the roster (or offer to open the marketplace).
+  // Pick an agent from the roster.
   const agents = await api.listAgents(wsId);
   if (agents.length === 0) {
     const pick = await vscode.window.showInformationMessage(
-      'No agents hired in this project yet. Use Auto-fix instead, or browse the marketplace.',
-      'Auto-fix instead', 'Browse marketplace',
+      'No agents on the team yet. Use Auto-fix instead — it dispatches a brief that auto-adds the needed role.',
+      'Auto-fix instead',
     );
     if (pick === 'Auto-fix instead') return autoFix(api, activeWorkspaceId, preselectedPrompt);
-    if (pick === 'Browse marketplace') {
-      vscode.commands.executeCommand('atrune.openMissionControl');
-    }
     return;
   }
 

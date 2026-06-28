@@ -14,7 +14,7 @@ Click the **Atrune** icon in your activity bar (left edge of VS Code) to open th
 
 **Four toolbar buttons** on the Active work title:
 
-- 💬 **New brief** — full-flow brief with discovery + plan + critic
+- 💬 **New brief** — write a brief and dispatch the pipeline
 - ⚡ **Quick ask** — abbreviated single-agent or auto-fix
 - 📦 **Mission Control** — the entire web UI in a tabbed webview
 - ⚙️ **Settings** — VS Code settings filtered to Atrune

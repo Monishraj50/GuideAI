@@ -1,12 +1,12 @@
 # Quick ask — fix one thing fast
 
-Some moments don't need the full ceremony. Two lightweight paths skip discovery + critic:
+Some moments don't need the full ceremony. Two lightweight paths run an abbreviated pipeline:
 
 ## Auto-fix this file
 
 - **Right-click any file** in the Explorer → **Atrune: Auto-fix this…**
 - Type a 1-sentence description (e.g. *"add input validation to the /shorten endpoint"*)
-- Atrune picks (or hires) the right agent and runs a 3-phase abbreviated pipeline
+- Atrune picks (or adds) the right agent and runs a 3-phase abbreviated pipeline
 
 ## Ask one agent
 

@@ -139,6 +139,39 @@ Each step ends with a runnable demo the user verifies before moving to the next.
 - `.gitignore` auto-written
 - Verify: trigger 2 briefs on different features → both visible in PROJECT.md with correct files
 
+### S2.5 · Permission UI
+
+**Demo:** every tool call in a manual-mode brief surfaces in the sidebar with diff preview; user clicks Allow/Deny and the pipeline continues.
+
+Locked design decisions:
+- **Default mode: Manual** — every tool call asks (safest onboarding).
+- **"Always allow" scope: this session only** — rules cleared when the brief/pipeline completes.
+- **Edit/Write previews: show before/after diff** inline in the prompt.
+
+Modes:
+- **Auto** — accept everything safe (hard-denies for `rm -rf`, `--no-verify`, paths outside the consented folder still apply).
+- **Manual** — ask every tool call (default).
+- **Custom** — rule-based: `Read/Glob/Grep` auto-allow, `Bash` asks, etc. Rules editable per-repo.
+
+Components:
+- New tree-view provider `apps/vscode/src/views/permissions.ts` — pinned to top of sidebar, always visible.
+  - Header: `🛂 PERMISSIONS  Mode: [Custom ▾]`  + 🔴 killswitch button
+  - Body: pending request (with diff for Edit/Write) + last 5 decisions
+- Mode dropdown command `atrune.setPermissionMode` — writes to `<repo>/.atrune/policies/rules.json` and global `~/.atrune/policies.json`.
+- New webview `apps/vscode/src/webviews/rulesEditor.ts` — table of patterns (allow/ask/deny), per-repo overrides, "Add rule from this request" affordance.
+- Server-side session allowlist — in-memory `Map<workspaceId, Set<rulePattern>>` cleared on brief completion. Survives only for the current pipeline run.
+- Existing `/api/permissions/evaluate` + `/api/permissions/:id/decision` endpoints already exist — wire UI to them.
+- Existing toast prompt stays as fallback when the sidebar is collapsed; main interaction moves to the panel.
+- Pending requests stream via SSE to the panel — no polling.
+
+Auto-timeout: pending request auto-denies after 5 minutes (configurable).
+
+Verify:
+1. Fresh install → mode = Manual. Brief "rename foo to bar in utils.ts" → permission panel shows `Edit utils.ts` with before/after diff. Allow once → file written; Allow always → rule added for `Edit utils.ts` for this session; second Edit on same file auto-allows; brief finishes; rule cleared.
+2. Mode toggled to Auto → same brief runs straight through, no prompts.
+3. Mode = Custom + rule `Bash: git status — allow` → `git status` runs silently; `git push` still asks.
+4. Killswitch click → all pending requests denied; running agent killed; status bar shows `Atrune · stopped`.
+
 ### S3 · Simplified 3-phase pipeline
 
 **Demo:** end-to-end task in ~40% less wall time than v1's 5-phase run.

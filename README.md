@@ -161,6 +161,22 @@ Native resume reuses Claude's prompt cache — fewer tokens, faster turn-around.
 
 ---
 
+## Permissions
+
+When Claude tries to call a tool (`Read`, `Edit`, `Write`, `Bash`, …) the request is intercepted by a `PreToolUse` hook that asks the orchestrator before the tool runs. You see pending requests in a dedicated **🛂 Permissions** panel at the top of the sidebar, with a before/after diff for `Edit`/`Write`.
+
+Three modes (set per-workspace from the panel header):
+
+| Mode | Behavior |
+|---|---|
+| **Manual** (default) | Every tool call asks. Safest. |
+| **Auto** | Accept everything safe. Hard-denies still apply (`rm -rf`, `--no-verify`, paths outside the consented folder). |
+| **Custom** | Rule-based. `Read/Glob/Grep` auto-allow, `Bash` asks, etc. Rules edited in a webview and persisted to `<repo>/.guideai/policies/rules.json`. |
+
+**Always allow** in a prompt records the rule for the current pipeline run only — it clears when the brief completes. The 🛑 killswitch in the panel header stops every running agent and denies every pending request immediately.
+
+---
+
 ## Hooks-as-policy
 
 Six hook points per phase, configured per-repo in `.guideai/hooks.json`:

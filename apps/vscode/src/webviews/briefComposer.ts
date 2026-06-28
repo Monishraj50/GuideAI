@@ -72,7 +72,7 @@ export async function openBriefComposer(
 
       case 'addAgent': {
         const q = await vscode.window.showInputBox({
-          prompt: 'Search the marketplace by role / specialty',
+          prompt: 'Search the agent catalog by role / specialty',
           placeHolder: 'e.g. python, security, frontend',
           ignoreFocusOut: true,
         });
@@ -149,38 +149,7 @@ export async function openBriefComposer(
         return;
       }
 
-      case 'detailed': {
-        // Detailed brief = run intake → discovery → critique → plan-review,
-        // then the user approves the plan which dispatches the brief. Same
-        // pipeline as initial project setup. The body becomes intake.goal.
-        const wsId = String(msg.workspaceId ?? '');
-        const body = String(msg.body ?? '').trim();
-        if (!wsId || !body) {
-          panel?.webview.postMessage({ type: 'error', error: 'workspace + brief body are required' });
-          return;
-        }
-        panel?.webview.postMessage({ type: 'submitting' });
-        // 1) Stamp the body as the workspace's intake goal so discovery
-        //    has the right starting context.
-        const intakeResult = await api.saveIntake(wsId, { goal: body });
-        if (!intakeResult.ok) {
-          panel?.webview.postMessage({ type: 'error', error: intakeResult.error ?? 'intake save failed' });
-          return;
-        }
-        // 2) Kick off round-table discovery + auto-create a plan.
-        const discResult = await api.runDiscovery(wsId);
-        if (!discResult.ok) {
-          panel?.webview.postMessage({ type: 'error', error: discResult.error ?? 'discovery failed' });
-          return;
-        }
-        // 3) Close composer + open Mission Control on the project page so
-        //    the user can review + approve the plan → that triggers the
-        //    actual brief dispatch.
-        panel?.webview.postMessage({ type: 'success' });
-        await vscode.commands.executeCommand('atrune.openMissionControl', { route: `/projects/${wsId}` });
-        setTimeout(() => panel?.dispose(), 800);
-        return;
-      }
+      // 'detailed' brief flow removed in S1 (discovery + critique cut).
     }
   });
 
@@ -287,7 +256,7 @@ function renderHtml(
 </head>
 <body>
   <h1>💬 New brief</h1>
-  <p class="sub">Describe the work, point us at a folder, tag who should do it, set a budget. We hire missing agents from the marketplace automatically.</p>
+  <p class="sub">Describe the work, point us at a folder, tag who should do it, set a budget. Missing agents are added to your team automatically.</p>
 
   ${hasWorkspaces ? `
   <form id="form">
@@ -297,7 +266,7 @@ function renderHtml(
     <label for="body">Goal</label>
     <textarea id="body" placeholder="e.g. Build a tiny URL-shortener API with a POST /shorten endpoint that persists to SQLite." required>${prefillText}</textarea>
 
-    <label>👥 Tag agents · they get hired from the marketplace if not on your team</label>
+    <label>👥 Tag agents · missing roles get added to your team on dispatch</label>
     <div id="chips" class="chips"></div>
     <div class="chips-actions">
       <button type="button" class="secondary tiny" id="suggest">⚡ Suggest from brief</button>
@@ -327,13 +296,12 @@ function renderHtml(
     </div>
 
     <div class="actions">
-      <button type="submit" id="submit">▶ Quick brief</button>
-      <button type="button" id="detailed" title="Round-table discovery → plan → critique → approval before tasks run">🔍 Detailed brief</button>
+      <button type="submit" id="submit">▶ Dispatch brief</button>
       <button type="button" class="secondary" id="cancel">Cancel</button>
       <span class="status" id="status"></span>
     </div>
     <div class="hint" style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 4px;">
-      Quick = tasks dispatch immediately. Detailed = round-table + plan + critique, then you approve.
+      Tasks dispatch immediately and run plan → implement → review.
     </div>
   </form>
   ` : `
@@ -367,7 +335,7 @@ function renderHtml(
         chip.innerHTML =
           (info.displayName ? '<strong>' + info.displayName + '</strong>' : '<strong>' + role + '</strong>') +
           '<span class="meta">' + role + '</span>' +
-          (info.hiredAlready === false ? '<span class="meta">· marketplace</span>' : '') +
+          (info.hiredAlready === false ? '<span class="meta">· new role</span>' : '') +
           '<button type="button" class="x" data-role="' + role + '">×</button>';
         chipsEl.appendChild(chip);
       }
@@ -378,9 +346,9 @@ function renderHtml(
           renderChips();
         });
       });
-      const marketplaceCount = [...tagged.values()].filter((v) => v.hiredAlready === false).length;
-      if (tagHintEl) tagHintEl.textContent = marketplaceCount > 0
-        ? marketplaceCount + ' from marketplace will be auto-hired on dispatch'
+      const freshCount = [...tagged.values()].filter((v) => v.hiredAlready === false).length;
+      if (tagHintEl) tagHintEl.textContent = freshCount > 0
+        ? freshCount + ' new role(s) will be added to your team on dispatch'
         : 'all tagged agents already on your team';
     }
     renderChips();
@@ -437,19 +405,6 @@ function renderHtml(
           budget: amount > 0
             ? { mode: tokensMode ? 'tokens' : 'currency', amount }
             : undefined,
-          securityTagged: document.getElementById('security').checked,
-        });
-      });
-      document.getElementById('detailed').addEventListener('click', () => {
-        const tokensMode = document.getElementById('budget-tokens').checked;
-        const rawAmount = parseFloat(document.getElementById('budget-amount').value);
-        const amount = isNaN(rawAmount) ? 0 : (tokensMode ? Math.round(rawAmount * 1000) : rawAmount);
-        vscode.postMessage({
-          type: 'detailed',
-          workspaceId: document.getElementById('workspace').value,
-          body: document.getElementById('body').value,
-          taggedAgents: [...tagged.keys()],
-          budget: amount > 0 ? { mode: tokensMode ? 'tokens' : 'currency', amount } : undefined,
           securityTagged: document.getElementById('security').checked,
         });
       });

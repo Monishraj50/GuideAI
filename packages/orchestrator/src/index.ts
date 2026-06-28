@@ -9,3 +9,4 @@ export * from './deliverables.js';
 // designShotgun removed.
 export * from './memory.js';
 export * from './directTask.js';
+export * from './contextStore.js';

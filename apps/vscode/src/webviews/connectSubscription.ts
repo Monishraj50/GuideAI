@@ -154,27 +154,7 @@ export async function openConnectSubscription(
             await rerender();
           }
         } catch {
-          vscode.window.showWarningMessage('Could not authenticate to GitHub. Try again or use Claude / Codex instead.');
-        }
-        return;
-      }
-
-      case 'connect-codex': {
-        const key = await vscode.window.showInputBox({
-          prompt: 'Paste your OpenAI API key (powers the Codex provider + cross-vendor review)',
-          placeHolder: 'sk-…',
-          password: true,
-          ignoreFocusOut: true,
-          validateInput: (v) => v.trim().startsWith('sk-') ? null : 'Should start with sk-…',
-        });
-        if (!key?.trim()) return;
-        const r = await api.setGlobalOpenAIApiKey(key.trim());
-        if (r.ok) {
-          authorizeFolder();
-          vscode.window.showInformationMessage('Atrune · OpenAI / Codex connected.');
-          await rerender();
-        } else {
-          vscode.window.showErrorMessage(`Could not save key: ${r.error}`);
+          vscode.window.showWarningMessage('Could not authenticate to GitHub. Try again or use Claude instead.');
         }
         return;
       }
@@ -195,25 +175,6 @@ export async function openConnectSubscription(
           deauthorizeFolder();
           await vscode.commands.executeCommand('setContext', 'atrune.connected', false);
           vscode.window.showInformationMessage('Atrune · Claude disconnected.');
-          await rerender();
-        } else {
-          vscode.window.showErrorMessage(`Could not disconnect: ${r.error}`);
-        }
-        return;
-      }
-
-      case 'disconnect-codex': {
-        const ok = await vscode.window.showWarningMessage(
-          'Disconnect Codex (OpenAI)? You can reconnect anytime.',
-          { modal: true }, 'Disconnect',
-        );
-        if (ok !== 'Disconnect') return;
-        const r = await api.disconnectGlobalOpenAI();
-        if (r.ok) {
-          if (getPrimary() === 'codex') await setPrimary(null);
-          deauthorizeFolder();
-          await vscode.commands.executeCommand('setContext', 'atrune.connected', false);
-          vscode.window.showInformationMessage('Atrune · Codex disconnected.');
           await rerender();
         } else {
           vscode.window.showErrorMessage(`Could not disconnect: ${r.error}`);
@@ -267,7 +228,6 @@ function forceNotConnectedState(): ConnectionState {
 
 async function detectState(api: AtruneApi): Promise<ConnectionState> {
   const claudeState = await api.getGlobalClaude();
-  const openaiState = await api.getGlobalOpenAI();
   const copilotExt = vscode.extensions.getExtension('GitHub.copilot');
   let copilotAuthed = false;
   if (copilotExt) {
@@ -289,9 +249,7 @@ async function detectState(api: AtruneApi): Promise<ConnectionState> {
           ? undefined
           : 'sign in to GitHub',
     },
-    codex: {
-      connected: !!openaiState?.apiKeySet,
-    },
+    codex: { connected: false },  // S1 strip: OpenAI/Codex card hidden.
     primary: getPrimary(),
   };
 }
@@ -454,15 +412,6 @@ function renderHtml(state: ConnectionState): string {
       disconnectAction: 'disconnect-copilot',
     })}
 
-    ${card({
-      id: 'codex',
-      name: 'Codex',
-      company: 'OpenAI',
-      description: 'Powers the Codex provider and cross-vendor sanity checks on security-tagged briefs. Paste an OpenAI API key.',
-      connected: state.codex.connected,
-      primaryAction: { label: state.codex.connected ? 'Replace key' : 'Use API key', type: 'connect-codex' },
-      disconnectAction: 'disconnect-codex',
-    })}
   </div>
 
   <div class="footer">

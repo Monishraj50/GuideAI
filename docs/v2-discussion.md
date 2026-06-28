@@ -281,6 +281,62 @@ User reversed an earlier consideration of renaming to `.atrune` — keep the exi
 
 Confirmed. 13 steps in [v2-plan.md](v2-plan.md), each shippable + verifiable in isolation. User checks demo at end of each step before moving to next.
 
+### Q17 — How are Claude's tool permissions handled?
+
+Claude CLI's `PreToolUse` hook fires a binary we ship (`packages/permission-hook/bin/`). The binary POSTs to `/api/permissions/evaluate`. The server applies policies and either auto-allows, auto-denies, or asks the user.
+
+```
+Claude tries tool → PreToolUse hook → guideai-perm-hook binary
+   → POST /api/permissions/evaluate (apps/server)
+   → Server checks policies.json + workspace rules
+       ├─ Auto-allow  (Read/Glob/Grep)
+       ├─ Auto-deny   (rm -rf, --no-verify, paths outside consented folder)
+       └─ Ask user    → VSCode toast / sidebar panel
+   → Decision → hook returns approve/deny → tool runs or aborts
+```
+
+### Q18 — Add a dedicated permission UI surface + three modes.
+
+**Locked design (S2.5):**
+
+| Decision | Choice |
+|---|---|
+| Default mode | **Manual** (every tool call asks) |
+| "Always allow" scope | **This session only** — rule cleared when brief/pipeline ends |
+| Edit/Write previews | **Show before/after diff** in the prompt |
+| Killswitch | Pinned to the panel header; independent of mode |
+| Auto-timeout on pending | 5 minutes → deny |
+
+**Three modes:**
+- **Auto** — accept everything safe; hard-denies still apply
+- **Manual** (default) — every tool call asks
+- **Custom** — rules editable per-repo via webview
+
+**Where it lives in the sidebar:**
+
+```
+ATRUNE ▾
+  ┌──────────────────────────────────────────────────┐
+  │ 🛂 PERMISSIONS              Mode: [Manual ▾] 🛑 │
+  ├──────────────────────────────────────────────────┤
+  │  ⏳ coder · 14:05                                │
+  │     wants to  Edit  src/checkout.ts              │
+  │     [before/after diff ▾]                        │
+  │     [Allow once] [Allow session] [Deny]          │
+  │     [Add rule…]                                  │
+  │                                                  │
+  │  Recent:                                         │
+  │   ✓ 14:03  Read  src/auth.ts        (auto)       │
+  │   ✓ 14:03  Edit  src/auth.ts        (you)        │
+  │   ✗ 14:04  Bash  "rm -rf ..."       (denied)     │
+  └──────────────────────────────────────────────────┘
+  🚀 START
+  📂 FEATURES
+  …
+```
+
+Build step: **S2.5** — sits between S2 and S3. ~3 hours of work.
+
 ---
 
 ## Locked decisions (cross-reference table)
@@ -302,3 +358,6 @@ Confirmed. 13 steps in [v2-plan.md](v2-plan.md), each shippable + verifiable in 
 | Pack source | Git, generic names | S12 |
 | pack.json | Required, declares `requires` | S12 |
 | ECC principles | Keep (token/tool/cadence/model discipline) | CLAUDE.md |
+| Permission default mode | **Manual** | S2.5 |
+| "Always allow" scope | **This session only** | S2.5 |
+| Edit/Write prompts | **Show before/after diff** | S2.5 |

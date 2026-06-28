@@ -99,18 +99,7 @@ export class TeamProvider implements vscode.TreeDataProvider<Node> {
     const agents = await this.api.listAgents(wsId);
     if (agents.length === 0) {
       return [
-        { kind: 'info', label: 'No agents hired yet', description: 'auto-hires when you brief', iconId: 'info' },
-        {
-          kind: 'info',
-          label: 'Browse marketplace →',
-          description: 'opens Hire in your browser',
-          iconId: 'arrow-right',
-          command: {
-            command: 'atrune.openMissionControl',
-            title: 'Open marketplace',
-            arguments: [{ route: '/hire' }],
-          },
-        },
+        { kind: 'info', label: 'No agents on the team yet', description: 'auto-added when you brief', iconId: 'info' },
       ];
     }
     return agents.map((a): AgentNode => ({ kind: 'agent', label: a.displayName, agent: a, workspaceId: wsId }));

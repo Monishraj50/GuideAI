@@ -5,7 +5,7 @@ You're now in the **Atrium of Agents** — a workplace where AI does the work an
 ## The shape of the day
 
 1. **You write a brief** — what you want built, in plain English
-2. **Atrune hires the right specialists** — auto or hand-picked from a catalog of 154
+2. **Atrune adds the right specialists** — auto or hand-picked from the 8-role core catalog
 3. **A pipeline runs** — research → plan → implement → review → verify
 4. **You ship** — approve, dispatch to a repo, or roll back
 

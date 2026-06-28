@@ -169,9 +169,8 @@ export async function activate(ctx: vscode.ExtensionContext) {
       return false;
     }
     const claude = await api.getGlobalClaude();
-    const openai = await api.getGlobalOpenAI();
     const copilotInstalled = !!vscode.extensions.getExtension('GitHub.copilot');
-    const connected = !!(claude?.ready || openai?.apiKeySet || copilotInstalled);
+    const connected = !!(claude?.ready || copilotInstalled);
     await vscode.commands.executeCommand('setContext', 'atrune.connected', connected);
     return connected;
   }
@@ -347,7 +346,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
         action: 'connect',
       });
       if (consented) {
-        items.push({ label: '$(add) New project', description: 'intake + discovery', action: 'newProject' });
+        items.push({ label: '$(add) New project', description: 'open the new-project form', action: 'newProject' });
         items.push({ label: '$(comment-discussion) New brief…', detail: 'opens the brief composer', action: 'briefs' });
         items.push({ label: '$(layout) Open Kanban for active brief…', action: 'kanban' });
         items.push({ label: '$(debug-restart) Resume Claude session…', description: 'pick a saved brief', action: 'resumeClaude' });
@@ -413,7 +412,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
       const confirm = await vscode.window.showWarningMessage(
         'Disconnect Atrune?\n\n' +
         'This will:\n' +
-        '  • Disconnect your subscription (Claude / OpenAI tokens cleared)\n' +
+        '  • Disconnect your subscription (Claude tokens cleared)\n' +
         '  • Stop the Atrune server and free port 4000\n' +
         '  • Remove the per-folder subscription marker\n\n' +
         'Your .atrune/ folder, project DB, briefs, and transcripts STAY.\n' +
@@ -424,7 +423,6 @@ export async function activate(ctx: vscode.ExtensionContext) {
       if (confirm !== 'Disconnect') return;
       // 1. Global creds cleared so the Connect modal starts from "Not Connected"
       try { await api.disconnectGlobalClaude(); } catch {}
-      try { await api.disconnectGlobalOpenAI(); } catch {}
       // 2. Per-folder subscription marker removed (folder consent stays)
       const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
       if (folder) {

@@ -1,15 +1,10 @@
-// 📋 New project intake webview — native VS Code tab with the same fields the
-// web UI's IntakeSection renders (goal, project folder, success criteria,
-// constraints, budget, planning mode, hire mode), plus an optional
-// "run round-table now" trigger.
+// 📋 New project intake webview — native VS Code tab.
 //
-// Replaces the legacy "Open Mission Control to create a project" link in the
-// Active Work empty state. Submission flow:
+// Submission flow:
 //   1. POST /api/workspaces { name, targetFolder }
 //   2. PUT  /api/workspaces/:id/intake { goal, successCriteria, constraints,
 //      budgetHintUsd, budgetHintUnit, planningMode, hireMode }
-//   3. (optional) POST /api/workspaces/:id/discovery to kick the round-table
-//   4. Close the tab + refresh sidebars + set active workspace.
+//   3. Close the tab + refresh sidebars + set active workspace.
 
 import * as vscode from 'vscode';
 import { AtruneApi } from '../api';
@@ -92,7 +87,6 @@ export async function openNewProject(
         const hireMode: HireMode = ['auto', 'manual', 'hybrid'].includes(msg.hireMode)
           ? msg.hireMode
           : 'manual';
-        const runDiscovery = !!msg.runDiscovery && planningMode !== 'manual';
 
         if (!name) {
           panel?.webview.postMessage({ type: 'error', error: 'Project name is required' });
@@ -145,18 +139,38 @@ export async function openNewProject(
             throw new Error(`intake save failed: ${(j as any).error ?? intakeResp.status}`);
           }
 
-          // 3. Optional: kick off discovery round-table
-          if (runDiscovery) {
-            // Fire-and-forget — the round-table takes ~30s; the user can
-            // watch progress on the project page in Mission Control or the
-            // sidebar.
-            void fetch(`http://localhost:4000/api/workspaces/${wsId}/discovery`, {
-              method: 'POST', headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({}),
-            }).catch(() => {});
+          // S1 strip: discovery round-table removed. In v2, creating a project
+          // immediately dispatches the goal as the first brief so the pipeline
+          // runs without an extra click. Skip dispatch only in edit-mode
+          // (intake-fill on a pre-existing workspace) or manual planning mode.
+          const shouldDispatch = !options?.existingWorkspaceId && planningMode !== 'manual';
+          let briefId: string | undefined;
+          if (shouldDispatch) {
+            const dispatched = await api.submitBrief({
+              workspaceId: wsId,
+              body: goal,
+              targetFolder: targetFolder || undefined,
+              budget: budgetHintUsd != null && budgetHintUsd > 0
+                ? {
+                    mode: budgetHintUnit === 'tokens' ? 'tokens' : 'currency',
+                    amount: budgetHintUsd,
+                  }
+                : undefined,
+              mode: planningMode === 'auto' ? 'auto' : 'auto',
+            });
+            if (!dispatched.ok) {
+              // Workspace is created and intake saved — we surface the dispatch
+              // failure but don't roll back; the user can retry from Brief.
+              panel?.webview.postMessage({
+                type: 'error',
+                error: `project created but dispatch failed: ${dispatched.error ?? 'unknown'}`,
+              });
+              return;
+            }
+            briefId = dispatched.briefId;
           }
 
-          panel?.webview.postMessage({ type: 'success', workspaceId: wsId });
+          panel?.webview.postMessage({ type: 'success', workspaceId: wsId, briefId });
           await onCreated(wsId);
           // Close the tab shortly after — give the success state a moment to render.
           setTimeout(() => panel?.dispose(), 900);
@@ -226,8 +240,8 @@ function renderHtml(opts: { defaultTargetFolder: string; prefill: PrefillState |
     ? `📋 Finish setup · <code>${opts.existingWorkspaceId}</code>`
     : '📋 New project';
   const sub = opts.existingWorkspaceId
-    ? "This project was created but its intake isn't filled in yet. Complete the fields below to run the round-table."
-    : 'Set the intake fields and (optionally) run the discovery round-table immediately.';
+    ? "This project was created but its intake isn't filled in yet. Complete the fields below."
+    : 'Set the intake fields. Dispatch a brief from the sidebar when ready.';
   const nameReadonly = opts.existingWorkspaceId ? 'readonly' : '';
   return `<!DOCTYPE html>
 <html lang="en"><head>
@@ -358,11 +372,11 @@ function renderHtml(opts: { defaultTargetFolder: string; prefill: PrefillState |
     <label class="field">Planning mode</label>
     <div class="mode-grid">
       <input type="radio" id="plan-auto"     name="planning-mode" value="auto" />
-      <label for="plan-auto" class="mode-card"><div class="mode-title">Auto</div><div class="mode-desc">Run round-table, synthesis → brief, pipeline starts.</div></label>
+      <label for="plan-auto" class="mode-card"><div class="mode-title">Auto</div><div class="mode-desc">Brief dispatches the moment it's typed; pipeline runs end-to-end.</div></label>
       <input type="radio" id="plan-assisted" name="planning-mode" value="assisted" checked />
-      <label for="plan-assisted" class="mode-card"><div class="mode-title">Assisted</div><div class="mode-desc">Run round-table; review + edit the synthesis before dispatch.</div></label>
+      <label for="plan-assisted" class="mode-card"><div class="mode-title">Assisted</div><div class="mode-desc">Brief auto-creates a plan you can edit before dispatch.</div></label>
       <input type="radio" id="plan-manual"   name="planning-mode" value="manual" />
-      <label for="plan-manual" class="mode-card"><div class="mode-title">Manual</div><div class="mode-desc">Skip the round-table; write the brief yourself.</div></label>
+      <label for="plan-manual" class="mode-card"><div class="mode-title">Manual</div><div class="mode-desc">Write the brief yourself; pipeline waits for your dispatch.</div></label>
     </div>
 
     <label class="field">Hiring mode</label>
@@ -372,12 +386,7 @@ function renderHtml(opts: { defaultTargetFolder: string; prefill: PrefillState |
       <input type="radio" id="hire-hybrid" name="hire-mode" value="hybrid" />
       <label for="hire-hybrid" class="mode-card"><div class="mode-title">Hybrid</div><div class="mode-desc">Hire safe defaults; ask before specialised roles.</div></label>
       <input type="radio" id="hire-manual" name="hire-mode" value="manual" checked />
-      <label for="hire-manual" class="mode-card"><div class="mode-title">Manual</div><div class="mode-desc">You approve each hire from the marketplace.</div></label>
-    </div>
-
-    <div class="checkbox-row">
-      <input id="run-discovery" type="checkbox" checked />
-      <label for="run-discovery">Run discovery round-table immediately after create</label>
+      <label for="hire-manual" class="mode-card"><div class="mode-title">Manual</div><div class="mode-desc">You approve each new role added to your team.</div></label>
     </div>
 
     <div class="actions">
@@ -480,7 +489,6 @@ function renderHtml(opts: { defaultTargetFolder: string; prefill: PrefillState |
 
       const planningMode = document.querySelector('input[name="planning-mode"]:checked')?.value || 'assisted';
       const hireMode = document.querySelector('input[name="hire-mode"]:checked')?.value || 'manual';
-      const runDiscovery = document.getElementById('run-discovery').checked;
 
       vscode.postMessage({
         type: 'submit',
@@ -493,7 +501,6 @@ function renderHtml(opts: { defaultTargetFolder: string; prefill: PrefillState |
         budgetHintUnit: unit,
         planningMode,
         hireMode,
-        runDiscovery,
       });
     });
     document.getElementById('cancel').addEventListener('click', () => {

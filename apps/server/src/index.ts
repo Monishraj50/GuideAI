@@ -22,6 +22,7 @@ import { registerIntegrationRoutes } from './routes/integrations.js';
 import { registerPermissionRoutes } from './routes/permissions.js';
 import { registerChannelRoutes } from './routes/channels.js';
 import { registerBudgetRoutes } from './routes/budget.js';
+import { registerIntakeRoutes } from './routes/intake.js';
 import { registerWorkItemRoutes } from './routes/workItems.js';
 import { registerDeliverableRoutes } from './routes/deliverables.js';
 // S1 strip: removed digest/intake/plans/burndown/githubIntegration/workspaceRepo/validation routes.
@@ -76,6 +77,7 @@ registerIntegrationRoutes(app);
 registerPermissionRoutes(app);
 registerChannelRoutes(app);
 registerBudgetRoutes(app);
+registerIntakeRoutes(app);
 registerWorkItemRoutes(app);
 registerDeliverableRoutes(app);
 registerMemoryRoutes(app);
