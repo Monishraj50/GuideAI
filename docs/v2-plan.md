@@ -1,5 +1,35 @@
 # GuideAI v2 — Final Plan
 
+## Repo conventions (for AI sessions and contributors)
+
+### Token & context discipline
+- Pin context to the package you're editing. Don't re-read the whole monorepo each session.
+- No verbose comments. One short `// why` line max when intent isn't obvious from names.
+- Concise diffs. Don't reformat unrelated code.
+- Lean on the hierarchical context store: `PROJECT.md` → `features/<slug>/FEATURE.md` → `sessions/`. Don't dump full session JSONL into context.
+
+### Build cadence
+- Build steps below (S1–S13) are gated. Don't start step N+1 until step N has a runnable demo + verified by the user.
+- After each step, append a 5-line entry to `docs/build-log-v2.md`: what shipped, what's left, what surprised.
+
+### Model routing
+- Scaffolding / boilerplate / distillation → Haiku
+- Mainline coding / plan / implement → Sonnet
+- Architecture review, security work, complex refactors → Opus
+
+### Tool budget
+- `.mcp.json` capped at ≤10 MCPs. Adding one requires retiring one.
+
+### Storage paths
+- Global: `~/.guideai/` (settings, packs, seed skills, cross-repo memory)
+- Per-repo: `<repo>/.guideai/` (workspace.db, PROJECT.md, features/, custom skills, hooks)
+- Env: `$GUIDEAI_HOME` overrides global root
+
+### License
+- AGPL-3.0. Substantial runtime code is lifted from a third-party AGPL project.
+
+---
+
 ## Context
 
 GuideAI v1 grew to 11 phases, 11 packages, two UIs, and 17 SQLite tables. Most of that surface is unused for the actual job: **take a brief, decompose it, run a quality pipeline, hand the user a reviewed diff.**
