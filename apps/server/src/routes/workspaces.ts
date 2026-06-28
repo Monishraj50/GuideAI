@@ -5,7 +5,8 @@ import { getDb, schema } from '@guideai/shared/db';
 import { computeRosterStats } from '@guideai/metrics';
 import { readEvents } from '@guideai/messaging/events';
 import { listPending } from '@guideai/orchestrator/approvals';
-import { readLatestDigest } from '@guideai/orchestrator/digest';
+// S1 strip: digest removed.
+const readLatestDigest = (_workspaceId: string): { date: string } | null => null;
 import { writeRequirementsMd } from '@guideai/orchestrator/projectContext';
 import { paths, setWorkspaceRoot, getWorkspaceRoot, dropWorkspaceRoot } from '@guideai/shared/paths';
 import fs from 'node:fs';

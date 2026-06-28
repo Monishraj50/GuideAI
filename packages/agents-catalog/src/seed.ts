@@ -1,5 +1,5 @@
-// Fetches the awesome-claude-code-subagents catalog from GitHub and writes it
-// to ~/.guideai/catalog/catalog.json. Idempotent.
+// S1 strip: marketplace fetch removed. Seeds the 8 v2 core agents into
+// ~/.guideai/catalog/catalog.json.
 //
 //   pnpm --filter @guideai/agents-catalog seed
 
@@ -8,78 +8,90 @@ import path from 'node:path';
 import { paths } from '@guideai/shared/paths';
 import { catalogPath, type Catalog, type CatalogAgent } from './index.js';
 
-const REPO = 'VoltAgent/awesome-claude-code-subagents';
-const BRANCH = 'main';
-const TREE_URL = `https://api.github.com/repos/${REPO}/git/trees/${BRANCH}?recursive=1`;
-const RAW = (filePath: string) => `https://raw.githubusercontent.com/${REPO}/${BRANCH}/${filePath}`;
-
-interface TreeEntry { path: string; type: string; }
-interface TreeResp { tree: TreeEntry[]; truncated?: boolean }
-
-const FRONTMATTER_RE = /^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/;
-function parseFrontmatter(raw: string): { meta: Record<string, string>; body: string } {
-  const m = FRONTMATTER_RE.exec(raw);
-  if (!m) return { meta: {}, body: raw };
-  const meta: Record<string, string> = {};
-  for (const line of m[1]!.split('\n')) {
-    const idx = line.indexOf(':');
-    if (idx < 0) continue;
-    let value = line.slice(idx + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    meta[line.slice(0, idx).trim()] = value;
-  }
-  return { meta, body: m[2]! };
-}
-
-function prettyName(role: string) {
-  return role.split('-').map((w) => w[0]?.toUpperCase() + w.slice(1)).join(' ');
-}
-
-function shouldSkip(filePath: string): boolean {
-  if (!filePath.endsWith('.md')) return true;
-  if (!filePath.startsWith('categories/')) return true;
-  const base = path.basename(filePath).toLowerCase();
-  if (base === 'readme.md' || base === 'index.md') return true;
-  return false;
-}
+const SEED_AGENTS: CatalogAgent[] = [
+  {
+    role: 'planner',
+    displayName: 'Planner',
+    department: 'core',
+    description: 'Breaks a brief into a 3–7-step plan with acceptance checks.',
+    tools: ['Read', 'Glob', 'Grep'],
+    model: 'sonnet',
+    body: 'You are a senior planner. Read the brief and the project context. Produce a numbered plan with acceptance checks per step.',
+  },
+  {
+    role: 'coder',
+    displayName: 'Coder',
+    department: 'core',
+    description: 'Implements the plan with minimal, focused diffs.',
+    tools: ['Read', 'Edit', 'Write', 'Glob', 'Grep'],
+    model: 'sonnet',
+    body: 'You are a careful software engineer. Implement the plan one step at a time. Keep diffs small. Surface uncertainty explicitly.',
+  },
+  {
+    role: 'reviewer',
+    displayName: 'Reviewer',
+    department: 'core',
+    description: 'Reviews diffs for correctness, security, and clarity.',
+    tools: ['Read', 'Glob', 'Grep'],
+    model: 'opus',
+    body: 'You review diffs against the plan and the acceptance checks. Flag issues by severity. Recommend approve / reject / fix.',
+  },
+  {
+    role: 'tester',
+    displayName: 'Tester',
+    department: 'core',
+    description: 'Writes unit + integration tests for changed code.',
+    tools: ['Read', 'Edit', 'Write', 'Bash'],
+    model: 'sonnet',
+    body: 'You write tests for the code that changed in this brief. Cover happy path + 1–2 edge cases.',
+  },
+  {
+    role: 'refactorer',
+    displayName: 'Refactorer',
+    department: 'core',
+    description: 'Improves structure without changing behaviour.',
+    tools: ['Read', 'Edit', 'Write', 'Glob', 'Grep'],
+    model: 'sonnet',
+    body: 'You refactor for clarity and reuse. Preserve behaviour. Run tests after each step.',
+  },
+  {
+    role: 'debugger',
+    displayName: 'Debugger',
+    department: 'core',
+    description: 'Reproduces a bug, isolates root cause, fixes it.',
+    tools: ['Read', 'Edit', 'Bash', 'Glob', 'Grep'],
+    model: 'sonnet',
+    body: 'You debug failing code. Reproduce first, then bisect to the root cause, then patch with a test that locks the fix.',
+  },
+  {
+    role: 'doc-writer',
+    displayName: 'Doc Writer',
+    department: 'core',
+    description: 'Writes README/usage docs for new features.',
+    tools: ['Read', 'Edit', 'Write', 'Glob'],
+    model: 'haiku',
+    body: 'You write user-facing docs. Lead with the example. Keep prose tight.',
+  },
+  {
+    role: 'researcher',
+    displayName: 'Researcher',
+    department: 'core',
+    description: 'Reads the codebase to answer "where/why/how" before changes.',
+    tools: ['Read', 'Glob', 'Grep'],
+    model: 'haiku',
+    body: 'You answer codebase questions. Cite file paths + line numbers. Do not edit code.',
+  },
+];
 
 async function main() {
-  console.log('[seed] fetching catalog tree…');
-  const treeRes = await fetch(TREE_URL);
-  if (!treeRes.ok) throw new Error(`tree fetch failed: ${treeRes.status} ${await treeRes.text()}`);
-  const tree = await treeRes.json() as TreeResp;
-  const files = tree.tree.filter((t) => t.type === 'blob' && !shouldSkip(t.path));
-  console.log(`[seed] ${files.length} agent files in 10 departments`);
-
-  const agents: CatalogAgent[] = [];
-  let i = 0;
-  for (const f of files) {
-    i++;
-    if (i % 25 === 0) console.log(`[seed]   …${i}/${files.length}`);
-    const res = await fetch(RAW(f.path));
-    if (!res.ok) { console.warn(`[seed] skip ${f.path}: ${res.status}`); continue; }
-    const raw = await res.text();
-    const { meta, body } = parseFrontmatter(raw);
-    const role = meta.name ?? path.basename(f.path, '.md');
-    const department = f.path.split('/')[1] ?? 'misc';
-    const tools = (meta.tools ?? '').split(/[,\s]+/).filter(Boolean);
-    agents.push({
-      role,
-      displayName: prettyName(role),
-      department,
-      description: meta.description ?? '',
-      tools,
-      model: meta.model || undefined,
-      body: body.trim(),
-    });
-  }
-
   fs.mkdirSync(path.dirname(catalogPath()), { recursive: true });
-  const out: Catalog = { fetchedAt: Date.now(), count: agents.length, agents };
+  const out: Catalog = {
+    fetchedAt: Date.now(),
+    count: SEED_AGENTS.length,
+    agents: SEED_AGENTS,
+  };
   fs.writeFileSync(catalogPath(), JSON.stringify(out, null, 2));
-  console.log(`[seed] wrote ${agents.length} agents → ${catalogPath()}`);
+  console.log(`[seed] wrote ${SEED_AGENTS.length} v2 core agents → ${catalogPath()}`);
   console.log(`[seed] state dir: ${paths.home}`);
 }
 

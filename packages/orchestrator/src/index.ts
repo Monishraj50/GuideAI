@@ -1,15 +1,11 @@
 export * from './cos.js';
 export * from './approvals.js';
 export * from './hiring.js';
-export * from './digest.js';
 export * from './routing.js';
 export * from './discovery.js';
-export * from './planReview.js';
 export * from './wbs.js';
 export * from './deliverables.js';
-export * from './github.js';
-export * from './critique.js';
-export * from './validate.js';
-// secondOpinion + designShotgun deleted in S0 (Claude-only).
+// S1 strip: digest, github, critique, validate, planReview, secondOpinion,
+// designShotgun removed.
 export * from './memory.js';
 export * from './directTask.js';

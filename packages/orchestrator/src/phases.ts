@@ -13,7 +13,7 @@ import {
 import { markPhaseComplete, markPhaseFailed, markPhaseStarted, bumpHeartbeatFor, resolveTaskSession, type WorkPhase } from './wbs.js';
 import { writeTaskTranscript, makeStreamingAppender } from './transcriptWriter.js';
 import { writeOverallPlanMd, writeProjectIndexMd, writeFeatureContextMd } from './projectContext.js';
-import { diagnoseFailure } from './diagnoseFailure.js';
+// S1 strip: diagnoseFailure removed.
 import { normalizeSessionJsonl } from './normalizeSessionJsonl.js';
 import { getDb as getDbForOverall, schema as schemaForOverall } from '@guideai/shared/db';
 import * as taskGate from './taskGate.js';
@@ -395,14 +395,7 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
       // in the same Claude session so the diagnosis appears as the next
       // turn in the live chat tail. Surfaces on blocked work_items as a
       // Retry tooltip in the Kanban.
-      try {
-        await diagnoseFailure({
-          workspaceId, briefId, agentId, cwd, brief,
-          phase: phase as WorkPhase,
-          errorMessage: String(err?.message ?? err),
-          claudeSessionId: claudePhaseSessionId,
-        });
-      } catch {}
+      // Failure diagnosis removed in S1.
       throw err;
     }
 

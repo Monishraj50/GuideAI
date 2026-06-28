@@ -365,6 +365,7 @@ export async function generateExplainer(args: {
  * one failure doesn't cascade. Safe to call from the brief-completion hook in
  * cos.ts even when no plan/synthesis exists (e.g. manual-mode briefs).
  */
+// S1 strip: slide-deck + explainer generation removed. Only artifact harvest remains.
 export async function harvestBriefDeliverables(args: {
   workspaceId: string;
   briefId: string;
@@ -372,34 +373,12 @@ export async function harvestBriefDeliverables(args: {
   synthesis?: DiscoverySynthesis | null;
 }): Promise<{ artifacts: Deliverable[]; deck: Deliverable | null; explainer: Deliverable | null }> {
   let artifacts: Deliverable[] = [];
-  let deck: Deliverable | null = null;
-  let explainer: Deliverable | null = null;
-
   try { artifacts = harvestArtifacts({ workspaceId: args.workspaceId, briefId: args.briefId }); }
   catch (e: any) {
     appendEvent(args.workspaceId, sys(args.workspaceId,
       `artifact harvest skipped: ${e?.message ?? e}`, 'warn'));
   }
-  try {
-    deck = generateSlideDeck({
-      workspaceId: args.workspaceId, briefId: args.briefId,
-      synthesis: args.synthesis ?? null, briefBody: args.briefBody,
-    });
-  } catch (e: any) {
-    appendEvent(args.workspaceId, sys(args.workspaceId,
-      `slide deck skipped: ${e?.message ?? e}`, 'warn'));
-  }
-  try {
-    explainer = await generateExplainer({
-      workspaceId: args.workspaceId, briefId: args.briefId,
-      briefBody: args.briefBody, synthesis: args.synthesis ?? null,
-    });
-  } catch (e: any) {
-    appendEvent(args.workspaceId, sys(args.workspaceId,
-      `explainer skipped: ${e?.message ?? e}`, 'warn'));
-  }
-
-  return { artifacts, deck, explainer };
+  return { artifacts, deck: null, explainer: null };
 }
 
 // ---------- helpers ----------

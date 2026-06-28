@@ -13,7 +13,6 @@ import { registerApprovalRoutes } from './routes/approvals.js';
 import { registerPolicyRoutes } from './routes/policies.js';
 import { registerCatalogRoutes } from './routes/catalog.js';
 import { registerMetricRoutes } from './routes/metrics.js';
-import { registerDigestRoutes } from './routes/digest.js';
 import { registerRuntimeRoutes } from './routes/runtimes.js';
 import { registerReplayRoutes } from './routes/replay.js';
 import { registerKillswitchRoutes } from './routes/killswitch.js';
@@ -23,15 +22,10 @@ import { registerIntegrationRoutes } from './routes/integrations.js';
 import { registerPermissionRoutes } from './routes/permissions.js';
 import { registerChannelRoutes } from './routes/channels.js';
 import { registerBudgetRoutes } from './routes/budget.js';
-import { registerIntakeRoutes } from './routes/intake.js';
-import { registerPlanRoutes } from './routes/plans.js';
 import { registerWorkItemRoutes } from './routes/workItems.js';
-import { registerBurndownRoutes } from './routes/burndown.js';
 import { registerDeliverableRoutes } from './routes/deliverables.js';
-import { registerGithubIntegrationRoutes } from './routes/githubIntegration.js';
-import { registerWorkspaceRepoRoutes } from './routes/workspaceRepo.js';
-import { registerValidationRoutes } from './routes/validation.js';
-// OpenAI + secondOpinion routes deleted in S0 (Claude-only).
+// S1 strip: removed digest/intake/plans/burndown/githubIntegration/workspaceRepo/validation routes.
+// S0 prior: removed OpenAI + secondOpinion routes.
 import { registerMemoryRoutes } from './routes/memory.js';
 import { registerDirectTaskRoutes } from './routes/directTask.js';
 
@@ -73,7 +67,6 @@ registerApprovalRoutes(app);
 registerPolicyRoutes(app);
 registerCatalogRoutes(app);
 registerMetricRoutes(app);
-registerDigestRoutes(app);
 registerRuntimeRoutes(app);
 registerReplayRoutes(app);
 registerKillswitchRoutes(app);
@@ -83,15 +76,8 @@ registerIntegrationRoutes(app);
 registerPermissionRoutes(app);
 registerChannelRoutes(app);
 registerBudgetRoutes(app);
-registerIntakeRoutes(app);
-registerPlanRoutes(app);
 registerWorkItemRoutes(app);
-registerBurndownRoutes(app);
 registerDeliverableRoutes(app);
-registerGithubIntegrationRoutes(app);
-registerWorkspaceRepoRoutes(app);
-registerValidationRoutes(app);
-// OpenAI + secondOpinion: registrations removed in S0.
 registerMemoryRoutes(app);
 registerDirectTaskRoutes(app);
 

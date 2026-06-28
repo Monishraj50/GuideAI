@@ -9,9 +9,7 @@ import { runPipeline, PHASE_ORDER } from './phases.js';
 import { routeRoster, type RoutableAgent } from './routing.js';
 import { promoteSkillFromTrace } from '@guideai/skills';
 import { harvestBriefDeliverables } from './deliverables.js';
-import { loadTarget, runValidation } from './validate.js';
-import { loadIntake } from './discovery.js';
-// designShotgun deleted in S0; isDesignTagged always returns false.
+// S1 strip: discovery roundtable + browser validation removed.
 const isDesignTagged = (_body: string): boolean => false;
 import { hireAgent } from './hiring.js';
 import { writeBriefAnalyses, appendAgentSummary, writeBriefChat } from './projectContext.js';
@@ -383,24 +381,7 @@ export async function submitBrief(args: {
         } as SystemChunk);
       }
 
-      // Phase 8B — browser-driven validation, if a target_url is configured.
-      try {
-        const cfg = loadTarget(workspaceId);
-        if (cfg.targetUrl) {
-          const intake = loadIntake(workspaceId);
-          await runValidation({
-            workspaceId, briefId, briefBody: body,
-            synthesis: synthesisForHooks, intake,
-            source: 'auto',
-          });
-        }
-      } catch (err: any) {
-        appendEvent(workspaceId, {
-          ...base(workspaceId, agentId),
-          kind: 'system', level: 'warn',
-          text: `auto validation skipped: ${err?.message ?? err}`,
-        } as SystemChunk);
-      }
+      // Browser validation removed in S1.
 
       const doneNote: SystemChunk = {
         ...base(workspaceId, agentId),
