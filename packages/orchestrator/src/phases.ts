@@ -23,22 +23,26 @@ import { loadSkills, skillsForPhase, renderSkillsAsContext } from '@guideai/skil
 import type { AIChunk, Chunk, PhaseChunk, SystemChunk } from '@guideai/shared/chunks';
 import type { RoutableAgent, RouteDecision } from './routing.js';
 
-export const PHASE_ORDER: Phase[] = ['research', 'plan', 'implement', 'review', 'verify'];
+// S3: 3-phase pipeline. Research is now the opening beat of Plan; Verify is
+// the closing beat of Review. Cuts ~40% wall time vs the old 5-phase run.
+export const PHASE_ORDER: Phase[] = ['plan', 'implement', 'review'];
 
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 
-/** Phase-specific instructions. Each is intentionally short to keep token cost low. */
+/** Phase-specific instructions. Each is intentionally short to keep token cost
+ *  low. Plan folds in research; Review folds in verify. */
 const PHASE_PROMPT: Record<Phase, string> = {
-  research:
-    'You are the RESEARCH phase. Read the brief, identify constraints, and produce a 4-bullet research note. Each bullet ≤ 20 words.',
   plan:
-    'You are the PLAN phase. You are given the brief and research note. Produce a 3-step plan. Each step ≤ 25 words. Number them.',
+    'You are the PLAN phase. Do two things in order:\n' +
+    '1. RESEARCH — read the brief, identify constraints, list 4 bullets (each ≤ 20 words) covering context, unknowns, related files, and risks.\n' +
+    '2. PLAN — produce a numbered 3-step plan (each step ≤ 25 words) that addresses those constraints.\n' +
+    'Output both sections under `## Research` and `## Plan` headings.',
   implement:
-    'You are the IMPLEMENT phase. You are given the brief, research, and plan. Sketch the implementation as 3-5 bullets. Be concrete; reference files/functions where applicable.',
+    'You are the IMPLEMENT phase. You are given the brief and the plan (which includes the research). Sketch the implementation as 3-5 bullets. Be concrete; reference files/functions where applicable.',
   review:
-    'You are the REVIEW phase. Critically assess the implementation sketch. List ≤ 3 risks and ≤ 2 suggested mitigations.',
-  verify:
-    'You are the VERIFY phase. Output one paragraph (≤ 60 words) summarising whether the plan looks shippable, citing the review.',
+    'You are the REVIEW phase. Do two things in order:\n' +
+    '1. REVIEW — critically assess the implementation sketch: list ≤ 3 risks and ≤ 2 suggested mitigations under `## Review`.\n' +
+    '2. VERDICT — under `## Verdict`, output one paragraph (≤ 60 words) summarising whether the plan looks shippable, citing the review.',
 };
 
 function briefDir(workspaceId: string, briefId: string) {

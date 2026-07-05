@@ -38,3 +38,4 @@ atrune/
 # Misc build / cache outputs
 .eslintcache
 out/
+.s3-scratch/

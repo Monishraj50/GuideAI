@@ -6,7 +6,9 @@ import {
 } from '@guideai/orchestrator/wbs';
 
 const STATUSES: WorkStatus[] = ['todo', 'in_progress', 'blocked', 'done', 'cancelled'];
-const PHASES: WorkPhase[] = ['research', 'plan', 'implement', 'review', 'verify', 'other'];
+// S3: 3-phase pipeline. Legacy phases still accepted so historic DB rows
+// pass validation on read paths.
+const PHASES: WorkPhase[] = ['plan', 'implement', 'review', 'other', 'research', 'verify'];
 const PRIORITIES: WorkPriority[] = ['low', 'normal', 'high', 'critical'];
 
 export function registerWorkItemRoutes(app: FastifyInstance) {

@@ -13,7 +13,11 @@ import type { SystemChunk } from '@guideai/shared/chunks';
 import type { DiscoverySynthesis } from './discovery.js';
 
 export type WorkStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'cancelled';
-export type WorkPhase = 'research' | 'plan' | 'implement' | 'review' | 'verify' | 'other';
+// S3: pipeline emits plan/implement/review. 'research' and 'verify' remain in
+// the union so pre-S3 DB rows still deserialize; new work items only use the
+// 3-phase set. 'other' is the escape hatch for user-created items outside
+// the pipeline.
+export type WorkPhase = 'plan' | 'implement' | 'review' | 'other' | 'research' | 'verify';
 export type WorkPriority = 'low' | 'normal' | 'high' | 'critical';
 
 export interface WorkItem {
@@ -198,13 +202,14 @@ export function autoSeedFromPlan(args: {
   const { workspaceId, briefId, planId, synthesis, featureTag } = args;
   const common = { workspaceId, briefId, planId, source: 'auto' as const, featureTag: featureTag ?? null };
 
-  // Roles: 1 research + 1 implement per recommended role.
+  // S3: 3-phase auto-seed. Research folds into plan (one scoping item per
+  // role); verify folds into review (one criterion per success metric).
   for (const role of synthesis.recommendedRoles.slice(0, 8)) {
     items.push(createWorkItem({
       ...common,
       title: `Scope ${role}'s slice`,
-      description: `Define inputs, outputs, and acceptance for the ${role} thread.`,
-      assignedRole: role, phase: 'research', priority: 'normal',
+      description: `Define inputs, outputs, and acceptance for the ${role} thread; include any research needed to unblock the plan.`,
+      assignedRole: role, phase: 'plan', priority: 'normal',
     }));
     items.push(createWorkItem({
       ...common,
@@ -224,13 +229,14 @@ export function autoSeedFromPlan(args: {
     }));
   }
 
-  // One verify item per success metric (capped at 6).
+  // Success criteria are verified inside the review phase now (verify was
+  // folded in for S3). One review item per success metric (capped at 6).
   for (const metric of synthesis.successMetrics.slice(0, 6)) {
     items.push(createWorkItem({
       ...common,
       title: `Verify: ${truncate(metric, 60)}`,
       description: `Confirm: ${metric}`,
-      assignedRole: 'qa-expert', phase: 'verify', priority: 'normal',
+      assignedRole: 'qa-expert', phase: 'review', priority: 'normal',
     }));
   }
 

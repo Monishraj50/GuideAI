@@ -24,13 +24,14 @@ export interface RouteDecision {
   reason: string;
 }
 
-/** Phase → keywords that should appear in a good specialist's role/description. */
+/** Phase → keywords that should appear in a good specialist's role/description.
+ *  S3: plan absorbed research keywords; review absorbed verify/qa keywords. */
 const PHASE_KEYWORDS: Record<Phase, string[]> = {
-  research:  ['research', 'analyst', 'strategist', 'product', 'pm', 'discovery', 'context'],
-  plan:      ['architect', 'designer', 'planner', 'lead', 'principal', 'system-design'],
+  plan:      ['architect', 'designer', 'planner', 'lead', 'principal', 'system-design',
+              'research', 'analyst', 'strategist', 'product', 'pm', 'discovery', 'context'],
   implement: ['developer', 'engineer', 'pro', 'expert', 'specialist', 'fullstack', 'backend', 'frontend'],
-  review:    ['reviewer', 'review', 'security', 'auditor', 'critic', 'qa'],
-  verify:    ['qa', 'tester', 'verify', 'sre', 'reliability'],
+  review:    ['reviewer', 'review', 'security', 'auditor', 'critic',
+              'qa', 'tester', 'verify', 'sre', 'reliability'],
 };
 
 const STOPWORDS = new Set([

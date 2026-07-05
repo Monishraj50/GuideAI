@@ -12,7 +12,7 @@ import { AtruneApi } from './api';
 interface OpenArgs {
   workspaceId: string;
   briefId: string;
-  phase: 'research' | 'plan' | 'implement' | 'review' | 'verify';
+  phase: 'plan' | 'implement' | 'review' | 'research' | 'verify';
   role: string;
 }
 

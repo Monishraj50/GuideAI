@@ -181,12 +181,12 @@ export async function submitBrief(args: {
         .filter((a) => a.workspaceId === workspaceId && a.status !== 'retired' && a.role !== 'chief-of-staff')
         .map((a) => a.role);
       const primaryRole = rosterRoles[0] ?? null;
+      // S3: 3-phase seed. Plan absorbs the old research beat; review absorbs
+      // the old verify beat, so the qa-expert row now lives under review.
       const phases: Array<{ phase: string; title: string; role: string | null }> = [
-        { phase: 'research',  title: 'Scope the work',           role: primaryRole },
-        { phase: 'plan',      title: 'Outline the approach',     role: primaryRole },
-        { phase: 'implement', title: 'Build the solution',       role: primaryRole },
-        { phase: 'review',    title: 'Review for risks',         role: 'risk-officer' },
-        { phase: 'verify',    title: 'Verify success criteria',  role: 'qa-expert' },
+        { phase: 'plan',      title: 'Scope + outline the approach', role: primaryRole },
+        { phase: 'implement', title: 'Build the solution',           role: primaryRole },
+        { phase: 'review',    title: 'Review risks + verify success', role: 'risk-officer' },
       ];
       let pos = 0;
       for (const p of phases) {

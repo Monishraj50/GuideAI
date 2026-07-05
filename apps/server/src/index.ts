@@ -143,9 +143,14 @@ if (hasDbPath()) {
     'Grant folder consent in the extension to enable storage.',
   );
   // Reject DB-dependent routes with a clear error early in the request lifecycle.
+  // BUT: if the incoming request carries `X-Atrune-Workspace` pointing at a
+  // consented folder, the earlier onRequest hook already opened that folder's
+  // .atrune/db.sqlite for this request — so we let it through. Without this
+  // escape, a server that booted before consent was granted would stay dead
+  // for the whole VS Code session (users see "Error: no-storage" until they
+  // hit Restart server).
   app.addHook('onRequest', async (req, reply) => {
     const url = req.url ?? '';
-    // Allow infrastructure + integration endpoints (no DB needed).
     const allowed = url.startsWith('/healthz')
       || url.startsWith('/api/caps')
       || url.startsWith('/api/integrations/')
@@ -153,6 +158,12 @@ if (hasDbPath()) {
       || url.startsWith('/api/catalog')
       || url.startsWith('/api/permissions');
     if (allowed) return;
+    const hdr = req.headers['x-atrune-workspace'];
+    const folder = typeof hdr === 'string' ? hdr.trim() : '';
+    if (folder) {
+      const dbPath = path.join(folder, '.atrune', 'db.sqlite');
+      if (fs.existsSync(dbPath)) return; // per-request DB is live — proceed
+    }
     reply.code(503).send({
       error: 'no-storage',
       message: 'Atrune storage is not enabled for this folder. Click "Allow project storage" in the extension sidebar.',

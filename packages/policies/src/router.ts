@@ -12,12 +12,12 @@ export const MODEL_IDS: Record<ModelTier, string> = {
   opus:   'opus',
 };
 
+// S3: 3-phase routing. Plan absorbed research (bumps to sonnet, was split).
+// Review absorbed verify (stays opus so security tagging keeps its bite).
 const DEFAULT_TIER: Record<Phase, ModelTier> = {
-  research:  'haiku',
   plan:      'sonnet',
   implement: 'sonnet',
   review:    'opus',
-  verify:    'haiku',
 };
 
 export interface RoutingDecision {

@@ -537,8 +537,9 @@ export function writeOverallPlanMd(args: {
   lines.push(`> _Updated ${new Date().toISOString().replace('T', ' ').slice(0, 19)} UTC_`);
   lines.push('');
 
-  // Phase progress bar — one block per phase, coloured by status.
-  const phasesInOrder = ['research', 'plan', 'implement', 'review', 'verify'];
+  // S3: 3-phase pipeline. Legacy phases listed last so pre-S3 briefs still
+  // render their historical progress bar segments.
+  const phasesInOrder = ['plan', 'implement', 'review', 'research', 'verify'];
   const phaseStatusOf = (p: string): 'done' | 'active' | 'todo' | 'blocked' => {
     const items = wsItems.filter((w) => w.phase === p);
     if (items.length === 0) return 'todo';
@@ -633,7 +634,7 @@ export function writeOverallPlanMd(args: {
     const doneCount = args.workItems.filter((w) => w.status === 'done').length;
     lines.push(`## Tasks · ${doneCount}/${totalCount} done`);
     lines.push('');
-    for (const phase of ['research', 'plan', 'implement', 'review', 'verify', 'other']) {
+    for (const phase of ['plan', 'implement', 'review', 'other', 'research', 'verify']) {
       const items = byPhase[phase];
       if (!items?.length) continue;
       const phaseDone = items.filter((w) => w.status === 'done').length;

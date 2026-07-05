@@ -110,12 +110,14 @@ export function deleteDeliverable(id: string): { ok: true } {
 
 // ---------- Harvesting (Phase 6) ----------
 
+// S3: 3-phase pipeline. Legacy research.md / verify.md kept in the harvester
+// so briefs written pre-S3 still surface all their artifacts.
 const PHASE_FILES: { phase: string; file: string }[] = [
-  { phase: 'research',  file: 'research.md' },
   { phase: 'plan',      file: 'plan.md' },
   { phase: 'implement', file: 'implement.md' },
   { phase: 'review',    file: 'review.md' },
-  { phase: 'verify',    file: 'verify.md' },
+  { phase: 'research',  file: 'research.md' }, // legacy
+  { phase: 'verify',    file: 'verify.md' },   // legacy
 ];
 
 /**

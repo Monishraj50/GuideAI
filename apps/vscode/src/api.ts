@@ -538,7 +538,9 @@ export interface WorkItem {
   title: string;
   description: string | null;
   status: 'todo' | 'in_progress' | 'blocked' | 'done' | 'cancelled';
-  phase: 'research' | 'plan' | 'implement' | 'review' | 'verify' | 'other' | null;
+  // S3: pipeline emits plan/implement/review. Legacy values retained so DB
+  // rows written pre-S3 still deserialize.
+  phase: 'plan' | 'implement' | 'review' | 'other' | 'research' | 'verify' | null;
   priority: 'low' | 'normal' | 'high' | 'critical';
   assignedRole: string | null;
   createdAt: number;

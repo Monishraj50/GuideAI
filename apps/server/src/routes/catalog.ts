@@ -8,7 +8,8 @@ import {
 import { scoreAgent } from '@guideai/orchestrator/routing';
 
 // Phase tags + tokenizer (kept local to avoid coupling to routing.ts internals).
-const SUGGEST_PHASES = ['research', 'plan', 'implement', 'review', 'verify'] as const;
+// S3: only 3 phases matter for suggestions now.
+const SUGGEST_PHASES = ['plan', 'implement', 'review'] as const;
 const STOPWORDS = new Set([
   'a','an','the','and','or','to','of','for','with','in','on','by','as','is','it','be','this','that',
   'we','our','your','their','from','add','make','build','plan','sketch','decide','keep','minimal',

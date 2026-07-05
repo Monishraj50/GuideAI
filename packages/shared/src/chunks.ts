@@ -42,7 +42,9 @@ export interface ToolChunk extends BaseChunk {
 export interface PhaseChunk extends BaseChunk {
   kind: 'phase';
   taskId: string;
-  phase: 'research' | 'plan' | 'implement' | 'review' | 'verify';
+  // S3: pipeline emits plan/implement/review. Legacy values kept for chunks
+  // deserialised from events.jsonl written pre-S3.
+  phase: 'plan' | 'implement' | 'review' | 'research' | 'verify';
   status: 'started' | 'completed' | 'paused' | 'failed';
   artifactPath?: string;
 }

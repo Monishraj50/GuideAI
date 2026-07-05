@@ -1,8 +1,10 @@
 // 📋 Kanban webview — phase-card board for a dispatched brief.
 //
-// Opens automatically after a brief is dispatched. Shows the 5 pipeline
-// phases (research / plan / implement / review / verify) as cards across
-// 3 columns: Inactive / Active / Completed.
+// Opens automatically after a brief is dispatched. Shows the 3 pipeline
+// phases (plan / implement / review) as cards across 3 columns: Inactive /
+// Active / Completed. Plan spec column labels: Backlog · Plan · Implement ·
+// Review · Done — those match the natural cardinal flow of Inactive plan →
+// Active plan → completed plan → active implement → etc.
 //
 // In Auto mode the orchestrator releases phases automatically; cards just
 // march left → right as work happens.
@@ -12,7 +14,9 @@
 
 import * as vscode from 'vscode';
 
-const PHASES = ['research', 'plan', 'implement', 'review', 'verify'] as const;
+// S3: 3-phase pipeline. Research is folded into plan; verify is folded into
+// review — the merged prompts do both beats in one call.
+const PHASES = ['plan', 'implement', 'review'] as const;
 type Phase = typeof PHASES[number];
 
 interface GateState { phase: string; released: boolean }
@@ -133,7 +137,7 @@ async function fetchState(workspaceId: string, briefId: string): Promise<KanbanS
   //    gate state — a phase that has no event but its gate is released is
   //    "active" (about to run).
   const phaseStatus: Record<Phase, 'inactive' | 'active' | 'completed' | 'failed'> = {
-    research: 'inactive', plan: 'inactive', implement: 'inactive', review: 'inactive', verify: 'inactive',
+    plan: 'inactive', implement: 'inactive', review: 'inactive',
   };
   const releasedSet = new Set(gatesJson.gates.filter((g) => g.released).map((g) => g.phase));
 
