@@ -78,6 +78,12 @@
           "name": "Team",
           "icon": "$(organization)",
           "when": "atrune.connected && atrune.folderConsented"
+        },
+        {
+          "id": "atrune.sessions",
+          "name": "Sessions",
+          "icon": "$(comment-discussion)",
+          "when": "atrune.connected && atrune.folderConsented"
         }
       ]
     },
@@ -313,6 +319,15 @@
         "command": "atrune.openRulesEditor",
         "title": "Atrune: Open permission rules editor…",
         "icon": "$(law)"
+      },
+      {
+        "command": "atrune.resumeSession",
+        "title": "Atrune: Resume a saved session…",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "atrune.resumeSessionById",
+        "title": "Atrune: Resume specific session"
       }
     ],
     "menus": {
@@ -360,6 +375,16 @@
         {
           "command": "atrune.showAllSessions",
           "when": "view == atrune.team",
+          "group": "navigation@2"
+        },
+        {
+          "command": "atrune.resumeSession",
+          "when": "view == atrune.sessions",
+          "group": "navigation@1"
+        },
+        {
+          "command": "atrune.refresh",
+          "when": "view == atrune.sessions",
           "group": "navigation@2"
         },
         {

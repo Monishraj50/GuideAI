@@ -176,6 +176,31 @@ export class AtruneApi {
     } catch { return []; }
   }
 
+  /** S7 · sessions grouped by feature slug for the tree view + resume Quick Pick. */
+  async listSessionsByFeature(workspaceId: string): Promise<{
+    count: number;
+    features: Array<{ featureSlug: string; sessions: SessionRow[] }>;
+  }> {
+    try {
+      const r = await fetch(`${base()}/api/workspaces/${workspaceId}/sessions/features`);
+      if (!r.ok) return { count: 0, features: [] };
+      return await r.json() as any;
+    } catch { return { count: 0, features: [] }; }
+  }
+
+  async pickSessionForQuery(args: {
+    workspaceId: string; featureSlug?: string | null; query: string;
+  }): Promise<{ picked: SessionRow | null; score?: number; reason?: string } | null> {
+    try {
+      const r = await fetch(`${base()}/api/workspaces/${args.workspaceId}/sessions/pick`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ featureSlug: args.featureSlug ?? null, query: args.query }),
+      });
+      if (!r.ok) return null;
+      return await r.json() as any;
+    } catch { return null; }
+  }
+
   async killswitch(workspaceId?: string): Promise<{ killed: number; durationMs: number } | null> {
     try {
       const url = workspaceId
@@ -473,6 +498,22 @@ export class AtruneApi {
       return { ok: false, error: String(err?.message ?? err) };
     }
   }
+}
+
+export interface SessionRow {
+  id: string;
+  workspaceId: string;
+  featureSlug: string | null;
+  briefId: string | null;
+  role: string | null;
+  startedAt: number;
+  endedAt: number | null;
+  tokensIn: number;
+  tokensOut: number;
+  costUsd: number;
+  jsonlPath: string | null;
+  outcome: string;
+  briefSnippet?: string;
 }
 
 export interface PolicyRule {

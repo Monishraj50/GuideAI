@@ -29,6 +29,7 @@ import { registerDeliverableRoutes } from './routes/deliverables.js';
 // S0 prior: removed OpenAI + secondOpinion routes.
 import { registerMemoryRoutes } from './routes/memory.js';
 import { registerDirectTaskRoutes } from './routes/directTask.js';
+import { registerSessionRoutes } from './routes/sessions.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
 const app = Fastify({ logger: true });
@@ -82,6 +83,7 @@ registerWorkItemRoutes(app);
 registerDeliverableRoutes(app);
 registerMemoryRoutes(app);
 registerDirectTaskRoutes(app);
+registerSessionRoutes(app);
 
 // User-data discipline: this server only writes to ATRUNE_DB_PATH (set by the
 // VS Code extension after folder consent). If no path is set, refuse to

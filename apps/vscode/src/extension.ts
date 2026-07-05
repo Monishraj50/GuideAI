@@ -18,6 +18,7 @@ import { ActiveWorkProvider } from './views/activeWork';
 import { ProgressProvider } from './views/progress';
 import { TeamProvider } from './views/team';
 import { PermissionsProvider } from './views/permissions';
+import { SessionsProvider } from './views/sessions';
 import { openApprovalDiff } from './approvalDiff';
 import { PermissionsStream } from './permissionsStream';
 import { openRulesEditor } from './webviews/rulesEditor';
@@ -893,6 +894,58 @@ export async function activate(ctx: vscode.ExtensionContext) {
         await openBriefChatFile(wsId, (pick as any).briefId);
       }
     }),
+    vscode.commands.registerCommand('atrune.resumeSession', async () => {
+      const wsId = activeWorkspaceId;
+      if (!wsId) { vscode.window.showInformationMessage('No active project.'); return; }
+      const j = await api.listSessionsByFeature(wsId);
+      if (j.count === 0) {
+        vscode.window.showInformationMessage('No saved sessions yet — dispatch a brief first.');
+        return;
+      }
+      const glyph: Record<string, string> = { shipped: '$(check)', partial: '$(warning)', abandoned: '$(circle-slash)' };
+      type P = vscode.QuickPickItem & { sessionId: string; jsonlPath: string | null };
+      const items: P[] = [];
+      for (const g of j.features) {
+        items.push({
+          label: g.featureSlug, kind: vscode.QuickPickItemKind.Separator,
+          sessionId: '', jsonlPath: null,
+        } as any);
+        for (const s of g.sessions) {
+          items.push({
+            label: `${glyph[s.outcome] ?? '$(debug-alt)'} ${s.id.slice(0, 8)}…`,
+            description: `${s.outcome} · ${s.tokensIn}↓/${s.tokensOut}↑ · $${s.costUsd.toFixed(4)}`,
+            detail: (s.briefSnippet ?? '').slice(0, 100),
+            sessionId: s.id, jsonlPath: s.jsonlPath,
+          });
+        }
+      }
+      const picked = await vscode.window.showQuickPick(items, {
+        placeHolder: 'Resume a Claude session',
+        matchOnDescription: true, matchOnDetail: true,
+      });
+      if (!picked?.sessionId) return;
+      await vscode.commands.executeCommand('atrune.resumeSessionById', {
+        sessionId: picked.sessionId, jsonlPath: picked.jsonlPath,
+      });
+    }),
+    vscode.commands.registerCommand('atrune.resumeSessionById', async (args?: {
+      sessionId?: string; jsonlPath?: string | null;
+    }) => {
+      if (!args?.sessionId) return;
+      // Spawn `claude --resume <uuid>` in the cwd Claude originally used —
+      // encoded in its jsonl file path. Fall back to workspace root.
+      const cwd = args.jsonlPath
+        ? findCwdForSession(args.sessionId)
+          ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+        : vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      const t = vscode.window.createTerminal({
+        name: `claude --resume ${args.sessionId.slice(0, 8)}`,
+        cwd,
+        iconPath: new vscode.ThemeIcon('comment-discussion'),
+      });
+      t.sendText(`claude --resume ${args.sessionId}`, true);
+      t.show(true);
+    }),
     vscode.commands.registerCommand('atrune.setPermissionMode', async () => {
       const current = await api.getPermissionMode();
       type ModePick = vscode.QuickPickItem & { mode: 'auto' | 'manual' | 'custom' };
@@ -978,6 +1031,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
   const progress    = new ProgressProvider(api, () => activeWorkspaceId);
   const team        = new TeamProvider(api, () => activeWorkspaceId);
   const permissions = new PermissionsProvider(api, () => activeWorkspaceId);
+  const sessionsView = new SessionsProvider(api, () => activeWorkspaceId);
   const permissionsStream = new PermissionsStream(
     () => api.serverBase(),
     () => permissions.refresh(),
@@ -999,6 +1053,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
     vscode.window.registerTreeDataProvider('atrune.activeWork', activeWork),
     vscode.window.registerTreeDataProvider('atrune.progress', progress),
     vscode.window.registerTreeDataProvider('atrune.team', team),
+    vscode.window.registerTreeDataProvider('atrune.sessions', sessionsView),
   );
 
   refreshAll = () => {
@@ -1006,6 +1061,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
     activeWork.refresh();
     progress.refresh();
     team.refresh();
+    sessionsView.refresh();
   };
 
   statusBar = new AtruneStatusBar();

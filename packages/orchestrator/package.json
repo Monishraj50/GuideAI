@@ -20,7 +20,8 @@
     "./contextStore": "./src/contextStore.ts",
     "./transcriptWriter": "./src/transcriptWriter.ts",
     "./taskGate": "./src/taskGate.ts",
-    "./classifyBrief": "./src/classifyBrief.ts"
+    "./classifyBrief": "./src/classifyBrief.ts",
+    "./resume": "./src/resume.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

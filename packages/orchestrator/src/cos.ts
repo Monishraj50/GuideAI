@@ -16,6 +16,7 @@ import { clearSessionAllow } from '@guideai/policies/engine';
 import { classifyBrief } from './classifyBrief.js';
 import { runAutoFix, type DirectTaskRun } from './directTask.js';
 import { outcomeFromReview } from './sessions.js';
+import { pickSession } from './resume.js';
 import { writeBriefAnalyses, appendAgentSummary, writeBriefChat } from './projectContext.js';
 import {
   ensureProjectMd, upsertFeature, appendSessionPointer, rebuildProjectTOC,
@@ -142,8 +143,14 @@ export async function submitBrief(args: {
   const classification = classifyBrief(body);
   if (classification.lane === 'quick' && !securityTagged) {
     const briefId = `brief-${randomUUID().slice(0, 8)}`;
-    const claudeSessionId = randomUUID();
     const featureSlug = featureSlugFromBrief(classification.cleanBody);
+    // S7 — try to resume an existing session for this (workspace, feature)
+    // whose prior brief text overlaps this one. If we find a hit, we pass
+    // the SAME UUID to runAutoFix so runtime-claude issues --resume.
+    const resumed = pickSession({
+      workspaceId, featureSlug, query: classification.cleanBody,
+    });
+    const claudeSessionId = resumed?.session.id ?? randomUUID();
     const db = getDb();
     db.insert(schema.briefs).values({
       id: briefId, workspaceId, body: classification.cleanBody, status: 'active',
@@ -153,6 +160,12 @@ export async function submitBrief(args: {
       ...base(workspaceId, agentId), kind: 'system', level: 'info',
       text: `quick-lane: ${classification.reason} → single-agent run (no pipeline)`,
     } as SystemChunk);
+    if (resumed) {
+      appendEvent(workspaceId, {
+        ...base(workspaceId, agentId), kind: 'system', level: 'info',
+        text: `S7 resume: reusing session ${resumed.session.id.slice(0, 8)}… · score ${resumed.score} · ${resumed.reason}`,
+      } as SystemChunk);
+    }
     // S6 — ensure the feature page exists so appendSessionPointer has
     // something to write into.
     try { upsertFeature(workspaceId, featureSlug, { goal: classification.cleanBody, status: 'in-progress' }); } catch {}
