@@ -56,6 +56,12 @@
           "when": "!atrune.connected || !atrune.folderConsented"
         },
         {
+          "id": "atrune.permissions",
+          "name": "Permissions",
+          "icon": "$(shield)",
+          "when": "atrune.connected && atrune.folderConsented"
+        },
+        {
           "id": "atrune.activeWork",
           "name": "Active work",
           "icon": "$(target)",
@@ -288,6 +294,25 @@
         "command": "atrune.showAllSessions",
         "title": "Atrune: Show all sessions",
         "icon": "$(history)"
+      },
+      {
+        "command": "atrune.setPermissionMode",
+        "title": "Atrune: Set permission mode…",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "atrune.killswitch",
+        "title": "Atrune: Killswitch (stop every agent)",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "atrune.reviewApproval",
+        "title": "Atrune: Review pending approval"
+      },
+      {
+        "command": "atrune.openRulesEditor",
+        "title": "Atrune: Open permission rules editor…",
+        "icon": "$(law)"
       }
     ],
     "menus": {
@@ -336,6 +361,26 @@
           "command": "atrune.showAllSessions",
           "when": "view == atrune.team",
           "group": "navigation@2"
+        },
+        {
+          "command": "atrune.setPermissionMode",
+          "when": "view == atrune.permissions",
+          "group": "navigation@1"
+        },
+        {
+          "command": "atrune.openRulesEditor",
+          "when": "view == atrune.permissions",
+          "group": "navigation@2"
+        },
+        {
+          "command": "atrune.killswitch",
+          "when": "view == atrune.permissions",
+          "group": "navigation@3"
+        },
+        {
+          "command": "atrune.refresh",
+          "when": "view == atrune.permissions",
+          "group": "navigation@4"
         }
       ],
       "explorer/context": [

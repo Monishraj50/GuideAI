@@ -94,12 +94,97 @@ export class AtruneApi {
     }));
   }
 
-  async decideApproval(approvalId: string, decision: 'approved' | 'denied', workspaceId: string): Promise<boolean> {
+  async decideApproval(
+    approvalId: string,
+    decision: 'approved' | 'denied',
+    workspaceId: string,
+    opts?: { alwaysAllowSession?: boolean },
+  ): Promise<boolean> {
     const r = await fetch(`${base()}/api/approvals/${approvalId}?workspace=${workspaceId}`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ decision }),
+      body: JSON.stringify({ decision, alwaysAllowSession: opts?.alwaysAllowSession ?? false }),
     });
     return r.ok;
+  }
+
+  async getPermissionMode(): Promise<'auto' | 'manual' | 'custom'> {
+    try {
+      const r = await fetch(`${base()}/api/policies/mode`);
+      if (!r.ok) return 'manual';
+      const j = await r.json() as { mode: 'auto' | 'manual' | 'custom' };
+      return j.mode ?? 'manual';
+    } catch { return 'manual'; }
+  }
+
+  async setPermissionMode(mode: 'auto' | 'manual' | 'custom'): Promise<boolean> {
+    try {
+      const r = await fetch(`${base()}/api/policies/mode`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mode }),
+      });
+      return r.ok;
+    } catch { return false; }
+  }
+
+  async getApprovalPreview(approvalId: string): Promise<
+    | { kind: 'write'; filePath: string; before: string; after: string }
+    | { kind: 'edit'; filePath: string; before: string; after: string; oldString: string; newString: string; replaceAll: boolean }
+    | { kind: 'none'; tool: string }
+    | null
+  > {
+    try {
+      const r = await fetch(`${base()}/api/approvals/${approvalId}/preview`);
+      if (!r.ok) return null;
+      return await r.json() as any;
+    } catch { return null; }
+  }
+
+  async getPolicies(): Promise<PoliciesSnapshot | null> {
+    try {
+      const r = await fetch(`${base()}/api/policies`);
+      if (!r.ok) return null;
+      return await r.json() as PoliciesSnapshot;
+    } catch { return null; }
+  }
+
+  async addPolicyRule(rule: {
+    id: string; description: string; action: 'auto-approve' | 'always-ask' | 'deny';
+    match: { tool: string; argsPattern?: string };
+  }): Promise<boolean> {
+    try {
+      const r = await fetch(`${base()}/api/policies/rules`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(rule),
+      });
+      return r.ok;
+    } catch { return false; }
+  }
+
+  async deletePolicyRule(ruleId: string): Promise<boolean> {
+    try {
+      const r = await fetch(`${base()}/api/policies/rules/${encodeURIComponent(ruleId)}`, { method: 'DELETE' });
+      return r.ok;
+    } catch { return false; }
+  }
+
+  async getSessionAllow(workspaceId: string): Promise<string[]> {
+    try {
+      const r = await fetch(`${base()}/api/policies/session-allow?workspaceId=${encodeURIComponent(workspaceId)}`);
+      if (!r.ok) return [];
+      const j = await r.json() as { keys: string[] };
+      return j.keys ?? [];
+    } catch { return []; }
+  }
+
+  async killswitch(workspaceId?: string): Promise<{ killed: number; durationMs: number } | null> {
+    try {
+      const url = workspaceId
+        ? `${base()}/api/killswitch?workspace=${encodeURIComponent(workspaceId)}`
+        : `${base()}/api/killswitch`;
+      const r = await fetch(url, { method: 'POST' });
+      if (!r.ok) return null;
+      return await r.json() as { killed: number; durationMs: number };
+    } catch { return null; }
   }
 
   async submitBrief(args: {
@@ -377,6 +462,21 @@ export class AtruneApi {
       return { ok: false, error: String(err?.message ?? err) };
     }
   }
+}
+
+export interface PolicyRule {
+  id: string;
+  description: string;
+  match: { tool: string; argsPattern?: string };
+  action: 'auto-approve' | 'always-ask' | 'deny';
+  createdAt: number;
+  synthesized?: boolean;
+}
+
+export interface PoliciesSnapshot {
+  mode: 'auto' | 'manual' | 'custom';
+  defaultAction: 'ask' | 'auto-approve' | 'deny';
+  rules: PolicyRule[];
 }
 
 export interface SessionEntry {

@@ -12,6 +12,7 @@ import { harvestBriefDeliverables } from './deliverables.js';
 // S1 strip: discovery roundtable + browser validation removed.
 const isDesignTagged = (_body: string): boolean => false;
 import { hireAgent } from './hiring.js';
+import { clearSessionAllow } from '@guideai/policies/engine';
 import { writeBriefAnalyses, appendAgentSummary, writeBriefChat } from './projectContext.js';
 import {
   ensureProjectMd, upsertFeature, appendSessionPointer, rebuildProjectTOC,
@@ -311,6 +312,10 @@ export async function submitBrief(args: {
       db.update(schema.briefs).set({ status: 'done' })
         .where(eq(schema.briefs.id, briefId)).run();
 
+      // Brief is done → wipe any "always allow (this session)" rules the user
+      // granted mid-run. The next brief starts fresh, per S2.5 spec.
+      clearSessionAllow(workspaceId);
+
       // Project context — write per-role analyses for this brief + append
       // a one-line entry to each participating role's rolling summary.
       // Both are derived from the just-inserted `tasks` rows + on-disk
@@ -435,6 +440,7 @@ export async function submitBrief(args: {
       appendEvent(workspaceId, fail);
       db.update(schema.briefs).set({ status: 'failed' })
         .where(eq(schema.briefs.id, briefId)).run();
+      clearSessionAllow(workspaceId);
       // S2 — record the failed session in FEATURE.md (outcome: partial).
       try {
         appendSessionPointer({

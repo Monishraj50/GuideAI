@@ -17,6 +17,10 @@ import { AtruneApi } from './api';
 import { ActiveWorkProvider } from './views/activeWork';
 import { ProgressProvider } from './views/progress';
 import { TeamProvider } from './views/team';
+import { PermissionsProvider } from './views/permissions';
+import { openApprovalDiff } from './approvalDiff';
+import { PermissionsStream } from './permissionsStream';
+import { openRulesEditor } from './webviews/rulesEditor';
 import { openMissionControl } from './webviews/missionControl';
 import { openBriefComposer } from './webviews/briefComposer';
 import { openKanban } from './webviews/kanban';
@@ -866,6 +870,70 @@ export async function activate(ctx: vscode.ExtensionContext) {
         await openBriefChatFile(wsId, (pick as any).briefId);
       }
     }),
+    vscode.commands.registerCommand('atrune.setPermissionMode', async () => {
+      const current = await api.getPermissionMode();
+      type ModePick = vscode.QuickPickItem & { mode: 'auto' | 'manual' | 'custom' };
+      const pick = await vscode.window.showQuickPick<ModePick>([
+        {
+          label: '$(shield) Manual',
+          description: current === 'manual' ? '· current' : '',
+          detail: 'Ask before every tool call. Safest.',
+          mode: 'manual',
+        },
+        {
+          label: '$(law) Custom',
+          description: current === 'custom' ? '· current' : '',
+          detail: 'Read/Glob/Grep auto-allow; Bash/Edit/Write ask. Editable rules.',
+          mode: 'custom',
+        },
+        {
+          label: '$(rocket) Auto',
+          description: current === 'auto' ? '· current' : '',
+          detail: 'Auto-approve everything safe. Hard-denies (rm -rf, --no-verify) still block.',
+          mode: 'auto',
+        },
+      ], { placeHolder: 'Pick a permission mode' });
+      if (!pick || pick.mode === current) return;
+      const ok = await api.setPermissionMode(pick.mode);
+      if (ok) {
+        vscode.window.setStatusBarMessage(`Atrune · permission mode: ${pick.mode}`, 3000);
+        refreshAll();
+      } else {
+        vscode.window.showErrorMessage('Failed to switch permission mode.');
+      }
+    }),
+    vscode.commands.registerCommand('atrune.killswitch', async () => {
+      const confirm = await vscode.window.showWarningMessage(
+        'Killswitch: terminate every running agent process now?\n\n' +
+        'All in-flight tasks stop. Pending approvals denied. .atrune/ stays.',
+        { modal: true }, 'Kill everything',
+      );
+      if (confirm !== 'Kill everything') return;
+      const r = await api.killswitch(activeWorkspaceId ?? undefined);
+      if (r) {
+        vscode.window.showInformationMessage(
+          `Atrune · killed ${r.killed} agent${r.killed === 1 ? '' : 's'} in ${r.durationMs}ms.`,
+        );
+        refreshAll();
+      } else {
+        vscode.window.showErrorMessage('Killswitch failed — server unreachable?');
+      }
+    }),
+    vscode.commands.registerCommand('atrune.openRulesEditor', async () => {
+      await openRulesEditor(ctx, api, () => activeWorkspaceId);
+    }),
+    vscode.commands.registerCommand('atrune.reviewApproval', async (args?: {
+      approvalId?: string; tool?: string; args?: Record<string, unknown>;
+    }) => {
+      if (!args?.approvalId || !activeWorkspaceId) return;
+      await openApprovalDiff(api, {
+        approvalId: args.approvalId,
+        tool: args.tool ?? '',
+        args: args.args ?? {},
+        workspaceId: activeWorkspaceId,
+        onDecided: () => refreshAll(),
+      });
+    }),
     vscode.commands.registerCommand('atrune.setRepoRoot', async () => {
       const picked = await vscode.window.showOpenDialog({
         canSelectFiles: false, canSelectFolders: true, canSelectMany: false,
@@ -883,9 +951,15 @@ export async function activate(ctx: vscode.ExtensionContext) {
   );
 
   // ── TREE VIEWS + STATUS BAR — also synchronous ─────────────────────────
-  const activeWork = new ActiveWorkProvider(api, () => activeWorkspaceId);
-  const progress   = new ProgressProvider(api, () => activeWorkspaceId);
-  const team       = new TeamProvider(api, () => activeWorkspaceId);
+  const activeWork  = new ActiveWorkProvider(api, () => activeWorkspaceId);
+  const progress    = new ProgressProvider(api, () => activeWorkspaceId);
+  const team        = new TeamProvider(api, () => activeWorkspaceId);
+  const permissions = new PermissionsProvider(api, () => activeWorkspaceId);
+  const permissionsStream = new PermissionsStream(
+    () => api.serverBase(),
+    () => permissions.refresh(),
+  );
+  ctx.subscriptions.push({ dispose: () => permissionsStream.dispose() });
 
   // No-op provider for the welcome view — it's filled by `viewsWelcome` in
   // package.json (shown when `!atrune.connected`). VS Code still needs a
@@ -898,12 +972,14 @@ export async function activate(ctx: vscode.ExtensionContext) {
 
   ctx.subscriptions.push(
     vscode.window.registerTreeDataProvider('atrune.welcome', welcomeProvider),
+    vscode.window.registerTreeDataProvider('atrune.permissions', permissions),
     vscode.window.registerTreeDataProvider('atrune.activeWork', activeWork),
     vscode.window.registerTreeDataProvider('atrune.progress', progress),
     vscode.window.registerTreeDataProvider('atrune.team', team),
   );
 
   refreshAll = () => {
+    permissions.refresh();
     activeWork.refresh();
     progress.refresh();
     team.refresh();
@@ -915,6 +991,9 @@ export async function activate(ctx: vscode.ExtensionContext) {
   async function tick() {
     await refreshActiveWorkspace();
     refreshAll();
+    // Keep the SSE stream pointed at whatever workspace is currently active.
+    // No-op when the ID hasn't changed, so this is safe to call every tick.
+    permissionsStream.setWorkspace(activeWorkspaceId);
     if (activeWorkspaceId) {
       const plan = await api.getPlan(activeWorkspaceId);
       statusBar?.update(plan);

@@ -22,12 +22,22 @@ export interface Rule {
   synthesized?: boolean;
 }
 
+/**
+ * Top-level permission mode. Set by the user in the sidebar dropdown.
+ *   - `auto`   : auto-approve everything safe (hard-denies still apply)
+ *   - `manual` : ask every tool call (default on fresh install)
+ *   - `custom` : evaluate `rules[]`; unmatched calls fall through to `defaultAction`
+ */
+export type PermissionMode = 'auto' | 'manual' | 'custom';
+
 export interface Policies {
+  mode: PermissionMode;
   defaultAction: 'ask' | 'auto-approve' | 'deny';
   rules: Rule[];
 }
 
 const DEFAULT_POLICIES: Policies = {
+  mode: 'manual',
   defaultAction: 'ask',
   rules: [
     {
@@ -54,6 +64,28 @@ const DEFAULT_POLICIES: Policies = {
   ],
 };
 
+// Hard-denies that apply in EVERY mode (including auto). These are patterns we
+// won't run even if the user says "auto-approve everything" — they're too
+// destructive or too suspicious to green-light without a human eyeball.
+const HARD_DENY_BASH_PATTERNS: RegExp[] = [
+  /\brm\s+-[a-z]*r[a-z]*f\b/i,       // rm -rf, rm -fr, rm -Rf etc
+  /\brm\s+--recursive.*--force\b/i,
+  /--no-verify\b/,                    // bypass git hooks
+  /--no-gpg-sign\b/,                  // bypass signing
+  /\bgit\s+push\s+.*--force\b/i,
+  /\bshutdown\b|\breboot\b|\bpoweroff\b/i,
+];
+
+function hardDeny(tool: string, args: unknown): { deny: true; reason: string } | null {
+  if (tool !== 'Bash') return null;
+  const cmd = typeof (args as any)?.command === 'string' ? (args as any).command as string : '';
+  if (!cmd) return null;
+  for (const re of HARD_DENY_BASH_PATTERNS) {
+    if (re.test(cmd)) return { deny: true, reason: `hard-deny: matches ${re.source}` };
+  }
+  return null;
+}
+
 function ensurePoliciesFile() {
   if (!fs.existsSync(paths.policiesJson)) {
     fs.mkdirSync(path.dirname(paths.policiesJson), { recursive: true });
@@ -66,13 +98,23 @@ export function loadPolicies(): Policies {
   try {
     const raw = fs.readFileSync(paths.policiesJson, 'utf8');
     const p = JSON.parse(raw) as Partial<Policies>;
+    const mode: PermissionMode =
+      p.mode === 'auto' || p.mode === 'manual' || p.mode === 'custom' ? p.mode : 'manual';
     return {
+      mode,
       defaultAction: p.defaultAction ?? 'ask',
       rules: Array.isArray(p.rules) ? p.rules : [],
     };
   } catch {
     return DEFAULT_POLICIES;
   }
+}
+
+export function setMode(mode: PermissionMode): Policies {
+  const p = loadPolicies();
+  p.mode = mode;
+  savePolicies(p);
+  return p;
 }
 
 export function savePolicies(p: Policies): void {
@@ -86,7 +128,56 @@ export interface EvaluateResult {
   ruleDescription?: string;
 }
 
-export function evaluateTool(p: Policies, tool: string, args: unknown): EvaluateResult {
+// Per-workspace session allowlist. Populated by "Always allow (this session)"
+// clicks and cleared when the brief that generated the request completes. Not
+// persisted — a server restart wipes it, and that's the point.
+const SESSION_ALLOW = new Map<string, Set<string>>();
+
+function sessionKey(tool: string, args: unknown): string {
+  return `${tool}::${JSON.stringify(args ?? {})}`;
+}
+
+/** Add a session-scoped auto-approve rule for exactly this (tool, args). */
+export function addSessionAllow(workspaceId: string, tool: string, args: unknown): void {
+  let set = SESSION_ALLOW.get(workspaceId);
+  if (!set) { set = new Set(); SESSION_ALLOW.set(workspaceId, set); }
+  set.add(sessionKey(tool, args));
+}
+
+/** Clear a workspace's session allowlist. Called on brief completion. */
+export function clearSessionAllow(workspaceId: string): void {
+  SESSION_ALLOW.delete(workspaceId);
+}
+
+/** Snapshot the current session allow keys for a workspace — for the UI. */
+export function listSessionAllow(workspaceId: string): string[] {
+  return [...(SESSION_ALLOW.get(workspaceId) ?? [])];
+}
+
+export function evaluateTool(
+  p: Policies,
+  tool: string,
+  args: unknown,
+  workspaceId?: string,
+): EvaluateResult {
+  // 1. Hard-denies apply in every mode.
+  const hd = hardDeny(tool, args);
+  if (hd) return { action: 'deny', ruleId: 'hard-deny', ruleDescription: hd.reason };
+
+  // 2. Session allow (this-brief-only) beats every mode.
+  if (workspaceId && SESSION_ALLOW.get(workspaceId)?.has(sessionKey(tool, args))) {
+    return { action: 'auto-approve', ruleId: 'session-allow', ruleDescription: 'Always-allow (this session)' };
+  }
+
+  // 3. Mode gates rules.
+  if (p.mode === 'auto') {
+    return { action: 'auto-approve', ruleId: 'mode-auto', ruleDescription: 'mode = auto' };
+  }
+  if (p.mode === 'manual') {
+    return { action: 'ask', ruleId: 'mode-manual', ruleDescription: 'mode = manual' };
+  }
+
+  // 4. Custom mode — evaluate persistent rules.
   const argsJson = JSON.stringify(args ?? {});
   for (const r of p.rules) {
     if (r.match.tool !== tool) continue;

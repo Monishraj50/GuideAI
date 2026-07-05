@@ -42,7 +42,7 @@ export function registerPermissionRoutes(app: FastifyInstance) {
         return { error: 'workspaceId and tool are required' };
       }
       const policies = loadPolicies();
-      const verdict = evaluateTool(policies, tool, args);
+      const verdict = evaluateTool(policies, tool, args, workspaceId);
 
       // Emit a ToolChunk into the feed so the UI shows what happened.
       const baseChunk: ToolChunk = {
