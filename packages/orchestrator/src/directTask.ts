@@ -28,6 +28,7 @@ import { loadCatalog, findAgent } from '@guideai/agents-catalog';
 import { renderMemoryBlock } from './memory.js';
 import { hireAgent } from './hiring.js';
 import { scoreAgent, type RoutableAgent } from './routing.js';
+import { loadSkills, pickSkill, renderSkillAsRunbook } from '@guideai/skills';
 
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 
@@ -71,10 +72,20 @@ export async function runSingleAgent(args: {
   const memory = renderMemoryBlock({
     role: agentRow.role, currentWorkspaceId: args.workspaceId,
   });
-  const taskBlock =
-    '## Direct task\n\n' +
-    'You are running OUTSIDE the standard 5-phase pipeline. Treat this as a focused, ' +
-    'single-shot task. Be concise. Do exactly what is asked; flag uncertainty rather than guessing.';
+  // S5 — skill-first. Try to pick ONE skill; if we get a hit, its runbook
+  // replaces the generic "direct task" preamble. Otherwise fall back to the
+  // generic block so the run still proceeds.
+  const skills = loadSkills();
+  const picked = pickSkill({ taskText: args.prompt, skills });
+  if (picked) {
+    appendEvent(args.workspaceId, sys(args.workspaceId,
+      `Selected skill: ${picked.skill.name} (${picked.skill.source}) · score ${picked.score} · matched ${picked.matched.join(', ') || '—'}`));
+  }
+  const taskBlock = picked
+    ? renderSkillAsRunbook(picked.skill, args.prompt)
+    : '## Direct task\n\n' +
+      'You are running OUTSIDE the standard 3-phase pipeline. Treat this as a focused, ' +
+      'single-shot task. Be concise. Do exactly what is asked; flag uncertainty rather than guessing.';
   const systemPrompt = [persona, memory, taskBlock].filter(Boolean).join('\n\n');
 
   // Budget gate.

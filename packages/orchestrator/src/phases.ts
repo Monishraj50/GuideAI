@@ -19,7 +19,7 @@ import { getDb as getDbForOverall, schema as schemaForOverall } from '@guideai/s
 import * as taskGate from './taskGate.js';
 // secondOpinion / designShotgun / pass@k removed in S0 (Claude-only).
 import { renderMemoryBlock } from './memory.js';
-import { loadSkills, skillsForPhase, renderSkillsAsContext } from '@guideai/skills';
+import { loadSkills, skillsForPhase, renderSkillsAsContext, pickSkill, renderSkillAsRunbook } from '@guideai/skills';
 import type { AIChunk, Chunk, PhaseChunk, SystemChunk } from '@guideai/shared/chunks';
 import type { RoutableAgent, RouteDecision } from './routing.js';
 
@@ -341,15 +341,28 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
       ...Object.entries(artifacts).map(([p, body]) => `## ${p.toUpperCase()} artifact\n${body}`),
     ].join('\n\n');
 
-    const skillsContext = renderSkillsAsContext(skillsForPhase(skills, phase));
-    // System prompt layering: specialist persona (if any) → phase task → skills.
+    // S5 — skill-first executor. Try to pick ONE skill for this (task, phase);
+    // if we get a hit, its runbook becomes the primary instruction. If nothing
+    // scores, fall back to the phase prompt + the full skill menu (legacy S0).
+    const picked = pickSkill({ taskText: brief, phase, skills: skillsForPhase(skills, phase) });
+    if (picked) {
+      appendEvent(workspaceId, {
+        id: randomUUID(), ts: Date.now(), workspaceId, agentId: worker.id,
+        kind: 'system', level: 'info',
+        text: `Selected skill: ${picked.skill.name} (${picked.skill.source}) · score ${picked.score} · matched ${picked.matched.join(', ') || '—'}`,
+      });
+    }
+    const skillBlock = picked
+      ? renderSkillAsRunbook(picked.skill, brief)
+      : renderSkillsAsContext(skillsForPhase(skills, phase));
+    // System prompt layering: specialist persona (if any) → phase task → skill.
     const personaBlock = worker.systemPrompt && worker.role !== 'chief-of-staff'
       ? `## Your role\n\nYou are **${worker.displayName}** (${worker.role}).\n\n${worker.systemPrompt.slice(0, 1500)}`
       : '';
     const memoryBlock = renderMemoryBlock({
       role: worker.role, currentWorkspaceId: workspaceId,
     });
-    const systemPrompt = [personaBlock, memoryBlock, PHASE_PROMPT[phase], skillsContext].filter(Boolean).join('\n\n');
+    const systemPrompt = [personaBlock, memoryBlock, PHASE_PROMPT[phase], skillBlock].filter(Boolean).join('\n\n');
     const workerTools = worker.toolWhitelist && worker.toolWhitelist.length > 0
       ? worker.toolWhitelist
       : READ_ONLY_TOOLS;
