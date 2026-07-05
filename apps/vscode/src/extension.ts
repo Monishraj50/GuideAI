@@ -250,18 +250,41 @@ export async function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('atrune.newBrief', async () => {
       // After a brief is dispatched, force an immediate poll cycle (faster
       // than waiting for the 5s tick) so sidebars + status bar pick up the
-      // new brief, then nudge the user to the project view in their browser.
+      // new brief, then nudge the user to the right surface (Kanban for
+      // heavy briefs, single markdown panel for S4 quick-lane briefs).
       await openBriefComposer(
         ctx, api, () => activeWorkspaceId,
-        async (info?: { workspaceId?: string; briefId?: string }) => {
+        async (info?: { workspaceId?: string; briefId?: string; quick?: boolean; quickReason?: string; run?: any }) => {
           await refreshActiveWorkspaceImmediate();
           refreshAll();
-          if (info?.workspaceId && info?.briefId) {
-            // Auto-open the native Kanban so the user sees the phase cards
-            // immediately (especially important in Manual mode where work
-            // can't progress until the user drags a card to Active).
-            await openKanban({ workspaceId: info.workspaceId, briefId: info.briefId });
+          if (!info?.workspaceId || !info?.briefId) return;
+          if (info.quick) {
+            // Quick-lane brief — single agent, no pipeline. Show the answer
+            // as an untitled markdown tab so the user can copy/edit; skip
+            // Kanban entirely (no phase cards to look at).
+            const run = info.run ?? {};
+            const md = [
+              `# Atrune · quick task`,
+              ``,
+              `**Brief**: ${info.briefId}`,
+              info.quickReason ? `**Routed as quick**: ${info.quickReason}` : '',
+              run.pickedAgentRole ? `**Agent**: ${run.pickedAgentRole}` : '',
+              run.tokensIn != null ? `**Tokens**: ${run.tokensIn} in / ${run.tokensOut} out · ~$${(run.costUsd ?? 0).toFixed(4)}` : '',
+              ``,
+              `---`,
+              ``,
+              (run.text ?? '(no output)').trim(),
+            ].filter(Boolean).join('\n');
+            const doc = await vscode.workspace.openTextDocument({ content: md, language: 'markdown' });
+            await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One, preview: false });
+            try { await vscode.commands.executeCommand('markdown.showPreviewToSide', doc.uri); } catch {}
+            vscode.window.setStatusBarMessage(`Atrune · quick-task done (${info.briefId})`, 4000);
+            return;
           }
+          // Heavy brief — auto-open the native Kanban so the user sees the
+          // phase cards immediately (especially important in Manual mode
+          // where work can't progress until they drag a card to Active).
+          await openKanban({ workspaceId: info.workspaceId, briefId: info.briefId });
         },
       );
     }),

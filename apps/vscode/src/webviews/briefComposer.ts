@@ -31,7 +31,15 @@ export async function openBriefComposer(
   ctx: vscode.ExtensionContext,
   api: AtruneApi,
   activeWorkspaceId: () => string | null,
-  onDispatched: (info?: { workspaceId?: string; briefId?: string }) => void | Promise<void>,
+  onDispatched: (info?: {
+    workspaceId?: string;
+    briefId?: string;
+    // S4: server may have routed this brief through the quick lane. Extension
+    // uses these to skip Kanban and open a single result panel instead.
+    quick?: boolean;
+    quickReason?: string;
+    run?: any;
+  }) => void | Promise<void>,
 ) {
   if (panel) { panel.reveal(vscode.ViewColumn.Two); return; }
 
@@ -141,7 +149,10 @@ export async function openBriefComposer(
           // Pass briefId + workspaceId so the caller can auto-navigate.
           // The caller handles its own notifications now (extension.ts shows
           // "Open project view" / "Open Kanban board" buttons).
-          await onDispatched({ workspaceId: wsId, briefId: r.briefId });
+          await onDispatched({
+            workspaceId: wsId, briefId: r.briefId,
+            quick: r.quick, quickReason: r.quickReason, run: r.run,
+          });
           setTimeout(() => panel?.dispose(), 1200);
         } else {
           panel?.webview.postMessage({ type: 'error', error: r.error });

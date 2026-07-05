@@ -175,10 +175,13 @@ export async function runAutoFix(args: {
   // No good match on roster — auto-hire a sensible default if allowed.
   if ((!best || best.score <= 0) && (args.hire ?? true)) {
     const cat = loadCatalog();
-    // Pick a safe default from the catalog. fullstack-developer covers most fixes;
-    // can be tuned per-keyword in v1.1.
-    const defaultRole = (cat && (findAgent(cat, 'fullstack-developer') || findAgent(cat, 'backend-developer')))?.role
-                     ?? 'backend-developer';
+    // v2 catalog has 8 core roles; 'coder' is the natural catch-all for one-shot
+    // fixes. Fall back to 'fullstack-developer' (v1 legacy) if a custom seed
+    // still ships it.
+    const defaultRole = (cat && (findAgent(cat, 'coder')
+                        || findAgent(cat, 'fullstack-developer')
+                        || findAgent(cat, 'backend-developer')))?.role
+                     ?? 'coder';
     try {
       const hired = hireAgent(args.workspaceId, defaultRole);
       appendEvent(args.workspaceId, sys(args.workspaceId,

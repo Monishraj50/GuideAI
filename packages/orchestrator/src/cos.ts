@@ -13,6 +13,8 @@ import { harvestBriefDeliverables } from './deliverables.js';
 const isDesignTagged = (_body: string): boolean => false;
 import { hireAgent } from './hiring.js';
 import { clearSessionAllow } from '@guideai/policies/engine';
+import { classifyBrief } from './classifyBrief.js';
+import { runAutoFix, type DirectTaskRun } from './directTask.js';
 import { writeBriefAnalyses, appendAgentSummary, writeBriefChat } from './projectContext.js';
 import {
   ensureProjectMd, upsertFeature, appendSessionPointer, rebuildProjectTOC,
@@ -89,8 +91,17 @@ export interface SubmitBriefResult {
   agentId: string;
   phases: string[];
   securityTagged: boolean;
-  pipeline: 'started';
+  pipeline: 'started' | 'quick';
   approvalId?: string;  // legacy field, kept for response shape compatibility
+  /** S4: true when the brief was routed to the quick-task lane (single-shot
+   *  runAutoFix, no pipeline, no kanban entry). `run` carries the result. */
+  quick?: boolean;
+  /** S4: reason string from classifyBrief — surfaced in the UI for
+   *  transparency (e.g. "single file reference (README.md)"). */
+  quickReason?: string;
+  /** S4: populated only when `quick === true`. Same shape the direct-task
+   *  route returns. */
+  run?: DirectTaskRun;
 }
 
 /**
@@ -122,6 +133,50 @@ export async function submitBrief(args: {
   const securityTagged = !!args.securityTagged || /^\s*\[(security|sec)\]/i.test(body);
   await ensureWorkspace(workspaceId);
   const agentId = await ensureCosAgent(workspaceId);
+
+  // S4 — Quick-task lane. Short/single-file briefs skip the 3-phase pipeline
+  // and run one agent end-to-end. Explicit [heavy] / [quick] tags override
+  // the heuristic. Security-tagged briefs bypass the shortcut entirely — we
+  // don't want a "one file" security fix to skip review/verdict.
+  const classification = classifyBrief(body);
+  if (classification.lane === 'quick' && !securityTagged) {
+    const briefId = `brief-${randomUUID().slice(0, 8)}`;
+    const db = getDb();
+    db.insert(schema.briefs).values({
+      id: briefId, workspaceId, body: classification.cleanBody, status: 'active',
+      createdAt: now(), claudeSessionId: randomUUID(),
+    } as any).run();
+    appendEvent(workspaceId, {
+      ...base(workspaceId, agentId), kind: 'system', level: 'info',
+      text: `quick-lane: ${classification.reason} → single-agent run (no pipeline)`,
+    } as SystemChunk);
+    try {
+      const run = await runAutoFix({
+        workspaceId,
+        description: classification.cleanBody,
+        cwd: args.targetFolder,
+        hire: true,
+      });
+      db.update(schema.briefs)
+        .set({ status: run.status === 'ok' ? 'done' : 'failed' })
+        .where(eq(schema.briefs.id, briefId)).run();
+      clearSessionAllow(workspaceId);
+      return {
+        briefId, agentId,
+        phases: [],
+        securityTagged: false,
+        pipeline: 'quick',
+        quick: true,
+        quickReason: classification.reason,
+        run,
+      };
+    } catch (err: any) {
+      db.update(schema.briefs).set({ status: 'failed' })
+        .where(eq(schema.briefs.id, briefId)).run();
+      clearSessionAllow(workspaceId);
+      throw err;
+    }
+  }
 
   // Auto-hire any tagged agents not already on the roster. Failures are
   // logged but non-fatal — the pipeline still runs with whoever IS hired.

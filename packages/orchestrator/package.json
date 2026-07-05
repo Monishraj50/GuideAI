@@ -19,7 +19,8 @@
     "./projectContext": "./src/projectContext.ts",
     "./contextStore": "./src/contextStore.ts",
     "./transcriptWriter": "./src/transcriptWriter.ts",
-    "./taskGate": "./src/taskGate.ts"
+    "./taskGate": "./src/taskGate.ts",
+    "./classifyBrief": "./src/classifyBrief.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

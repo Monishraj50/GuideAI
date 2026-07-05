@@ -196,7 +196,15 @@ export class AtruneApi {
     budget?: { mode: 'tokens' | 'currency'; amount: number };
     /** 'auto' (default) runs end-to-end. 'manual' awaits per-phase release. */
     mode?: 'auto' | 'manual';
-  }): Promise<{ ok: boolean; briefId?: string; error?: string }> {
+  }): Promise<{
+    ok: boolean; briefId?: string; error?: string;
+    /** S4: server routed this brief through the quick-task lane instead of
+     *  the 3-phase pipeline. The extension should skip Kanban and show the
+     *  agent's answer directly. */
+    quick?: boolean;
+    quickReason?: string;
+    run?: DirectTaskRun;
+  }> {
     try {
       const r = await fetch(`${base()}/api/workspaces/${args.workspaceId}/briefs`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -211,7 +219,10 @@ export class AtruneApi {
       });
       const j = await r.json() as any;
       if (!r.ok) return { ok: false, error: j?.error ?? `http ${r.status}` };
-      return { ok: true, briefId: j.briefId };
+      return {
+        ok: true, briefId: j.briefId,
+        quick: !!j.quick, quickReason: j.quickReason, run: j.run,
+      };
     } catch (err: any) {
       return { ok: false, error: String(err?.message ?? err) };
     }

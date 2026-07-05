@@ -10,3 +10,4 @@ export * from './deliverables.js';
 export * from './memory.js';
 export * from './directTask.js';
 export * from './contextStore.js';
+export * from './classifyBrief.js';
