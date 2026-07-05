@@ -20,6 +20,7 @@ import * as taskGate from './taskGate.js';
 // secondOpinion / designShotgun / pass@k removed in S0 (Claude-only).
 import { renderMemoryBlock } from './memory.js';
 import { loadSkills, skillsForPhase, renderSkillsAsContext, pickSkill, renderSkillAsRunbook } from '@guideai/skills';
+import { upsertSession, firstUserChunkTag, isFirstTurn, outcomeFromReview } from './sessions.js';
 import type { AIChunk, Chunk, PhaseChunk, SystemChunk } from '@guideai/shared/chunks';
 import type { RoutableAgent, RouteDecision } from './routing.js';
 
@@ -379,6 +380,20 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
       taskTitle: `${phase} — ${worker.displayName}`,
       briefId, systemPrompt,
     });
+    // S6 — first user chunk tag. Prefix only on the FIRST turn of a session so
+    // reused sessions don't get repeat headers. Uses `isFirstTurn` (== no
+    // sessions row yet) rather than `previousWorker` because sessions can be
+    // reused across phase boundaries within a brief.
+    const firstTurn = !!claudePhaseSessionId && isFirstTurn(claudePhaseSessionId);
+    const tag = firstUserChunkTag({ featureSlug: featureTagForBrief, userLabel: 'user' });
+    const taggedContext = firstTurn ? `${tag} ${context}` : context;
+    if (firstTurn) {
+      appendEvent(workspaceId, {
+        id: randomUUID(), ts: Date.now(), workspaceId, agentId: worker.id,
+        kind: 'system', level: 'info',
+        text: `session ${claudePhaseSessionId!.slice(0, 8)}… first turn tagged ${tag}`,
+      } as SystemChunk);
+    }
     try {
       result = await resolveActiveAdapter().runOnce(
         {
@@ -391,7 +406,7 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
           onChunk: (c) => streamer.append(c),
           ...(claudePhaseSessionId ? { sessionId: claudePhaseSessionId } : {}),
         },
-        context,
+        taggedContext,
       );
     } catch (err: any) {
       const note: SystemChunk = {
@@ -439,6 +454,24 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
     const tokensOut = result.chunks.filter((c): c is AIChunk => c.kind === 'ai').reduce((a, c) => a + (c.tokensOut ?? 0), 0);
     totalIn += tokensIn; totalOut += tokensOut;
     account(routing.tier, tokensIn, tokensOut, worker.id, phase);
+
+    // S6 — persist / accumulate this session's row. Outcome is refined by the
+    // review phase (below); non-review phases just keep the default 'partial'.
+    if (claudePhaseSessionId) {
+      try {
+        upsertSession({
+          sessionId: claudePhaseSessionId,
+          workspaceId,
+          featureSlug: featureTagForBrief,
+          briefId,
+          role: worker.role,
+          cwd,
+          tokensIn, tokensOut,
+          costUsd: tierCostUsd(routing.tier, tokensIn, tokensOut),
+          outcome: phase === 'review' ? outcomeFromReview(aiText) : undefined,
+        });
+      } catch {}
+    }
 
     const artifact = artifactPath(workspaceId, briefId, phase);
     const md = `# ${phase} — brief ${briefId}\n\n` +
@@ -488,6 +521,18 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
     totalTokensOut: totalOut,
     totalDurationMs: Date.now() - startedAt,
   };
+}
+
+// Same PRICE table as directTask.ts; kept local to avoid a circular import.
+// Keep in sync with packages/policies/src/budgets.ts if pricing shifts.
+function tierCostUsd(tier: string, tIn: number, tOut: number): number {
+  const P: Record<string, { in: number; out: number }> = {
+    haiku:  { in: 1.00, out: 5.00 },
+    sonnet: { in: 3.00, out: 15.00 },
+    opus:   { in: 15.00, out: 75.00 },
+  };
+  const p = P[tier] ?? P.sonnet!;
+  return (tIn * p.in + tOut * p.out) / 1_000_000;
 }
 
 /** Re-render <mdRoot>/briefs/<id>/overallplan.md using the current DB state.

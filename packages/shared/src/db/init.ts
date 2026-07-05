@@ -249,6 +249,27 @@ CREATE TABLE IF NOT EXISTS workspace_repos (
 );
 
 
+-- S6 · Sessions table. One row per Claude session (identified by its UUID).
+-- Rows accumulate token/cost totals across every phase that reuses the same
+-- session (per-(feature, role) reuse). Outcome + endedAt update on each write.
+CREATE TABLE IF NOT EXISTS sessions (
+  id TEXT PRIMARY KEY,                         -- Claude session UUID
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+  feature_slug TEXT,                           -- FEATURE.md slug this session belongs to
+  brief_id TEXT,                               -- brief that first opened this session
+  role TEXT,                                   -- agent role (e.g. 'coder')
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER,
+  tokens_in INTEGER NOT NULL DEFAULT 0,
+  tokens_out INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  jsonl_path TEXT,
+  outcome TEXT NOT NULL DEFAULT 'partial'      -- shipped | partial | abandoned
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_workspace ON sessions(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_feature ON sessions(feature_slug);
+CREATE INDEX IF NOT EXISTS idx_sessions_brief ON sessions(brief_id);
+
 CREATE INDEX IF NOT EXISTS idx_agents_workspace ON agents(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_briefs_workspace ON briefs(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_brief ON tasks(brief_id);

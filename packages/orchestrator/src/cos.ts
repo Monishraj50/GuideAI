@@ -15,6 +15,7 @@ import { hireAgent } from './hiring.js';
 import { clearSessionAllow } from '@guideai/policies/engine';
 import { classifyBrief } from './classifyBrief.js';
 import { runAutoFix, type DirectTaskRun } from './directTask.js';
+import { outcomeFromReview } from './sessions.js';
 import { writeBriefAnalyses, appendAgentSummary, writeBriefChat } from './projectContext.js';
 import {
   ensureProjectMd, upsertFeature, appendSessionPointer, rebuildProjectTOC,
@@ -141,25 +142,44 @@ export async function submitBrief(args: {
   const classification = classifyBrief(body);
   if (classification.lane === 'quick' && !securityTagged) {
     const briefId = `brief-${randomUUID().slice(0, 8)}`;
+    const claudeSessionId = randomUUID();
+    const featureSlug = featureSlugFromBrief(classification.cleanBody);
     const db = getDb();
     db.insert(schema.briefs).values({
       id: briefId, workspaceId, body: classification.cleanBody, status: 'active',
-      createdAt: now(), claudeSessionId: randomUUID(),
+      createdAt: now(), claudeSessionId,
     } as any).run();
     appendEvent(workspaceId, {
       ...base(workspaceId, agentId), kind: 'system', level: 'info',
       text: `quick-lane: ${classification.reason} → single-agent run (no pipeline)`,
     } as SystemChunk);
+    // S6 — ensure the feature page exists so appendSessionPointer has
+    // something to write into.
+    try { upsertFeature(workspaceId, featureSlug, { goal: classification.cleanBody, status: 'in-progress' }); } catch {}
     try {
       const run = await runAutoFix({
         workspaceId,
         description: classification.cleanBody,
         cwd: args.targetFolder,
         hire: true,
+        sessionId: claudeSessionId,
+        featureSlug,
+        briefId,
       });
       db.update(schema.briefs)
         .set({ status: run.status === 'ok' ? 'done' : 'failed' })
         .where(eq(schema.briefs.id, briefId)).run();
+      // S6 — mirror the row into FEATURE.md so `cat` shows it. Outcome comes
+      // from the same heuristic sessions.ts uses; kept in sync so the two
+      // surfaces don't disagree.
+      try {
+        const outcome = run.status === 'ok' ? outcomeFromReview(run.text) : 'abandoned';
+        appendSessionPointer({
+          workspaceId, slug: featureSlug, sessionId: claudeSessionId,
+          briefBody: classification.cleanBody, outcome,
+        });
+        rebuildProjectTOC(workspaceId);
+      } catch {}
       clearSessionAllow(workspaceId);
       return {
         briefId, agentId,
@@ -173,6 +193,13 @@ export async function submitBrief(args: {
     } catch (err: any) {
       db.update(schema.briefs).set({ status: 'failed' })
         .where(eq(schema.briefs.id, briefId)).run();
+      try {
+        appendSessionPointer({
+          workspaceId, slug: featureSlug, sessionId: claudeSessionId,
+          briefBody: classification.cleanBody, outcome: 'abandoned',
+        });
+        rebuildProjectTOC(workspaceId);
+      } catch {}
       clearSessionAllow(workspaceId);
       throw err;
     }
@@ -465,13 +492,17 @@ export async function submitBrief(args: {
 
       // Browser validation removed in S1.
 
-      // S2 — append the session pointer to FEATURE.md + refresh PROJECT.md.
+      // S2 + S6 — append the session pointer to FEATURE.md + refresh PROJECT.md.
+      // Outcome is derived from the review-phase artifact (S6), not hardcoded
+      // to 'shipped' — so a reviewer flagging blockers now surfaces as partial.
       try {
+        const reviewArtifact = pipelineResult.phaseResults.find((p) => p.phase === 'review');
+        const derivedOutcome = outcomeFromReview(reviewArtifact?.text);
         appendSessionPointer({
           workspaceId, slug: featureSlug, sessionId: claudeSessionId,
-          briefBody: body, outcome: 'shipped',
+          briefBody: body, outcome: derivedOutcome,
         });
-        upsertFeature(workspaceId, featureSlug, { status: 'shipped' });
+        upsertFeature(workspaceId, featureSlug, { status: derivedOutcome === 'shipped' ? 'shipped' : 'in-progress' });
         rebuildProjectTOC(workspaceId);
       } catch (err: any) {
         appendEvent(workspaceId, {

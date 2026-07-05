@@ -250,6 +250,24 @@ export const workspaceRepos = sqliteTable('workspace_repos', {
   lastSyncAt: integer('last_sync_at'),
 });
 
+// S6 · one row per Claude session (identified by its UUID). Rows accumulate
+// token/cost totals across every phase that reuses the session; outcome +
+// endedAt update on each write.
+export const sessions = sqliteTable('sessions', {
+  id: text('id').primaryKey(),  // Claude session UUID
+  workspaceId: text('workspace_id').notNull().references(() => workspaces.id),
+  featureSlug: text('feature_slug'),
+  briefId: text('brief_id'),
+  role: text('role'),
+  startedAt: integer('started_at').notNull(),
+  endedAt: integer('ended_at'),
+  tokensIn: integer('tokens_in').notNull().default(0),
+  tokensOut: integer('tokens_out').notNull().default(0),
+  costUsd: real('cost_usd').notNull().default(0),
+  jsonlPath: text('jsonl_path'),
+  outcome: text('outcome').notNull().default('partial'),  // shipped | partial | abandoned
+});
+
 export const discoveries = sqliteTable('discoveries', {
   id: text('id').primaryKey(),
   workspaceId: text('workspace_id').notNull().references(() => workspaces.id),

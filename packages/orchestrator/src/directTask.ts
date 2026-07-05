@@ -29,6 +29,7 @@ import { renderMemoryBlock } from './memory.js';
 import { hireAgent } from './hiring.js';
 import { scoreAgent, type RoutableAgent } from './routing.js';
 import { loadSkills, pickSkill, renderSkillAsRunbook } from '@guideai/skills';
+import { upsertSession, firstUserChunkTag, isFirstTurn, outcomeFromReview } from './sessions.js';
 
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 
@@ -54,6 +55,12 @@ export async function runSingleAgent(args: {
   agentId: string;
   prompt: string;
   cwd?: string;
+  // S6 — session tracking. When provided, the adapter reuses this session UUID
+  // (enabling `claude --resume`) and we persist a row in the sessions table
+  // with the running feature/brief attribution.
+  sessionId?: string;
+  featureSlug?: string | null;
+  briefId?: string;
 }): Promise<DirectTaskRun> {
   const db = getDb();
   const agentRow = db.select().from(schema.agents).all()
@@ -114,6 +121,15 @@ export async function runSingleAgent(args: {
   appendEvent(args.workspaceId, sys(args.workspaceId,
     `direct-task ${runId} → ${agentRow.displayName} (${agentRow.role}) · tier ${tier}`));
 
+  // S6 — tag the first turn of a new session so the jsonl is greppable.
+  const firstTurn = !!args.sessionId && isFirstTurn(args.sessionId);
+  const tag = firstUserChunkTag({ featureSlug: args.featureSlug ?? null });
+  const taggedPrompt = firstTurn ? `${tag} ${args.prompt}` : args.prompt;
+  if (firstTurn) {
+    appendEvent(args.workspaceId, sys(args.workspaceId,
+      `session ${args.sessionId!.slice(0, 8)}… first turn tagged ${tag}`));
+  }
+
   // Run.
   try {
     const adapter = resolveActiveAdapter();
@@ -122,8 +138,9 @@ export async function runSingleAgent(args: {
         agentId: agentRow.id, workspaceId: args.workspaceId, cwd, systemPrompt,
         allowedTools: safeArr(agentRow.toolWhitelist).length > 0 ? safeArr(agentRow.toolWhitelist) : READ_ONLY_TOOLS,
         model: routing.tier,
+        ...(args.sessionId ? { sessionId: args.sessionId } : {}),
       },
-      args.prompt,
+      taggedPrompt,
     );
     for (const c of res.chunks) appendEvent(args.workspaceId, c);
 
@@ -135,6 +152,24 @@ export async function runSingleAgent(args: {
       workspaceId: args.workspaceId, agentId: agentRow.id, phase: 'direct-task',
       model: routing.tier, tokensIn: tIn, tokensOut: tOut,
     });
+
+    // S6 — persist the sessions row. Outcome inferred from the model's own
+    // words (a single-shot direct task IS its own review).
+    if (args.sessionId) {
+      try {
+        upsertSession({
+          sessionId: args.sessionId,
+          workspaceId: args.workspaceId,
+          featureSlug: args.featureSlug ?? null,
+          briefId: args.briefId ?? '(direct-task)',
+          role: agentRow.role,
+          cwd,
+          tokensIn: tIn, tokensOut: tOut,
+          costUsd: tierCost(tier, tIn, tOut),
+          outcome: outcomeFromReview(text),
+        });
+      } catch {}
+    }
 
     appendEvent(args.workspaceId, sys(args.workspaceId,
       `direct-task ${runId} ✓ · ${tIn}↓/${tOut}↑ · ${Math.round((Date.now() - startedAt))}ms`));
@@ -166,6 +201,10 @@ export async function runAutoFix(args: {
   description: string;
   cwd?: string;
   hire?: boolean;       // when true, auto-hire from catalog if no good match
+  // S6 — forwarded to runSingleAgent so the sessions row is attributed correctly.
+  sessionId?: string;
+  featureSlug?: string | null;
+  briefId?: string;
 }): Promise<DirectTaskRun & { pickedAgentRole: string }> {
   const db = getDb();
   const roster = db.select().from(schema.agents).all()
@@ -218,6 +257,9 @@ export async function runAutoFix(args: {
     agentId: best.agent.id,
     prompt: args.description,
     cwd: args.cwd,
+    sessionId: args.sessionId,
+    featureSlug: args.featureSlug,
+    briefId: args.briefId,
   });
   return { ...run, pickedAgentRole: best.agent.role };
 }
