@@ -176,6 +176,40 @@ export class AtruneApi {
     } catch { return []; }
   }
 
+  /** S9 · fetch hunk-level diff for a completed work_item vs its baseGitRef. */
+  async getWorkItemDiff(workItemId: string): Promise<{
+    files: Array<{
+      file: string; oldPath: string; newPath: string; binary: boolean;
+      hunks: Array<{ id: string; file: string; header: string; body: string; binary: boolean; addedLines: number; removedLines: number }>;
+    }>;
+    hunkCount?: number;
+    reason?: string;
+  } | null> {
+    try {
+      const r = await fetch(`${base()}/api/work-items/${workItemId}/diff`);
+      if (!r.ok) return null;
+      return await r.json() as any;
+    } catch { return null; }
+  }
+
+  async applyWorkItemDiff(args: {
+    workItemId: string; acceptedHunkIds: string[]; note?: string;
+  }): Promise<{
+    ok: boolean;
+    applied: string[]; reverted: string[]; failed: Array<{ hunkId: string; error: string }>;
+    outcome: 'shipped' | 'partial' | 'abandoned';
+    followupWorkItemId: string | null;
+  } | null> {
+    try {
+      const r = await fetch(`${base()}/api/work-items/${args.workItemId}/diff/apply`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ acceptedHunkIds: args.acceptedHunkIds, note: args.note }),
+      });
+      if (!r.ok) return null;
+      return await r.json() as any;
+    } catch { return null; }
+  }
+
   /** S7 · sessions grouped by feature slug for the tree view + resume Quick Pick. */
   async listSessionsByFeature(workspaceId: string): Promise<{
     count: number;

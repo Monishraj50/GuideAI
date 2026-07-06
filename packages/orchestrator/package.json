@@ -21,7 +21,8 @@
     "./transcriptWriter": "./src/transcriptWriter.ts",
     "./taskGate": "./src/taskGate.ts",
     "./classifyBrief": "./src/classifyBrief.ts",
-    "./resume": "./src/resume.ts"
+    "./resume": "./src/resume.ts",
+    "./diffReview": "./src/diffReview.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

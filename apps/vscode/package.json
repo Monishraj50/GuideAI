@@ -328,6 +328,11 @@
       {
         "command": "atrune.resumeSessionById",
         "title": "Atrune: Resume specific session"
+      },
+      {
+        "command": "atrune.reviewTaskDiff",
+        "title": "Atrune: Review task diff (hunk-by-hunk)…",
+        "icon": "$(diff)"
       }
     ],
     "menus": {

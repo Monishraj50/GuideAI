@@ -19,6 +19,7 @@ import { ProgressProvider } from './views/progress';
 import { TeamProvider } from './views/team';
 import { PermissionsProvider } from './views/permissions';
 import { SessionsProvider } from './views/sessions';
+import { openDiffReview } from './webviews/diffReview';
 import { openApprovalDiff } from './approvalDiff';
 import { PermissionsStream } from './permissionsStream';
 import { openRulesEditor } from './webviews/rulesEditor';
@@ -893,6 +894,29 @@ export async function activate(ctx: vscode.ExtensionContext) {
       if (pick) {
         await openBriefChatFile(wsId, (pick as any).briefId);
       }
+    }),
+    vscode.commands.registerCommand('atrune.reviewTaskDiff', async (arg?: { workItemId?: string; taskTitle?: string }) => {
+      let workItemId = arg?.workItemId;
+      let taskTitle = arg?.taskTitle;
+      if (!workItemId) {
+        const wsId = activeWorkspaceId;
+        if (!wsId) { vscode.window.showInformationMessage('No active project.'); return; }
+        const items = await api.listWorkItems(wsId);
+        // Prefer done items with a baseGitRef; fall back to any done item.
+        const eligible = items.filter((i) => i.status === 'done');
+        if (eligible.length === 0) { vscode.window.showInformationMessage('No completed tasks to review.'); return; }
+        const picked = await vscode.window.showQuickPick(eligible.map((i) => ({
+          label: i.title,
+          description: `${i.phase ?? '—'} · ${i.assignedRole ?? '—'}`,
+          detail: i.acceptance ?? undefined,
+          id: i.id,
+          title: i.title,
+        })), { placeHolder: 'Which completed task\'s diff should we review?' });
+        if (!picked) return;
+        workItemId = (picked as any).id;
+        taskTitle = (picked as any).title;
+      }
+      await openDiffReview({ api, workItemId: workItemId!, taskTitle: taskTitle ?? 'task', onApplied: refreshAll });
     }),
     vscode.commands.registerCommand('atrune.resumeSession', async () => {
       const wsId = activeWorkspaceId;

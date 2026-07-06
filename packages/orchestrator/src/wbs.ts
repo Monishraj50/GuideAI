@@ -48,6 +48,8 @@ export interface WorkItem {
   dependencies: string[];
   skillHint: string | null;
   acceptance: string | null;
+  // S9 · captured on transition to in_progress; anchors the diff-review baseline.
+  baseGitRef: string | null;
 }
 
 const STATUSES: WorkStatus[] = ['todo', 'in_progress', 'blocked', 'done', 'cancelled'];
@@ -69,6 +71,7 @@ function rowToItem(row: any): WorkItem {
     dependencies: parseDepsJson(row.dependencies),
     skillHint: row.skillHint ?? null,
     acceptance: row.acceptance ?? null,
+    baseGitRef: row.baseGitRef ?? null,
   };
 }
 
@@ -296,8 +299,30 @@ export function markPhaseStarted(args: {
       && (r.status === 'todo' || r.status === 'blocked'));
   for (const r of matching) {
     updateWorkItem(r.id, { status: 'in_progress' });
+    // S9 · capture the git HEAD as the diff-review baseline. Best-effort —
+    // skipped if the target isn't a git repo (fine, /diff will simply return
+    // an empty diff and the review webview won't pop).
+    try { stampBaseGitRef(r.id, args.workspaceId); } catch {}
   }
   return matching.map((r) => getWorkItem(r.id)!);
+}
+
+function stampBaseGitRef(workItemId: string, workspaceId: string): void {
+  const db = getDb();
+  const wsRow = db.select().from(schema.workspaces).all()
+    .find((w) => w.id === workspaceId) as any;
+  const cwd = (wsRow?.targetFolder as string | undefined)?.trim();
+  if (!cwd) return;
+  // Late-require so this module doesn't take a hard child_process dep in
+  // environments (test drivers) that never call markPhaseStarted.
+  const { execSync } = require('node:child_process') as typeof import('node:child_process');
+  let head: string;
+  try {
+    head = execSync('git rev-parse HEAD', { cwd, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+  } catch { return; }  // not a git repo → skip
+  if (!head) return;
+  db.update(schema.workItems).set({ baseGitRef: head, updatedAt: Date.now() } as any)
+    .where(eq(schema.workItems.id, workItemId)).run();
 }
 
 /** Mark all auto items matching a (briefId, phase) as done. Used when the

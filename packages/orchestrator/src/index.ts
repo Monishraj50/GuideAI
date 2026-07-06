@@ -14,3 +14,4 @@ export * from './classifyBrief.js';
 export * from './sessions.js';
 export * from './resume.js';
 export * from './decompose.js';
+export * from './diffReview.js';

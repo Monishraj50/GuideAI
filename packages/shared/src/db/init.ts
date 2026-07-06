@@ -343,6 +343,8 @@ const MIGRATIONS = [
   "ALTER TABLE work_items ADD COLUMN dependencies TEXT NOT NULL DEFAULT '[]'",
   "ALTER TABLE work_items ADD COLUMN skill_hint TEXT",
   "ALTER TABLE work_items ADD COLUMN acceptance TEXT",
+  // S9 · diff review base ref.
+  "ALTER TABLE work_items ADD COLUMN base_git_ref TEXT",
 ];
 
 function main() {

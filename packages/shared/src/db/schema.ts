@@ -245,6 +245,9 @@ export const workItems = sqliteTable('work_items', {
   // S8 · Acceptance-test stub — one sentence describing what "done" looks like.
   // Surfaced on the Kanban card as a subtitle.
   acceptance: text('acceptance'),
+  // S9 · Git ref (usually a SHA) captured when this task moves to in_progress
+  // — the "before" for the per-task diff review that pops when the task is done.
+  baseGitRef: text('base_git_ref'),
 });
 
 export const workspaceRepos = sqliteTable('workspace_repos', {
