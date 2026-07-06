@@ -125,6 +125,63 @@ export function pickSession(args: PickArgs): SessionCandidate | null {
   return best;
 }
 
+/** S11 · Extract file paths from a brief body — same regex family the S4
+ *  classifier uses. Empty set for briefs without file refs. */
+const FILE_HINT_RE =
+  /(?<![A-Za-z0-9])(?:[A-Za-z0-9._-]+\/)+[A-Za-z0-9._-]+|(?<![A-Za-z0-9])[A-Za-z0-9._-]+\.(?:ts|tsx|js|jsx|py|rb|go|rs|java|kt|swift|c|cc|cpp|h|hpp|cs|md|json|yaml|yml|toml|sh|sql|css|scss|html|vue|svelte)\b/g;
+function filesIn(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of text.matchAll(FILE_HINT_RE)) {
+    const hit = m[0];
+    if (/^https?:\/\//i.test(hit)) continue;
+    out.add(hit);
+  }
+  return out;
+}
+
+/** S11 · diversity-rank helper. Given already-scored candidates, penalize
+ *  each one by 40% of its score for every higher-ranked peer whose brief
+ *  touched ≥50% of the same files. Result: near-duplicates on the same file
+ *  set collapse to one, leaving a diverse top-K. */
+export function applyDiversityPenalty(
+  candidates: SessionCandidate[],
+  briefsById: Map<string, string>,
+): SessionCandidate[] {
+  const withFiles = candidates.map((c) => ({
+    c, files: filesIn(briefsById.get(c.session.briefId ?? '') ?? ''),
+  }));
+  withFiles.sort((a, b) => b.c.score - a.c.score);
+  const out: Array<{ c: SessionCandidate; files: Set<string> }> = [];
+  for (const cand of withFiles) {
+    let overlapCount = 0;
+    for (const seen of out) {
+      const smaller = Math.min(cand.files.size, seen.files.size);
+      if (smaller === 0) continue;
+      let common = 0;
+      for (const f of cand.files) if (seen.files.has(f)) common++;
+      if (common / smaller >= 0.5) overlapCount++;
+    }
+    // Penalize 40% per already-selected peer with heavy overlap. Two peers
+    // at 100% overlap → this one gets 20% of its raw score. Reason string
+    // gains a `+diversity(-N)` marker so the UI can show why the rank moved.
+    const penalty = 1 - Math.min(0.8, 0.4 * overlapCount);
+    const adjustedScore = Math.round(cand.c.score * penalty);
+    out.push({
+      c: {
+        session: cand.c.session,
+        score: adjustedScore,
+        reason: overlapCount > 0
+          ? `${cand.c.reason} · diversity(-${cand.c.score - adjustedScore})`
+          : cand.c.reason,
+      },
+      files: cand.files,
+    });
+  }
+  return out
+    .sort((a, b) => b.c.score - a.c.score)
+    .map((x) => x.c);
+}
+
 /** List sessions grouped by feature slug. Used by the tree view + Quick Pick. */
 export function listSessionsGroupedByFeature(workspaceId: string): Array<{
   featureSlug: string;

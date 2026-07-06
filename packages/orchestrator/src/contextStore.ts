@@ -279,3 +279,34 @@ export function featureSlugFromBrief(body: string): string {
   const slug = firstLine.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
   return slug || 'untitled';
 }
+
+// ─── S11 · [[wikilink]] parser ─────────────────────────
+// Extracts `[[feature-slug]]` refs from arbitrary text (FEATURE.md bodies,
+// decision entries, session snippets). Used to build cross-feature "related"
+// tables and for future navigation UI (click → open FEATURE.md).
+
+const WIKILINK_RE = /\[\[([a-z0-9][a-z0-9-]{0,80})\]\]/gi;
+
+/** Parse every `[[slug]]` occurrence out of a body. De-duped, order-preserved. */
+export function parseWikiLinks(body: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const m of body.matchAll(WIKILINK_RE)) {
+    const slug = m[1]!.toLowerCase();
+    if (seen.has(slug)) continue;
+    seen.add(slug);
+    out.push(slug);
+  }
+  return out;
+}
+
+/** Render inline `[[slug]]` refs as markdown links pointing at the sibling
+ *  feature page. Non-existing slugs are still rendered as links — a broken
+ *  link is a signal to write the missing feature, not a bug. */
+export function renderWikiLinks(body: string, opts: { relativeToFeaturesDir?: boolean } = {}): string {
+  const prefix = opts.relativeToFeaturesDir ? '../' : 'features/';
+  return body.replace(WIKILINK_RE, (_m, slug) => {
+    const s = String(slug).toLowerCase();
+    return `[${s}](${prefix}${s}/FEATURE.md)`;
+  });
+}

@@ -18,6 +18,7 @@ import { runAutoFix, type DirectTaskRun } from './directTask.js';
 import { outcomeFromReview } from './sessions.js';
 import { pickSession } from './resume.js';
 import { decompose, topoSort } from './decompose.js';
+import { runHook } from '@guideai/policies/hooks';
 import { writeBriefAnalyses, appendAgentSummary, writeBriefChat } from './projectContext.js';
 import {
   ensureProjectMd, upsertFeature, appendSessionPointer, rebuildProjectTOC,
@@ -509,12 +510,23 @@ export async function submitBrief(args: {
 
       // Browser validation removed in S1.
 
-      // S2 + S6 — append the session pointer to FEATURE.md + refresh PROJECT.md.
-      // Outcome is derived from the review-phase artifact (S6), not hardcoded
-      // to 'shipped' — so a reviewer flagging blockers now surfaces as partial.
+      // S2 + S6 + S11 — append the session pointer to FEATURE.md + refresh
+      // PROJECT.md. Outcome runs through the S11 post-phase hook chain
+      // (built-in outcome-tag wraps the S6 heuristic; users can add more).
       try {
         const reviewArtifact = pipelineResult.phaseResults.find((p) => p.phase === 'review');
-        const derivedOutcome = outcomeFromReview(reviewArtifact?.text);
+        const hookRes = runHook('post-phase', {
+          workspaceId, briefId, phase: 'review',
+          artifact: reviewArtifact?.text ?? '', role: reviewArtifact?.workerRole ?? null,
+        });
+        const derivedOutcome = (hookRes?.patch?.outcome as any)
+          ?? outcomeFromReview(reviewArtifact?.text);
+        if (hookRes?.systemMessage) {
+          appendEvent(workspaceId, {
+            ...base(workspaceId, agentId), kind: 'system', level: 'info',
+            text: `post-phase hook: ${hookRes.systemMessage}`,
+          } as SystemChunk);
+        }
         appendSessionPointer({
           workspaceId, slug: featureSlug, sessionId: claudeSessionId,
           briefBody: body, outcome: derivedOutcome,

@@ -10,7 +10,8 @@
     "./caps": "./src/caps.ts",
     "./router": "./src/router.ts",
     "./engine": "./src/engine.ts",
-    "./budgets": "./src/budgets.ts"
+    "./budgets": "./src/budgets.ts",
+    "./hooks": "./src/hooks.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

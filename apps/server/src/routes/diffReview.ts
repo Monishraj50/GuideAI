@@ -10,6 +10,7 @@ import type { FastifyInstance } from 'fastify';
 import { extractHunks, applyHunkSelection, type Hunk } from '@guideai/orchestrator/diffReview';
 import { getWorkItem, createWorkItem } from '@guideai/orchestrator/wbs';
 import { getDb, schema } from '@guideai/shared/db';
+import { runHook } from '@guideai/policies/hooks';
 
 // In-memory cache so /diff/apply doesn't have to re-parse (`git diff` output
 // changes as we revert). Keyed by `${workItemId}:${baseGitRef}` — small,
@@ -61,6 +62,18 @@ export function registerDiffReviewRoutes(app: FastifyInstance) {
       if (!cached) {
         reply.code(409);
         return { error: 'no cached hunks — call GET /diff first' };
+      }
+      // S11 · pre-diff hook chain. Scans the *accepted* hunks (rejected ones
+      // never touch disk, no need to gate them). A hook that returns block=true
+      // short-circuits the apply — used by the built-in secret-scan.
+      const acceptedHunks = cached.filter((h) => accepted.includes(h.id));
+      const hookRes = runHook('pre-diff', {
+        workspaceId: item.workspaceId, workItemId: item.id,
+        hunks: acceptedHunks.map((h) => ({ file: h.file, body: h.body })),
+      });
+      if (hookRes.block) {
+        reply.code(409);
+        return { error: 'pre-diff-hook-blocked', reason: hookRes.blockReason ?? 'blocked by policy' };
       }
       const result = applyHunkSelection({ cwd, hunks: cached, acceptedIds: accepted });
 

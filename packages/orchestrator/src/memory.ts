@@ -13,6 +13,7 @@ import { eq } from 'drizzle-orm';
 import { getDb, schema } from '@guideai/shared/db';
 import { appendEvent } from '@guideai/messaging/events';
 import type { SystemChunk } from '@guideai/shared/chunks';
+import { runHook } from '@guideai/policies/hooks';
 import { readProjectContext, readRecentSessions } from './projectContext.js';
 
 export type MemoryShare = 'all' | 'read-only' | 'deny';
@@ -70,6 +71,20 @@ export function createMemory(args: {
   if (!args.role.trim() || !args.body.trim()) {
     throw new Error('role and body are required');
   }
+  // S11 · on-memory-write hook. Built-in pii-scrub redacts email/api-key/
+  // token/jwt/phone before the body ever hits SQLite.
+  let body = args.body.trim();
+  try {
+    const hookRes = runHook('on-memory-write', {
+      workspaceId: args.workspaceId, role: args.role.trim(), text: body,
+    });
+    if (hookRes?.patch?.text) body = hookRes.patch.text;
+    if (hookRes?.systemMessage) {
+      appendEvent(args.workspaceId, sys(args.workspaceId,
+        `memory-write hook: ${hookRes.systemMessage}`));
+    }
+  } catch {}
+
   const db = getDb();
   const id = `mem-${randomUUID().slice(0, 8)}`;
   const now = Date.now();
@@ -77,7 +92,7 @@ export function createMemory(args: {
     id,
     role: args.role.trim(),
     sourceWorkspaceId: args.workspaceId,
-    body: args.body.trim(),
+    body,
     source: args.source ?? 'manual',
     createdAt: now, updatedAt: now,
   } as any).run();
@@ -85,7 +100,7 @@ export function createMemory(args: {
     `memory note added for ${args.role} (${args.source ?? 'manual'})`));
   return {
     id, role: args.role.trim(), sourceWorkspaceId: args.workspaceId,
-    body: args.body.trim(), source: args.source ?? 'manual',
+    body, source: args.source ?? 'manual',
     createdAt: now, updatedAt: now,
   };
 }
