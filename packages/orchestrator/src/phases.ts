@@ -19,8 +19,9 @@ import { getDb as getDbForOverall, schema as schemaForOverall } from '@guideai/s
 import * as taskGate from './taskGate.js';
 // secondOpinion / designShotgun / pass@k removed in S0 (Claude-only).
 import { renderMemoryBlock } from './memory.js';
-import { loadSkills, skillsForPhase, renderSkillsAsContext, pickSkill, renderSkillAsRunbook } from '@guideai/skills';
-import { upsertSession, firstUserChunkTag, isFirstTurn, outcomeFromReview } from './sessions.js';
+import { loadSkills, skillsForPhase, pickSkill } from '@guideai/skills';
+import { upsertSession, outcomeFromReview } from './sessions.js';
+import { makeVessel, pickTalent, runTask } from './runtime.js';
 import type { AIChunk, Chunk, PhaseChunk, SystemChunk } from '@guideai/shared/chunks';
 import type { RoutableAgent, RouteDecision } from './routing.js';
 
@@ -342,9 +343,9 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
       ...Object.entries(artifacts).map(([p, body]) => `## ${p.toUpperCase()} artifact\n${body}`),
     ].join('\n\n');
 
-    // S5 — skill-first executor. Try to pick ONE skill for this (task, phase);
-    // if we get a hit, its runbook becomes the primary instruction. If nothing
-    // scores, fall back to the phase prompt + the full skill menu (legacy S0).
+    // S10 · vessel × talent × task. The skill pick + tag emit + streaming
+    // that used to be inline in phases.ts now live inside runtime.runTask —
+    // same visible chunks, but the composition is centralized.
     const picked = pickSkill({ taskText: brief, phase, skills: skillsForPhase(skills, phase) });
     if (picked) {
       appendEvent(workspaceId, {
@@ -353,61 +354,32 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
         text: `Selected skill: ${picked.skill.name} (${picked.skill.source}) · score ${picked.score} · matched ${picked.matched.join(', ') || '—'}`,
       });
     }
-    const skillBlock = picked
-      ? renderSkillAsRunbook(picked.skill, brief)
-      : renderSkillsAsContext(skillsForPhase(skills, phase));
-    // System prompt layering: specialist persona (if any) → phase task → skill.
-    const personaBlock = worker.systemPrompt && worker.role !== 'chief-of-staff'
-      ? `## Your role\n\nYou are **${worker.displayName}** (${worker.role}).\n\n${worker.systemPrompt.slice(0, 1500)}`
-      : '';
-    const memoryBlock = renderMemoryBlock({
-      role: worker.role, currentWorkspaceId: workspaceId,
+    const talent = pickTalent({
+      workspaceId, role: worker.role, agentId: worker.id, taskText: brief, phase,
     });
-    const systemPrompt = [personaBlock, memoryBlock, PHASE_PROMPT[phase], skillBlock].filter(Boolean).join('\n\n');
-    const workerTools = worker.toolWhitelist && worker.toolWhitelist.length > 0
-      ? worker.toolWhitelist
-      : READ_ONLY_TOOLS;
-
-    // S0 cleanup: pass@k, cross-vendor second-opinion and design-shotgun
-    // variant fan-out are gone. Every phase runs as a single direct call.
-    // Tier-aware sizing replaces this in S1 (tiny/small/medium/big).
-    let result;
+    const vessel = makeVessel({
+      workspaceId, role: worker.role, cwd, model: routing.tier,
+      toolWhitelist: worker.toolWhitelist,
+      sessionId: claudePhaseSessionId ?? undefined,
+    });
     // Stream chunks directly to the transcript file as they arrive — so VS
     // Code's markdown preview shows the live "Claude chat" view (turns +
     // tool calls + file edits) the moment the agent emits them.
     const streamer = makeStreamingAppender({
       workspaceId, role: worker.role, taskId: `${briefId}-${phase}`,
       taskTitle: `${phase} — ${worker.displayName}`,
-      briefId, systemPrompt,
+      briefId, systemPrompt: '(composed by runtime.runTask)',
     });
-    // S6 — first user chunk tag. Prefix only on the FIRST turn of a session so
-    // reused sessions don't get repeat headers. Uses `isFirstTurn` (== no
-    // sessions row yet) rather than `previousWorker` because sessions can be
-    // reused across phase boundaries within a brief.
-    const firstTurn = !!claudePhaseSessionId && isFirstTurn(claudePhaseSessionId);
-    const tag = firstUserChunkTag({ featureSlug: featureTagForBrief, userLabel: 'user' });
-    const taggedContext = firstTurn ? `${tag} ${context}` : context;
-    if (firstTurn) {
-      appendEvent(workspaceId, {
-        id: randomUUID(), ts: Date.now(), workspaceId, agentId: worker.id,
-        kind: 'system', level: 'info',
-        text: `session ${claudePhaseSessionId!.slice(0, 8)}… first turn tagged ${tag}`,
-      } as SystemChunk);
-    }
+    let result: { text: string; chunks: any[]; tokensIn: number; tokensOut: number };
     try {
-      result = await resolveActiveAdapter().runOnce(
-        {
-          agentId: worker.id,
-          workspaceId,
-          cwd,
-          systemPrompt,
-          allowedTools: workerTools,
-          model: routing.tier,
-          onChunk: (c) => streamer.append(c),
-          ...(claudePhaseSessionId ? { sessionId: claudePhaseSessionId } : {}),
-        },
-        taggedContext,
-      );
+      result = await runTask(vessel, talent, {
+        prompt: context,
+        phase,
+        briefId,
+        featureSlug: featureTagForBrief,
+        tagFirstTurn: true,
+        systemPromptExtras: [PHASE_PROMPT[phase]],
+      }, { onChunk: (c) => streamer.append(c) });
     } catch (err: any) {
       const note: SystemChunk = {
         id: randomUUID(),

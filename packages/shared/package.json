@@ -10,7 +10,8 @@
     "./db": "./src/db/index.ts",
     "./db/schema": "./src/db/schema.ts",
     "./paths": "./src/paths.ts",
-    "./chunks": "./src/chunks.ts"
+    "./chunks": "./src/chunks.ts",
+    "./types": "./src/types.ts"
   },
   "scripts": {
     "init-db": "tsx ./src/db/init.ts",

@@ -28,8 +28,9 @@ import { loadCatalog, findAgent } from '@guideai/agents-catalog';
 import { renderMemoryBlock } from './memory.js';
 import { hireAgent } from './hiring.js';
 import { scoreAgent, type RoutableAgent } from './routing.js';
-import { loadSkills, pickSkill, renderSkillAsRunbook } from '@guideai/skills';
-import { upsertSession, firstUserChunkTag, isFirstTurn, outcomeFromReview } from './sessions.js';
+import { loadSkills, pickSkill } from '@guideai/skills';
+import { upsertSession, outcomeFromReview } from './sessions.js';
+import { makeVessel, pickTalent, runTask } from './runtime.js';
 
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 
@@ -72,28 +73,25 @@ export async function runSingleAgent(args: {
   const cwd = args.cwd ?? paths.agentCwd(args.workspaceId, args.agentId);
   fs.mkdirSync(cwd, { recursive: true });
 
-  // Persona + memory block — same composition pattern as the pipeline.
-  const persona = agentRow.role !== 'chief-of-staff' && agentRow.systemPrompt
-    ? `## Your role\n\nYou are **${agentRow.displayName}** (${agentRow.role}).\n\n${agentRow.systemPrompt.slice(0, 1500)}`
-    : '';
-  const memory = renderMemoryBlock({
-    role: agentRow.role, currentWorkspaceId: args.workspaceId,
-  });
-  // S5 — skill-first. Try to pick ONE skill; if we get a hit, its runbook
-  // replaces the generic "direct task" preamble. Otherwise fall back to the
-  // generic block so the run still proceeds.
+  // S10 · pickTalent hydrates persona + memory + skills. We STILL do a manual
+  // pickSkill call here so we can emit the "Selected skill: …" event with the
+  // exact scorer metadata (score + matched terms) that S5's tests assert on.
   const skills = loadSkills();
   const picked = pickSkill({ taskText: args.prompt, skills });
   if (picked) {
     appendEvent(args.workspaceId, sys(args.workspaceId,
       `Selected skill: ${picked.skill.name} (${picked.skill.source}) · score ${picked.score} · matched ${picked.matched.join(', ') || '—'}`));
   }
-  const taskBlock = picked
-    ? renderSkillAsRunbook(picked.skill, args.prompt)
-    : '## Direct task\n\n' +
-      'You are running OUTSIDE the standard 3-phase pipeline. Treat this as a focused, ' +
-      'single-shot task. Be concise. Do exactly what is asked; flag uncertainty rather than guessing.';
-  const systemPrompt = [persona, memory, taskBlock].filter(Boolean).join('\n\n');
+  const talent = pickTalent({
+    workspaceId: args.workspaceId, role: agentRow.role, agentId: agentRow.id,
+    taskText: args.prompt,
+  });
+  // Direct-task preamble — the S5 fallback for the "no matching skill" case.
+  const directTaskPreamble = picked ? '' : (
+    '## Direct task\n\n' +
+    'You are running OUTSIDE the standard 3-phase pipeline. Treat this as a focused, ' +
+    'single-shot task. Be concise. Do exactly what is asked; flag uncertainty rather than guessing.'
+  );
 
   // Budget gate.
   const routing = routeModel({ phase: 'implement', override: (agentRow.model as any) ?? undefined });
@@ -121,32 +119,25 @@ export async function runSingleAgent(args: {
   appendEvent(args.workspaceId, sys(args.workspaceId,
     `direct-task ${runId} → ${agentRow.displayName} (${agentRow.role}) · tier ${tier}`));
 
-  // S6 — tag the first turn of a new session so the jsonl is greppable.
-  const firstTurn = !!args.sessionId && isFirstTurn(args.sessionId);
-  const tag = firstUserChunkTag({ featureSlug: args.featureSlug ?? null });
-  const taggedPrompt = firstTurn ? `${tag} ${args.prompt}` : args.prompt;
-  if (firstTurn) {
-    appendEvent(args.workspaceId, sys(args.workspaceId,
-      `session ${args.sessionId!.slice(0, 8)}… first turn tagged ${tag}`));
-  }
-
-  // Run.
+  // Run — via S10 runtime.runTask (which handles first-turn tagging).
   try {
-    const adapter = resolveActiveAdapter();
-    const res = await adapter.runOnce(
-      {
-        agentId: agentRow.id, workspaceId: args.workspaceId, cwd, systemPrompt,
-        allowedTools: safeArr(agentRow.toolWhitelist).length > 0 ? safeArr(agentRow.toolWhitelist) : READ_ONLY_TOOLS,
-        model: routing.tier,
-        ...(args.sessionId ? { sessionId: args.sessionId } : {}),
-      },
-      taggedPrompt,
-    );
-    for (const c of res.chunks) appendEvent(args.workspaceId, c);
-
-    const text = res.chunks.filter((c): c is AIChunk => c.kind === 'ai').map((c) => c.text).join('\n');
-    const tIn  = res.chunks.filter((c): c is AIChunk => c.kind === 'ai').reduce((s, c) => s + (c.tokensIn ?? 0), 0);
-    const tOut = res.chunks.filter((c): c is AIChunk => c.kind === 'ai').reduce((s, c) => s + (c.tokensOut ?? 0), 0);
+    const vessel = makeVessel({
+      workspaceId: args.workspaceId, role: agentRow.role, cwd,
+      model: routing.tier,
+      toolWhitelist: safeArr(agentRow.toolWhitelist).length > 0 ? safeArr(agentRow.toolWhitelist) : null,
+      sessionId: args.sessionId,
+    });
+    const runRes = await runTask(vessel, talent, {
+      prompt: args.prompt,
+      featureSlug: args.featureSlug ?? null,
+      briefId: args.briefId,
+      tagFirstTurn: true,
+      systemPromptExtras: directTaskPreamble ? [directTaskPreamble] : [],
+    });
+    for (const c of runRes.chunks) appendEvent(args.workspaceId, c);
+    const text = runRes.text;
+    const tIn  = runRes.tokensIn;
+    const tOut = runRes.tokensOut;
 
     recordUsage({
       workspaceId: args.workspaceId, agentId: agentRow.id, phase: 'direct-task',

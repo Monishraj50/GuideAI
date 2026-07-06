@@ -22,7 +22,8 @@
     "./taskGate": "./src/taskGate.ts",
     "./classifyBrief": "./src/classifyBrief.ts",
     "./resume": "./src/resume.ts",
-    "./diffReview": "./src/diffReview.ts"
+    "./diffReview": "./src/diffReview.ts",
+    "./runtime": "./src/runtime.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
