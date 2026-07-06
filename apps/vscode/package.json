@@ -84,6 +84,23 @@
           "name": "Sessions",
           "icon": "$(comment-discussion)",
           "when": "atrune.connected && atrune.folderConsented"
+        },
+        {
+          "id": "atrune.start",
+          "name": "🚀 Start",
+          "icon": "$(rocket)"
+        },
+        {
+          "id": "atrune.features",
+          "name": "📂 Features",
+          "icon": "$(symbol-namespace)",
+          "when": "atrune.connected && atrune.folderConsented"
+        },
+        {
+          "id": "atrune.skillsAndPacks",
+          "name": "🛠 Skills & Packs",
+          "icon": "$(symbol-method)",
+          "when": "atrune.connected"
         }
       ]
     },

@@ -17,6 +17,7 @@
     "@guideai/runtime-claude": "workspace:*",
     "@guideai/runtime-core": "workspace:*",
     "@guideai/shared": "workspace:*",
+    "@guideai/skills": "workspace:*",
     "drizzle-orm": "^0.36.4",
     "fastify": "^5.2.0",
     "node-cron": "^3.0.3"

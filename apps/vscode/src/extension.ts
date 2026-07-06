@@ -19,6 +19,9 @@ import { ProgressProvider } from './views/progress';
 import { TeamProvider } from './views/team';
 import { PermissionsProvider } from './views/permissions';
 import { SessionsProvider } from './views/sessions';
+import { StartProvider } from './views/start';
+import { FeaturesProvider } from './views/features';
+import { SkillsAndPacksProvider } from './views/skillsAndPacks';
 import { openDiffReview } from './webviews/diffReview';
 import { openApprovalDiff } from './approvalDiff';
 import { PermissionsStream } from './permissionsStream';
@@ -1116,6 +1119,9 @@ export async function activate(ctx: vscode.ExtensionContext) {
   const team        = new TeamProvider(api, () => activeWorkspaceId);
   const permissions = new PermissionsProvider(api, () => activeWorkspaceId);
   const sessionsView = new SessionsProvider(api, () => activeWorkspaceId);
+  const startView = new StartProvider();
+  const featuresView = new FeaturesProvider(api, () => activeWorkspaceId);
+  const skillsPacksView = new SkillsAndPacksProvider(api);
   const permissionsStream = new PermissionsStream(
     () => api.serverBase(),
     () => permissions.refresh(),
@@ -1138,6 +1144,9 @@ export async function activate(ctx: vscode.ExtensionContext) {
     vscode.window.registerTreeDataProvider('atrune.progress', progress),
     vscode.window.registerTreeDataProvider('atrune.team', team),
     vscode.window.registerTreeDataProvider('atrune.sessions', sessionsView),
+    vscode.window.registerTreeDataProvider('atrune.start', startView),
+    vscode.window.registerTreeDataProvider('atrune.features', featuresView),
+    vscode.window.registerTreeDataProvider('atrune.skillsAndPacks', skillsPacksView),
   );
 
   refreshAll = () => {
@@ -1146,6 +1155,8 @@ export async function activate(ctx: vscode.ExtensionContext) {
     progress.refresh();
     team.refresh();
     sessionsView.refresh();
+    featuresView.refresh();
+    skillsPacksView.refresh();
   };
 
   statusBar = new AtruneStatusBar();

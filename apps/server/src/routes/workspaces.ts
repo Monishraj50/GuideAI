@@ -453,6 +453,10 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
       digest: readLatestDigest(req.params.id),
       briefs: { recent: recentBriefs, total: briefs.length, active: briefs.filter((b) => b.status === 'active').length },
       tokens: stats.reduce((s, a) => s + a.tokensIn + a.tokensOut, 0),
+      // S13 · status-bar wants ↓/↑ split. Adding without breaking the
+      // existing aggregate `tokens` field (client uses both).
+      tokensIn:  stats.reduce((s, a) => s + a.tokensIn, 0),
+      tokensOut: stats.reduce((s, a) => s + a.tokensOut, 0),
       usd: stats.reduce((s, a) => s + a.usd, 0),
       recentChunks,
     };

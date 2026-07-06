@@ -30,6 +30,9 @@ export interface PlanResp {
     active: number;
   };
   tokens: number;
+  /** S13 · split totals for the status-bar formatter. */
+  tokensIn?: number;
+  tokensOut?: number;
   usd: number;
 }
 
@@ -174,6 +177,18 @@ export class AtruneApi {
       const j = await r.json() as { keys: string[] };
       return j.keys ?? [];
     } catch { return []; }
+  }
+
+  /** S13 · list every loaded skill (all sources). Used by the Skills & Packs sidebar. */
+  async listSkills(): Promise<{
+    count: number;
+    skills: Array<{ name: string; description: string; appliesTo: string[]; keywords: string[]; source: string }>;
+  }> {
+    try {
+      const r = await fetch(`${base()}/api/skills`);
+      if (!r.ok) return { count: 0, skills: [] };
+      return await r.json() as any;
+    } catch { return { count: 0, skills: [] }; }
   }
 
   /** S12 · list installed skill/agent packs. */
