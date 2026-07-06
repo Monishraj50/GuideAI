@@ -31,6 +31,7 @@ import { registerMemoryRoutes } from './routes/memory.js';
 import { registerDirectTaskRoutes } from './routes/directTask.js';
 import { registerSessionRoutes } from './routes/sessions.js';
 import { registerDiffReviewRoutes } from './routes/diffReview.js';
+import { registerPackRoutes } from './routes/packs.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
 const app = Fastify({ logger: true });
@@ -86,6 +87,7 @@ registerMemoryRoutes(app);
 registerDirectTaskRoutes(app);
 registerSessionRoutes(app);
 registerDiffReviewRoutes(app);
+registerPackRoutes(app);
 
 // User-data discipline: this server only writes to ATRUNE_DB_PATH (set by the
 // VS Code extension after folder consent). If no path is set, refuse to

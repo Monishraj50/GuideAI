@@ -100,6 +100,7 @@ export const paths = {
   get db() { return getDbPath(); },
   workspaces: path.join(GUIDEAI_HOME, 'workspaces'),
   skills: path.join(GUIDEAI_HOME, 'skills'),
+  packs: path.join(GUIDEAI_HOME, 'packs'),
   agentsCustom: path.join(GUIDEAI_HOME, 'agents', 'custom'),
   policiesJson: path.join(GUIDEAI_HOME, 'policies.json'),
 

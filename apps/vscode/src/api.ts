@@ -176,6 +176,44 @@ export class AtruneApi {
     } catch { return []; }
   }
 
+  /** S12 · list installed skill/agent packs. */
+  async listPacks(): Promise<{
+    count: number;
+    packs: Array<{
+      name: string; version: string; description: string | null;
+      tags: string[]; skillCount: number; installedAt: number;
+      hasMissingReqs: boolean; missing: string[];
+    }>;
+  }> {
+    try {
+      const r = await fetch(`${base()}/api/packs`);
+      if (!r.ok) return { count: 0, packs: [] };
+      return await r.json() as any;
+    } catch { return { count: 0, packs: [] }; }
+  }
+
+  async installPack(args: { fromPath?: string; fromGitUrl?: string; force?: boolean }): Promise<
+    { ok: boolean; name?: string; version?: string; skillCount?: number; hasMissingReqs?: boolean; missing?: string[]; error?: string }
+  > {
+    try {
+      const r = await fetch(`${base()}/api/packs`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(args),
+      });
+      const j = await r.json() as any;
+      if (!r.ok) return { ok: false, error: j?.error ?? `http ${r.status}` };
+      return { ok: true, ...j };
+    } catch (err: any) { return { ok: false, error: String(err?.message ?? err) }; }
+  }
+
+  async uninstallPack(name: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const r = await fetch(`${base()}/api/packs/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); return { ok: false, error: (j as any)?.error ?? `http ${r.status}` }; }
+      return { ok: true };
+    } catch (err: any) { return { ok: false, error: String(err?.message ?? err) }; }
+  }
+
   /** S9 · fetch hunk-level diff for a completed work_item vs its baseGitRef. */
   async getWorkItemDiff(workItemId: string): Promise<{
     files: Array<{

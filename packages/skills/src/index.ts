@@ -7,9 +7,11 @@ export { promoteSkillFromTrace, type PromoteArgs, type PromotedSkill } from './p
 export { pickSkill, scoreSkillFor } from './pickSkill.js';
 export { renderSkillAsRunbook } from './invoke.js';
 
-/** Where in `~/.guideai/skills/` the skill was loaded from. `_user` beats
- *  `_custom` beats `_seed` when the same name appears in multiple places. */
-export type SkillSource = '_user' | '_custom' | '_seed' | 'legacy';
+/** Where a skill came from. Priority for same-name conflicts:
+ *    `_user` > `_custom` > `_pack:*` > `_seed` > `legacy`
+ *  Pack sources carry the pack name so provenance surfaces in the UI (chat
+ *  panel shows `← from pack: dev-skills-pro` when a pack-owned skill fires). */
+export type SkillSource = '_user' | '_custom' | '_seed' | 'legacy' | `_pack:${string}`;
 
 export interface Skill {
   name: string;
@@ -95,35 +97,81 @@ export function loadSkills(): Skill[] {
   ensureSeeded();
   if (!fs.existsSync(paths.skills)) return [];
 
-  // Prefer specific subdirs, then flat root.
-  const layers: Array<[string, SkillSource]> = [
-    [path.join(paths.skills, '_user'),   '_user'],
-    [path.join(paths.skills, '_custom'), '_custom'],
-    [path.join(paths.skills, '_seed'),   '_seed'],
-    [paths.skills,                        'legacy'], // flat files at the root
-  ];
-
   const byName = new Map<string, Skill>();
-  for (const [dir, source] of layers) {
-    if (source === 'legacy') {
-      // Only pick up top-level *.md that isn't itself one of the subdirs.
-      if (!fs.existsSync(dir)) continue;
-      for (const f of fs.readdirSync(dir)) {
-        if (!f.endsWith('.md')) continue;
-        const full = path.join(dir, f);
-        if (!fs.statSync(full).isFile()) continue;
-        // Skip files that also live under _user/_custom/_seed with same basename.
-        const s = readDir(dir, 'legacy').find((x) => x.name === f.replace(/\.md$/, ''));
-        if (!s) continue;
-        if (!byName.has(s.name)) byName.set(s.name, s);
-      }
-      continue;
-    }
-    for (const s of readDir(dir, source)) {
+  const push = (skills: Skill[]) => {
+    for (const s of skills) if (!byName.has(s.name)) byName.set(s.name, s);
+  };
+
+  // Priority order: _user > _custom > packs > _seed > legacy.
+  push(readDir(path.join(paths.skills, '_user'), '_user'));
+  push(readDir(path.join(paths.skills, '_custom'), '_custom'));
+  // S12 · pack-provided skills. Each installed pack under ~/.guideai/packs/
+  // exposes its skills at packs/<name>/skills/*.md. Packs with unsatisfied
+  // `requires` are filtered out entirely so pickSkill never sees them.
+  push(loadPackSkills());
+  push(readDir(path.join(paths.skills, '_seed'), '_seed'));
+
+  // Legacy — top-level *.md at ~/.guideai/skills/ root, ignoring subdir names.
+  if (fs.existsSync(paths.skills)) {
+    for (const f of fs.readdirSync(paths.skills)) {
+      if (!f.endsWith('.md')) continue;
+      const full = path.join(paths.skills, f);
+      try { if (!fs.statSync(full).isFile()) continue; } catch { continue; }
+      const s = readDir(paths.skills, 'legacy').find((x) => x.name === f.replace(/\.md$/, ''));
+      if (!s) continue;
       if (!byName.has(s.name)) byName.set(s.name, s);
     }
   }
+
   return [...byName.values()];
+}
+
+/** Walk `~/.guideai/packs/*` and load their skills, tagging each with
+ *  `_pack:<name>`. Late-imported to avoid a build-order cycle with the
+ *  orchestrator package. */
+function loadPackSkills(): Skill[] {
+  const packsRoot = path.resolve(paths.skills, '..', 'packs');
+  if (!fs.existsSync(packsRoot)) return [];
+  const out: Skill[] = [];
+  for (const name of fs.readdirSync(packsRoot)) {
+    const dir = path.join(packsRoot, name);
+    const manifestPath = path.join(dir, 'pack.json');
+    if (!fs.existsSync(manifestPath)) continue;
+    // Cheap requires-check inline. Full requires evaluation lives in packs.ts;
+    // we mirror the two easy cases here (tools + runtime) so we don't need to
+    // import the orchestrator package.
+    let manifest: any;
+    try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch { continue; }
+    if (!hasSatisfiedRequires(manifest?.requires)) continue;
+    const skillsDir = path.join(dir, 'skills');
+    if (!fs.existsSync(skillsDir)) continue;
+    for (const skill of readDir(skillsDir, `_pack:${manifest.name}` as SkillSource)) {
+      out.push(skill);
+    }
+  }
+  return out;
+}
+
+function hasSatisfiedRequires(req: any): boolean {
+  if (!req || typeof req !== 'object') return true;
+  const tools: string[] = Array.isArray(req.tools) ? req.tools : [];
+  for (const t of tools) {
+    try {
+      require('node:child_process').execSync(`command -v ${JSON.stringify(t)}`, { stdio: ['ignore', 'ignore', 'ignore'] });
+    } catch { return false; }
+  }
+  if (typeof req.runtime === 'string') {
+    const cur = process.versions.node.split('.').map(Number);
+    const m = /^(?:\^|>=)?(\d+)\.(\d+)\.(\d+)/.exec(req.runtime);
+    if (m) {
+      const [rma, rmi, rpa] = [Number(m[1]), Number(m[2]), Number(m[3])];
+      if (req.runtime.startsWith('^') && cur[0] !== rma) return false;
+      if (cur[0]! < rma) return false;
+      if (cur[0] === rma && cur[1]! < rmi) return false;
+      if (cur[0] === rma && cur[1] === rmi && cur[2]! < rpa) return false;
+    }
+  }
+  return true;
 }
 
 /** Pick skills that mention the given phase in their `appliesTo` field

@@ -333,6 +333,20 @@
         "command": "atrune.reviewTaskDiff",
         "title": "Atrune: Review task diff (hunk-by-hunk)…",
         "icon": "$(diff)"
+      },
+      {
+        "command": "atrune.browsePacks",
+        "title": "Atrune: Browse installed packs…",
+        "icon": "$(package)"
+      },
+      {
+        "command": "atrune.installPack",
+        "title": "Atrune: Install a pack…",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "atrune.uninstallPack",
+        "title": "Atrune: Uninstall a pack…"
       }
     ],
     "menus": {

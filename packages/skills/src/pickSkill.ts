@@ -25,12 +25,14 @@ function tokenize(s: string): string[] {
 }
 
 function sourceRank(src: SkillSource): number {
-  switch (src) {
-    case '_user':   return 3;
-    case '_custom': return 2;
-    case '_seed':   return 1;
-    default:        return 0;
-  }
+  if (src === '_user')   return 3;
+  if (src === '_custom') return 2;
+  // Pack-provided skills are opt-in installs — ranked with _custom because
+  // the user made an explicit choice to install the pack. Same-name conflict
+  // resolution still prefers _user + _custom over packs (see loadSkills).
+  if (typeof src === 'string' && src.startsWith('_pack:')) return 2;
+  if (src === '_seed')   return 1;
+  return 0;
 }
 
 export interface SkillScore {

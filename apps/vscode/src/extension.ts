@@ -895,6 +895,66 @@ export async function activate(ctx: vscode.ExtensionContext) {
         await openBriefChatFile(wsId, (pick as any).briefId);
       }
     }),
+    vscode.commands.registerCommand('atrune.browsePacks', async () => {
+      const j = await api.listPacks();
+      if (j.count === 0) {
+        const install = 'Install one…';
+        const pick = await vscode.window.showInformationMessage('No packs installed.', install);
+        if (pick === install) await vscode.commands.executeCommand('atrune.installPack');
+        return;
+      }
+      const items = j.packs.map((p) => ({
+        label: p.name,
+        description: `v${p.version} · ${p.skillCount} skill${p.skillCount === 1 ? '' : 's'}${p.hasMissingReqs ? ` · $(warning) missing: ${p.missing.join(', ')}` : ''}`,
+        detail: p.description ?? undefined,
+        name: p.name,
+      }));
+      const picked = await vscode.window.showQuickPick(items, {
+        placeHolder: 'Installed packs — pick one to uninstall',
+      });
+      if (!picked) return;
+      const confirm = await vscode.window.showWarningMessage(
+        `Uninstall pack "${picked.name}"?`, { modal: true }, 'Uninstall',
+      );
+      if (confirm !== 'Uninstall') return;
+      const r = await api.uninstallPack(picked.name);
+      if (r.ok) vscode.window.showInformationMessage(`Atrune · uninstalled pack ${picked.name}.`);
+      else      vscode.window.showErrorMessage(`Atrune · uninstall failed: ${r.error}`);
+      refreshAll();
+    }),
+    vscode.commands.registerCommand('atrune.installPack', async () => {
+      const method = await vscode.window.showQuickPick([
+        { label: '$(folder) From local path', mode: 'path' as const, description: 'Point at a directory containing pack.json' },
+        { label: '$(git-branch) From git URL',  mode: 'git'  as const, description: 'git clone --depth 1' },
+      ], { placeHolder: 'Install pack from…' });
+      if (!method) return;
+      let args: { fromPath?: string; fromGitUrl?: string };
+      if (method.mode === 'path') {
+        const p = await vscode.window.showInputBox({
+          prompt: 'Absolute path to the pack directory',
+          placeHolder: '/path/to/pack-dir',
+          ignoreFocusOut: true,
+        });
+        if (!p?.trim()) return;
+        args = { fromPath: p.trim() };
+      } else {
+        const url = await vscode.window.showInputBox({
+          prompt: 'Git URL to clone',
+          placeHolder: 'https://github.com/…/pack.git',
+          ignoreFocusOut: true,
+        });
+        if (!url?.trim()) return;
+        args = { fromGitUrl: url.trim() };
+      }
+      const r = await api.installPack(args);
+      if (!r.ok) { vscode.window.showErrorMessage(`Atrune · install failed: ${r.error}`); return; }
+      const suffix = r.hasMissingReqs ? ` · $(warning) missing deps: ${r.missing?.join(', ')}` : '';
+      vscode.window.showInformationMessage(`Atrune · installed pack ${r.name}@${r.version} (${r.skillCount} skills)${suffix}`);
+      refreshAll();
+    }),
+    vscode.commands.registerCommand('atrune.uninstallPack', async () => {
+      await vscode.commands.executeCommand('atrune.browsePacks');
+    }),
     vscode.commands.registerCommand('atrune.reviewTaskDiff', async (arg?: { workItemId?: string; taskTitle?: string }) => {
       let workItemId = arg?.workItemId;
       let taskTitle = arg?.taskTitle;

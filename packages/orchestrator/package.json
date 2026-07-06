@@ -23,7 +23,8 @@
     "./classifyBrief": "./src/classifyBrief.ts",
     "./resume": "./src/resume.ts",
     "./diffReview": "./src/diffReview.ts",
-    "./runtime": "./src/runtime.ts"
+    "./runtime": "./src/runtime.ts",
+    "./packs": "./src/packs.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
