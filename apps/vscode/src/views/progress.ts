@@ -99,20 +99,31 @@ export class ProgressProvider implements vscode.TreeDataProvider<Node> {
         children: list.map((t): Node => {
           const isRunning = t.status === 'in_progress';
           const isFailed  = t.status === 'blocked';
-          // Click → open a terminal running `claude --resume <brief-session-uuid>`
-          // in the project folder. Same UX as if the user typed it themselves.
+          // S8 · deps display. A todo task that still has unfinished deps
+          // shows "blocked-by N" in the description + a lock icon so users
+          // know why dragging it to Active would fail.
+          const deps = t.dependencies ?? [];
+          const unfinishedDeps = deps.filter((d) =>
+            items.find((it) => it.id === d && it.status !== 'done')
+          );
+          const depBlocked = t.status === 'todo' && unfinishedDeps.length > 0;
+          const acceptanceLine = t.acceptance ? `\n\nAcceptance: ${t.acceptance}` : '';
           return {
             label: t.title,
             description: [
               isRunning ? '● live' : '',
               isFailed ? 'failed' : '',
+              depBlocked ? `blocked-by ${unfinishedDeps.length}` : '',
               t.assignedRole,
               t.phase,
+              t.skillHint ? `skill:${t.skillHint}` : '',
             ].filter(Boolean).join(' · '),
-            tooltip: 'Click to open the Claude session for this brief (claude --resume).\n\n' + (t.description ?? t.title),
+            tooltip: 'Click to open the Claude session for this brief (claude --resume).\n\n'
+              + (t.description ?? t.title) + acceptanceLine,
             iconId: isRunning ? 'sync~spin'
               : isFailed     ? 'error'
               : t.status === 'done' ? 'check'
+              : depBlocked   ? 'lock'
               : 'circle-outline',
             command: {
               command: 'atrune.openTaskClaudeTerminal',

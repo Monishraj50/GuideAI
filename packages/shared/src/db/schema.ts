@@ -235,6 +235,16 @@ export const workItems = sqliteTable('work_items', {
   claudeSessionId: text('claude_session_id'),
   githubIssueNumber: integer('github_issue_number'),
   githubIssueUrl: text('github_issue_url'),
+  // S8 · GOAP-style dependencies. JSON array of work_item ids that MUST be in
+  // status='done' before this task can start. Enforced by the Kanban webview +
+  // the /work-items PATCH route.
+  dependencies: text('dependencies').notNull().default('[]'),
+  // S8 · Skill name suggested by the decomposer (matches a skill under
+  // ~/.guideai/skills/). Consumed by pickSkill's front-of-line preference.
+  skillHint: text('skill_hint'),
+  // S8 · Acceptance-test stub — one sentence describing what "done" looks like.
+  // Surfaced on the Kanban card as a subtitle.
+  acceptance: text('acceptance'),
 });
 
 export const workspaceRepos = sqliteTable('workspace_repos', {

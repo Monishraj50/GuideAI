@@ -599,6 +599,10 @@ export interface WorkItem {
   updatedAt: number;
   featureTag?: string | null;
   claudeSessionId?: string | null;
+  // S8 · goal-decomposer output.
+  dependencies?: string[];
+  skillHint?: string | null;
+  acceptance?: string | null;
 }
 
 export interface AgentSuggestion {

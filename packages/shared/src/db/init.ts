@@ -339,6 +339,10 @@ const MIGRATIONS = [
   "ALTER TABLE work_items ADD COLUMN failure_diagnosis TEXT",
   "ALTER TABLE work_items ADD COLUMN feature_tag TEXT",
   "ALTER TABLE work_items ADD COLUMN claude_session_id TEXT",
+  // S8 · decomposer output.
+  "ALTER TABLE work_items ADD COLUMN dependencies TEXT NOT NULL DEFAULT '[]'",
+  "ALTER TABLE work_items ADD COLUMN skill_hint TEXT",
+  "ALTER TABLE work_items ADD COLUMN acceptance TEXT",
 ];
 
 function main() {

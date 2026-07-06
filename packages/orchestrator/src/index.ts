@@ -13,3 +13,4 @@ export * from './contextStore.js';
 export * from './classifyBrief.js';
 export * from './sessions.js';
 export * from './resume.js';
+export * from './decompose.js';

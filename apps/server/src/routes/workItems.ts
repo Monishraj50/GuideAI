@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { getDb, schema } from '@guideai/shared/db';
 import {
   listWorkItems, createWorkItem, updateWorkItem, deleteWorkItem, getWorkItem,
+  canStartWorkItem,
   type WorkStatus, type WorkPriority, type WorkPhase,
 } from '@guideai/orchestrator/wbs';
 
@@ -127,7 +128,19 @@ export function registerWorkItemRoutes(app: FastifyInstance) {
       if (body.assignedRole !== undefined) patch.assignedRole = body.assignedRole;
       if (body.assignedAgentId !== undefined) patch.assignedAgentId = body.assignedAgentId;
       if (body.phase !== undefined && (body.phase === null || PHASES.includes(body.phase as WorkPhase))) patch.phase = body.phase;
-      if (body.status !== undefined && STATUSES.includes(body.status as WorkStatus)) patch.status = body.status;
+      if (body.status !== undefined && STATUSES.includes(body.status as WorkStatus)) {
+        // S8 · dependency gate. A task can only enter in_progress when every
+        // dep is done. Skipping this makes it impossible to drag an item to
+        // Active out of order, both from the Kanban and from raw API calls.
+        if (body.status === 'in_progress' && current.status !== 'in_progress') {
+          const gate = canStartWorkItem(req.params.id);
+          if (!gate.ok) {
+            reply.code(409);
+            return { error: 'blocked-by-deps', blockedBy: gate.blockedBy };
+          }
+        }
+        patch.status = body.status;
+      }
       if (body.priority !== undefined && PRIORITIES.includes(body.priority as WorkPriority)) patch.priority = body.priority;
       if (body.estimateHours !== undefined) patch.estimateHours = body.estimateHours;
       if (body.position !== undefined) patch.position = body.position;

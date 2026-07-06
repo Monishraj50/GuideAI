@@ -43,6 +43,11 @@ export interface WorkItem {
   failureDiagnosis: string | null;
   featureTag: string | null;
   claudeSessionId: string | null;
+  // S8 · GOAP-style deps. Empty array = no preconditions; task can start
+  // whenever its lane opens.
+  dependencies: string[];
+  skillHint: string | null;
+  acceptance: string | null;
 }
 
 const STATUSES: WorkStatus[] = ['todo', 'in_progress', 'blocked', 'done', 'cancelled'];
@@ -61,7 +66,16 @@ function rowToItem(row: any): WorkItem {
     failureDiagnosis: row.failureDiagnosis ?? null,
     featureTag: row.featureTag ?? null,
     claudeSessionId: row.claudeSessionId ?? null,
+    dependencies: parseDepsJson(row.dependencies),
+    skillHint: row.skillHint ?? null,
+    acceptance: row.acceptance ?? null,
   };
+}
+
+function parseDepsJson(s: unknown): string[] {
+  if (!s) return [];
+  try { const v = JSON.parse(String(s)); return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []; }
+  catch { return []; }
 }
 
 function nextPosition(workspaceId: string, status: WorkStatus): number {
@@ -103,6 +117,10 @@ export interface CreateWorkItemInput {
   estimateHours?: number | null;
   source?: 'auto' | 'manual';
   featureTag?: string | null;
+  // S8 · optional GOAP fields.
+  dependencies?: string[];
+  skillHint?: string | null;
+  acceptance?: string | null;
 }
 
 export function createWorkItem(input: CreateWorkItemInput): WorkItem {
@@ -131,8 +149,24 @@ export function createWorkItem(input: CreateWorkItemInput): WorkItem {
     startedAt: status === 'in_progress' ? now : null,
     completedAt: status === 'done' ? now : null,
     featureTag: input.featureTag ?? null,
+    dependencies: JSON.stringify(input.dependencies ?? []),
+    skillHint: input.skillHint ?? null,
+    acceptance: input.acceptance ?? null,
   } as any).run();
   return getWorkItem(id)!;
+}
+
+/** S8 — a task is releasable when every id in its `dependencies` list is
+ *  status=done. Used by the Kanban gate + server-side start check. */
+export function canStartWorkItem(id: string): { ok: boolean; blockedBy: string[] } {
+  const item = getWorkItem(id);
+  if (!item) return { ok: false, blockedBy: [] };
+  if (item.dependencies.length === 0) return { ok: true, blockedBy: [] };
+  const db = getDb();
+  const rows = db.select().from(schema.workItems).all()
+    .filter((r) => item.dependencies.includes(r.id));
+  const blockedBy = rows.filter((r) => r.status !== 'done').map((r) => r.id);
+  return { ok: blockedBy.length === 0, blockedBy };
 }
 
 export interface UpdateWorkItemInput {

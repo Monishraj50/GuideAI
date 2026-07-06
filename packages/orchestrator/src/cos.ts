@@ -17,6 +17,7 @@ import { classifyBrief } from './classifyBrief.js';
 import { runAutoFix, type DirectTaskRun } from './directTask.js';
 import { outcomeFromReview } from './sessions.js';
 import { pickSession } from './resume.js';
+import { decompose, topoSort } from './decompose.js';
 import { writeBriefAnalyses, appendAgentSummary, writeBriefChat } from './projectContext.js';
 import {
   ensureProjectMd, upsertFeature, appendSessionPointer, rebuildProjectTOC,
@@ -258,56 +259,59 @@ export async function submitBrief(args: {
     claudeSessionId,
   } as any).run();
 
-  // Quick-seed work_items so the Project Plan section + the Kanban have
-  // SOMETHING to render before the pipeline finishes. The detailed flow
-  // (planReview) seeds richer items from a critiqued synthesis; this is
-  // the minimal fallback for Quick brief, which skips planning entirely.
-  // Idempotent — skipped if the planReview path already seeded auto items
-  // for this briefId.
+  // S8 · seed work_items from the goal decomposer. Multi-step briefs land in
+  // Backlog as a small GOAP graph (scope → per-slice implement → per-slice
+  // test → docs → verdict). Each row carries dependencies (JSON array of
+  // upstream work_item ids), a skill hint, and an acceptance-test stub.
+  // Idempotent — skipped if the planReview path already seeded auto items.
   try {
     const existing = db.select().from(schema.workItems).all()
       .filter((r) => r.briefId === briefId && r.source === 'auto');
     if (existing.length === 0) {
       const featureTag = slugifyFeatureTag(body);
-      // Pick the most-recently-hired non-CoS role for this workspace, or
-      // null if none yet — the orchestrator still routes to the default
-      // worker but the items show up tagged with whatever's on roster.
-      const rosterRoles = db.select().from(schema.agents).all()
-        .filter((a) => a.workspaceId === workspaceId && a.status !== 'retired' && a.role !== 'chief-of-staff')
-        .map((a) => a.role);
-      const primaryRole = rosterRoles[0] ?? null;
-      // S3: 3-phase seed. Plan absorbs the old research beat; review absorbs
-      // the old verify beat, so the qa-expert row now lives under review.
-      const phases: Array<{ phase: string; title: string; role: string | null }> = [
-        { phase: 'plan',      title: 'Scope + outline the approach', role: primaryRole },
-        { phase: 'implement', title: 'Build the solution',           role: primaryRole },
-        { phase: 'review',    title: 'Review risks + verify success', role: 'risk-officer' },
-      ];
+      const { tasks } = decompose(body);
+      const ordered = topoSort(tasks);
+      const keyToId = new Map<string, string>();
       let pos = 0;
-      for (const p of phases) {
+      for (const t of ordered) {
         const wid = `wi-${randomUUID().slice(0, 8)}`;
+        keyToId.set(t.key, wid);
         db.insert(schema.workItems).values({
           id: wid,
           workspaceId,
           briefId,
           planId: null,
           parentId: null,
-          title: p.title,
-          description: null,
-          assignedRole: p.role,
+          title: t.title,
+          description: t.description,
+          assignedRole: t.role,
           assignedAgentId: null,
-          phase: p.phase,
+          phase: t.phase,
           status: 'todo',
-          priority: 'normal',
+          priority: t.priority,
           position: pos++,
           source: 'auto',
           createdAt: now(),
           updatedAt: now(),
           featureTag,
+          dependencies: JSON.stringify(
+            t.dependencies.map((k) => keyToId.get(k)).filter(Boolean),
+          ),
+          skillHint: t.skillHint,
+          acceptance: t.acceptance,
         } as any).run();
       }
+      appendEvent(workspaceId, {
+        ...base(workspaceId, agentId), kind: 'system', level: 'info',
+        text: `S8 decomposer: ${ordered.length} tasks seeded into Backlog for brief ${briefId}`,
+      } as SystemChunk);
     }
-  } catch {}
+  } catch (err: any) {
+    appendEvent(workspaceId, {
+      ...base(workspaceId, agentId), kind: 'system', level: 'warn',
+      text: `S8 decomposer skipped: ${err?.message ?? err}`,
+    } as SystemChunk);
+  }
 
   // Register the brief's execution mode before any phase awaits a release.
   taskGate.registerBrief(briefId, args.mode ?? 'auto');
