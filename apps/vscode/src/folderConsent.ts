@@ -65,15 +65,24 @@ export function getActiveConsentedFolder(): string | null {
 export function clearActiveFolder(): void { /* no-op */ }
 
 /**
- * Per-window cleanup: if the currently-open folder has NO `.atrune/`
- * directory, wipe every Claude session jsonl tied to that folder so
- * deleting `.atrune` truly clears all logs/cache. Called on activation.
- * Returns a summary the caller can log.
+ * Wipe every byte on the machine that could surface stale content for a
+ * folder whose `.atrune/` no longer exists. Two invocation modes:
+ *
+ *   - `reapOrphanedClaudeSessions()` (no arg) — the activation path. Uses
+ *     the currently-open VS Code folder; no-ops if `.atrune/` still exists.
+ *   - `reapOrphanedClaudeSessions({ folder })` — mid-session path. Runs
+ *     unconditionally against the given folder (caller has already decided
+ *     `.atrune/` is gone). Used from `checkConsentAndSetContext` when
+ *     consent transitions true → false, so `rm -rf .atrune/` on a live
+ *     project immediately clears panels + global-home leftovers.
  */
-export function reapOrphanedClaudeSessions(): { reaped: number; folder: string | null } {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
+export function reapOrphanedClaudeSessions(opts?: { folder?: string }): { reaped: number; folder: string | null } {
+  const explicit = opts?.folder;
+  const folder = explicit ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
   if (!folder) return { reaped: 0, folder: null };
-  if (fs.existsSync(path.join(folder, '.atrune'))) return { reaped: 0, folder };  // still alive
+  // Only guard on `.atrune` existing when the CALLER didn't tell us to reap.
+  // Explicit callers already checked; activation callers rely on this guard.
+  if (!explicit && fs.existsSync(path.join(folder, '.atrune'))) return { reaped: 0, folder };
 
   // .atrune is gone — wipe every byte that could leak back into the UI.
   let reaped = 0;

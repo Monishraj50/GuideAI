@@ -31,6 +31,15 @@ interface KanbanState {
 }
 
 let panel: vscode.WebviewPanel | undefined;
+
+/** Close the Kanban tab if it's open. Called on consent loss so the panel
+ *  doesn't keep polling for the just-deleted project. */
+export function closeKanbanIfOpen(): boolean {
+  if (!panel) return false;
+  try { panel.dispose(); } catch {}
+  panel = undefined;
+  return true;
+}
 let pollTimer: NodeJS.Timeout | undefined;
 
 const panels: Map<string, vscode.WebviewPanel> = new Map(); // briefId → panel

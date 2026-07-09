@@ -22,13 +22,13 @@ import { SessionsProvider } from './views/sessions';
 import { StartProvider } from './views/start';
 import { FeaturesProvider } from './views/features';
 import { SkillsAndPacksProvider } from './views/skillsAndPacks';
-import { openDiffReview } from './webviews/diffReview';
+import { openDiffReview, closeDiffReviewIfOpen } from './webviews/diffReview';
 import { openApprovalDiff } from './approvalDiff';
 import { PermissionsStream } from './permissionsStream';
 import { openRulesEditor } from './webviews/rulesEditor';
 import { openMissionControl } from './webviews/missionControl';
-import { openBriefComposer } from './webviews/briefComposer';
-import { openKanban } from './webviews/kanban';
+import { openBriefComposer, closeBriefComposerIfOpen } from './webviews/briefComposer';
+import { openKanban, closeKanbanIfOpen } from './webviews/kanban';
 import { openNewProject } from './webviews/newProject';
 import { openLiveClaudeSession } from './liveClaudeTerminal';
 import { openLiveSessionTail } from './sessionTail';
@@ -116,8 +116,19 @@ export async function activate(ctx: vscode.ExtensionContext) {
   // windows hitting the same `:4000` see DIFFERENT data. Done by patching
   // globalThis.fetch once at activation so api.ts, kanban.ts, sessionTail.ts,
   // liveClaudeTerminal.ts etc. all pick it up without per-file edits.
+  //
+  // CONSENT GATE: the header is ONLY attached when the current folder has
+  // already been consented to (i.e. `<folder>/.atrune/.consent.json` exists
+  // on disk). Without that proof the header is dropped, which means the
+  // server never receives a signal to initialise .atrune/ in a folder the
+  // user hasn't opted into. Belt to the server-side gate.
   if (!(globalThis as any).__atruneFetchPatched) {
     const _origFetch = globalThis.fetch.bind(globalThis);
+    // Late-required so we don't drag folderConsent into the module init graph.
+    const consentFn = () => {
+      try { return (require('./folderConsent') as typeof import('./folderConsent')).hasConsent; }
+      catch { return null; }
+    };
     (globalThis as any).fetch = (input: any, init?: any) => {
       try {
         const u = typeof input === 'string'
@@ -125,7 +136,8 @@ export async function activate(ctx: vscode.ExtensionContext) {
           : (input?.url ?? String(input));
         if (typeof u === 'string' && /^https?:\/\/(localhost|127\.0\.0\.1)\b/i.test(u)) {
           const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-          if (folder) {
+          const hasConsent = consentFn();
+          if (folder && hasConsent && hasConsent(folder)) {
             const headers = new Headers(init?.headers ?? {});
             headers.set('X-Atrune-Workspace', folder);
             return _origFetch(input, { ...(init ?? {}), headers });
@@ -193,6 +205,11 @@ export async function activate(ctx: vscode.ExtensionContext) {
   // (its env doesn't update on tsx-watch reload). In that case we dispose
   // and respawn so the server lines up with the truth on disk.
   let lastConsentState: boolean | null = null;
+  // Remember the folder that HAD consent last tick so a true→false transition
+  // can hand `reapOrphanedClaudeSessions` the right path even after
+  // `.atrune/.consent.json` has been deleted (getActiveConsentedFolder is
+  // already returning null by the time we get here).
+  let lastConsentedFolder: string | null = null;
   async function checkConsentAndSetContext(): Promise<boolean> {
     // Prefer the persisted "active" folder so the consent state stays true
     // even when the user picked a folder DIFFERENT from the open one.
@@ -214,8 +231,35 @@ export async function activate(ctx: vscode.ExtensionContext) {
     }
 
     const transition = lastConsentState !== null && lastConsentState !== consented;
+    const lostConsent = lastConsentState === true && consented === false;
+    const gainedConsent = lastConsentState === false && consented === true;
     if (transition || serverMismatch) {
       try {
+        // On ANY consent transition, force a clean slate:
+        //   1. On LOSS (true→false): reap the just-lost folder's global-home
+        //      leftovers so `~/.guideai/workspaces/*` doesn't re-surface data.
+        //   2. On BOTH LOSS + GAIN: close open Kanban / brief / diff panels
+        //      (they may still be polling the OLD server's state).
+        //   3. On BOTH LOSS + GAIN: null out activeWorkspaceId BEFORE the
+        //      refresh so sidebar views hit their "no active project" branch
+        //      instead of one tick of ghost data. Belt-and-suspenders for the
+        //      gain path — sometimes a stale id survives the loss branch if
+        //      the mismatch probe fires before the transition is detected.
+        if (lostConsent && lastConsentedFolder) {
+          try {
+            const { reapOrphanedClaudeSessions } = await import('./folderConsent');
+            const r = reapOrphanedClaudeSessions({ folder: lastConsentedFolder });
+            if (r.reaped > 0) server?.log(`consent lost on ${lastConsentedFolder} — reaped ${r.reaped} stale entries`);
+          } catch (err: any) {
+            server?.log(`mid-session reap failed: ${err?.message ?? err}`);
+          }
+        }
+        if (lostConsent || gainedConsent) {
+          try { closeKanbanIfOpen(); } catch {}
+          try { closeBriefComposerIfOpen(); } catch {}
+          try { closeDiffReviewIfOpen(); } catch {}
+          activeWorkspaceId = null;
+        }
         await server?.dispose();
         server = new AtruneServer();
         await server.ensureRunning();
@@ -224,6 +268,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
       } catch {}
     }
     lastConsentState = consented;
+    if (consented) lastConsentedFolder = active;
     return consented;
   }
   async function refreshActiveWorkspace() {

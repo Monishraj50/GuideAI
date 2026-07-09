@@ -1,0 +1,318 @@
+# End-to-end walkthrough — build a URL shortener
+
+A single continuous demo that starts from an empty folder and walks through the flow a real user would: **create a project → set its requirements → refine the auto-plan → dispatch → watch it execute → follow up with small fixes and new features → reset when needed**. Every v2 feature is exercised along the way.
+
+**Project**: a tiny URL shortener. HTTP server with three routes: `POST /shorten`, `GET /:code`, `GET /list`. In-memory Map, no DB. Small enough to fit under $2 on Sonnet.
+
+**Time budget**: ~45 min real Claude, ~10 min on mock adapter.
+
+---
+
+### Turn 0 · Start fresh · empty folder, no `.atrune/`
+
+```bash
+mkdir ~/Desktop/shorty && cd ~/Desktop/shorty
+git init
+echo "node_modules" > .gitignore
+echo ".atrune" >> .gitignore
+code .
+```
+
+In VS Code, sidebar shows the Atrune Welcome view: *"Step 1 — Allow project storage"*.
+
+- ✓ **No `.atrune/` has appeared yet.** The consent gate refuses to write anything until you click Allow. Verify with `ls -la ~/Desktop/shorty` — you should see only `.git`, `.gitignore`, nothing atrune-shaped.
+
+Click **"Allow storage in this folder"**:
+- `.atrune/.consent.json` appears. That's the ONLY file the extension has created so far.
+- Welcome view moves to Step 2.
+
+Click **"Connect a subscription"** → Claude. Complete OAuth.
+- `.atrune/.subscription-authorized.json` appears.
+- Status bar reads `● GuideAI · ↓0 ↑0 · $0.00 · —`.
+- Sidebar tree views (Active Work, Progress, Team, Features, etc.) become visible.
+
+**✓ Features proved: consent gate + Welcome flow (S13 + this session's fixes).**
+
+---
+
+### Turn 1 · Create the project · fill in requirements
+
+The Active Work sidebar reads *"No project bound to this folder — Create one →"*. Click it (or palette → **Atrune: New project**).
+
+The **New Project** webview opens. Fill it in like this:
+
+| Field | Value |
+|---|---|
+| **Name** | `shorty` |
+| **Goal** | `A tiny URL shortener HTTP server. POST /shorten returns a 6-char code, GET /:code redirects, GET /list dumps everything. In-memory only.` |
+| **Folder** | *(auto-filled with the open folder)* |
+| **Success criteria** *(one chip at a time)* | `curl -X POST -d '{"url":"https://claude.ai"}' :4100/shorten returns a code` |
+| | `curl :4100/<code> returns a 302 to claude.ai` |
+| | `curl :4100/list returns every stored pair as JSON` |
+| **Constraints** *(one chip at a time)* | `Node built-ins only — no npm deps` |
+| | `In-memory Map, no persistence, no DB` |
+| | `Server listens on PORT env (default 4100)` |
+| **Budget** | `2.00 USD` |
+| **Planning mode** | **Assisted** *(the default — auto-generates a plan you can edit before dispatch)* |
+| **Hiring mode** | **Manual** *(you decide which agents get hired)* |
+
+Click **Create project**.
+
+**What happens under the hood**:
+- Workspace row created in the DB with a stable `id` derived from the name.
+- Intake fields (goal + criteria + constraints + budget) persisted as the workspace's `project_intake` row.
+- No brief dispatched yet — because you picked **Assisted**, the next screen is the plan editor.
+
+**✓ Features proved: intake capture (name / goal / criteria / constraints / budget) + workspace creation.**
+
+---
+
+### Turn 2 · Refine the auto-generated plan
+
+The webview now shows a **Plan editor** — the extension has already broken your goal into a numbered plan (produced by the planner agent from your intake fields). Something like:
+
+```
+1. Scope the /shorten route: input schema, code generator, storage init.
+2. Scope the /:code route: lookup + 302 redirect + 404 for unknown codes.
+3. Scope the /list route: JSON dump of the Map contents.
+4. Implement each route in apps/shorty/src/server.ts using only Node built-ins.
+5. Write supertest-style tests in apps/shorty/tests/server.test.ts covering each route.
+6. Update README.md with a "Getting started" section (curl examples).
+7. Review: correctness, security (open redirect risk?), clarity.
+```
+
+**Refine before dispatch**:
+- Edit step 4 to add: *"…and use crypto.randomBytes(4).toString('hex').slice(0, 6) for code generation to avoid collisions"*.
+- Add a new step 8: *"Add a `Cache-Control: no-store` header on /:code so short URLs don't get sticky in browsers"*.
+- Delete any step that feels redundant.
+
+- ✓ **The plan lives in the intake row (edited copy)** — dispatch will pass your edits, not the auto-generated version.
+
+Click **Dispatch plan**.
+
+**✓ Features proved: assisted plan generation + user-editable refinement + dispatch pipeline seeded with the refined plan.**
+
+---
+
+### Turn 3 · Watch it execute (~5-10 min, ~$0.30-1.00)
+
+The Kanban tab opens with three columns: **Plan · Implement · Review**.
+
+Sequence to watch:
+
+1. **S8 decomposer** seeds ~10-14 work items into Backlog: `Scope`, `Implement /shorten`, `Implement /:code`, `Implement /list`, `Test /shorten`, `Test /:code`, `Test /list`, `Document usage`, `Review + verdict`. Each carries role hint (`planner` / `coder` / `tester` / `doc-writer` / `reviewer`), skill hint (`add-feature` / `add-test` / `write-docs`), and an acceptance stub.
+2. Live chat feed shows: `Selected skill: add-feature (_seed) · score 12 · matched build, endpoint, storage`.
+3. Live chat feed shows: `session <8chars>… first turn tagged [shorty · user]`.
+4. Cards march **Plan → Implement → Review** as the pipeline runs.
+5. Status bar ticks upward: `$(sync~spin) GuideAI · ↓12k ↑3k · $0.42 · sonnet`.
+6. **Dependency gate**: try to drag `Implement /shorten` to Active *before* Scope is Done. Server refuses: *"blocked by 1 upstream task"*. When Scope goes Done, retry succeeds.
+7. Each phase writes an artifact: `atrune/briefs/<briefId>/plan.md`, `implement.md`, `review.md`.
+8. Final state: `atrune/PROJECT.md` shows the feature row `shorty · shipped`. `atrune/features/shorty/FEATURE.md` has a `## Sessions` row with outcome `✓ shipped`.
+
+**✓ Features proved: S3 3-phase pipeline · S5 skill-first executor · S6 first-turn session tag + FEATURE.md logging · S8 decomposer + dep enforcement.**
+
+---
+
+### Turn 4 · Review the diff hunk-by-hunk before it stays on disk (~2 min)
+
+Palette → **Atrune: Review task diff (hunk-by-hunk)…** → pick the `Implement /shorten` task.
+
+- Every changed file shown as green/red hunks with checkboxes.
+- **Uncheck one hunk** you don't like — say the agent added a `Logger` helper class you'd rather do inline.
+- Reviewer note: *"Inline the 3-line log statement; a Logger class is overkill for this file"*.
+- Click **Apply selection**.
+
+Expect:
+- Accepted hunks stay on disk.
+- Rejected hunk reverts to the base ref (your `.atrune/db.sqlite` remembered the git HEAD at task start).
+- **Follow-up review task** appears on the Kanban: *"Follow-up: address rejected hunks in apps/shorty/src/server.ts"* — your note is in its description.
+- Session outcome flips to `⚠ partial` in the FEATURE.md sessions row.
+
+**✓ Features proved: S9 hunk-picker webview + follow-up work item spawn + outcome tag flip.**
+
+---
+
+### Turn 5 · Prove secret-scan blocks a bad diff (~30s)
+
+Manually plant a secret in one of the touched files. Open `apps/shorty/src/server.ts`, add near the top:
+
+```typescript
+const AWS_KEY = "AKIA1234567890ABCDEF"; // pretend we forgot this
+```
+
+Save.
+
+Dispatch a small brief:
+```
+[quick] add a GET /health route returning { ok: true } to apps/shorty/src/server.ts
+```
+
+Wait for it to finish. Then palette → **Atrune: Review task diff…** → pick the health task.
+
+- Diff webview opens. Try to Apply with all hunks checked.
+- **Server rejects**: `409 pre-diff-hook-blocked`. Toast: *"secret-scan blocked 1 hit(s): aws-access-key@apps/shorty/src/server.ts"*.
+- The webview stays open. Uncheck the hunk containing the fake key → Apply again → succeeds.
+
+Cleanup: remove the fake key from your file before continuing.
+
+**✓ Features proved: S11 pre-diff:secret-scan hook + `[quick]` tag override.**
+
+---
+
+### Turn 6 · Small fix · dispatch a quick brief (~15s)
+
+You noticed the /list route returns items in insertion order but you'd rather see newest-first. One line to change — Quick lane.
+
+Palette → **Atrune: Quick task** → paste:
+```
+tweak /list in apps/shorty/src/server.ts to return newest-first
+```
+
+- Server logs: `quick-lane: single file reference (apps/shorty/src/server.ts) → single-agent run`.
+- Because this touches the same feature as the main brief, **S7 agent-driven resume** fires. Event log shows: `S7 resume: reusing session <uuid>… · score 8 · matched list,newest,server`.
+- Warm prompt cache → the agent knows the existing code without re-priming. Status bar tokens tick up much less than a cold call.
+- After ~15s, an "Atrune · quick task" markdown tab opens summarising the change.
+- Run your own test — a manual `curl :4100/list` should show newest-first now.
+
+**✓ Features proved: S4 quick lane + S7 agent-driven session resume + prompt cache warmth.**
+
+---
+
+### Turn 7 · Add a feature · dispatch a new heavy brief
+
+Now say you want to add per-code click tracking. That's multi-file (server + tests + docs) → Heavy lane.
+
+Palette → **Atrune: New brief** → paste:
+```
+Add click tracking to the shorty URL shortener.
+
+- Track a hit count per code, incremented each GET /:code.
+- Expose the count on GET /list (add a `hits` field per row).
+- Add a new GET /stats route returning { totalHits, uniqueCodes, top: [{code, hits}]×5 }.
+- Cover with tests in apps/shorty/tests/server.test.ts.
+- Update README's Getting started with a /stats example.
+
+Constraints: still Node built-ins only, still in-memory.
+```
+
+Expect:
+- Kanban opens for the new brief.
+- Decomposer seeds fewer items this time (~6-8) because it's an extension, not a from-scratch build.
+- Live chat feed: `S7 resume: reusing session <uuid>…` — same feature, warm session.
+- `atrune/features/shorty/FEATURE.md` gains a NEW session row after this brief finishes — same feature, different session UUID.
+- Compare the token counts in the two session rows: the second is meaningfully lower per turn thanks to cache warmth.
+
+Review that diff too (Turn 4 pattern) before continuing.
+
+**✓ Features proved: iterative brief on the same feature + session accumulation in FEATURE.md + cache-warmth savings visible in per-session tokens.**
+
+---
+
+### Turn 8 · Extend with a Pack (~1 min)
+
+The seed skills cover the basics. For a specialty like OpenAPI generation you want a Pack.
+
+```bash
+mkdir -p /tmp/api-docs-pack/skills
+cat > /tmp/api-docs-pack/pack.json <<'EOF'
+{ "name": "api-docs-pack", "version": "1.0.0",
+  "description": "OpenAPI-flavored docs skills.", "tags": ["docs","openapi"] }
+EOF
+cat > /tmp/api-docs-pack/skills/write-openapi.md <<'EOF'
+---
+name: write-openapi
+description: Write an OpenAPI 3.1 spec for HTTP routes.
+appliesTo: implement, review
+keywords: openapi, swagger, api spec, routes, endpoints
+---
+Runbook:
+1. Enumerate every HTTP route in the codebase.
+2. For each, write { path, method, summary, request schema, response schema, error codes }.
+3. Output a valid OpenAPI 3.1 YAML at docs/openapi.yaml.
+4. Cross-reference each schema against the actual response shapes the routes produce.
+EOF
+```
+
+Install it: palette → **Atrune: Install a pack…** → From local path → `/tmp/api-docs-pack` → Enter.
+- Toast: *"installed pack api-docs-pack@1.0.0 (1 skill)"*.
+- Sidebar 🛠 **Skills & Packs** now shows the pack + `write-openapi` skill under `pack: api-docs-pack`.
+
+Fire it:
+```
+write an OpenAPI spec for the shorty routes
+```
+
+- Event log: `Selected skill: write-openapi (_pack:api-docs-pack) · score 15 · matched openapi,routes`.
+- Agent follows the pack's runbook → writes `docs/openapi.yaml`.
+
+Uninstall: palette → **Atrune: Browse installed packs…** → pick `api-docs-pack` → confirm.
+- Pack disappears from the sidebar; `write-openapi` is no longer in the Skills group.
+
+**✓ Features proved: S12 pack install + priority ranking (_pack > _seed) + provenance in event log + uninstall.**
+
+---
+
+### Turn 9 · Reset with `rm -rf .atrune/` (~10s + observation)
+
+Prove the consent-loss cleanup works when you want a fresh start.
+
+State check before:
+- Sidebar shows the `shorty` feature with N sessions.
+- `~/.guideai/workspaces/<oldId>/` exists.
+- `~/.claude/projects/<encoded-cwd>/*.jsonl` files exist.
+
+Delete `.atrune/`:
+```bash
+rm -rf ~/Desktop/shorty/.atrune
+```
+
+Wait ~5 seconds (extension poll interval). Expect:
+- Sidebar tree views empty out. Active Work shows *"No project bound to this folder"*.
+- Kanban / Diff-Review / Brief-Composer tabs **auto-close**.
+- Status bar returns to `connecting…` briefly, then the empty state.
+- `~/.guideai/workspaces/<oldId>/` is gone (reaped).
+- `~/.claude/projects/<encoded-cwd>/` is gone (reaped).
+
+Re-consent:
+- Welcome view returns. Click **"Allow storage in this folder"**.
+- Fresh `.atrune/.consent.json`. Sidebar comes back — but every data view now shows the empty "no data yet" state. **Zero ghost items** from before the delete.
+
+**✓ Features proved: consent-loss cleanup + panel auto-close + global-home reap + `activeWorkspaceId = null` on transition (this session's fixes).**
+
+---
+
+### Turn 10 · Status bar HUD across the whole flow
+
+Every turn above quietly proves the status bar format at rest and in motion:
+
+- **Idle**: `● GuideAI · ↓Nk ↑Nk · $X.XX · —`
+- **Brief running**: `$(sync~spin) GuideAI · ↓Nk ↑Nk · $X.XX · sonnet`
+- **Pending approval**: yellow background, `$(warning)` dot, `· 1 pending` slot.
+
+Hover the status bar for a tooltip breakdown (agents, briefs, spend, pending approvals).
+
+**✓ Features proved: S13 status bar HUD format + state transitions.**
+
+---
+
+### Feature-to-turn map
+
+| Feature | Plan section | Turn |
+|---|---|---|
+| Consent gate + Welcome flow | S13 + fixes this session | 0, 9 |
+| Project intake (name / goal / criteria / constraints / budget) | S13 | 1 |
+| Assisted planning + refine before dispatch | S13 | 2 |
+| 3-phase pipeline | S3 | 3 |
+| Skill-first executor | S5 | 3, 6, 7, 8 |
+| Session IDs in FEATURE.md | S6 | 3, 6, 7 |
+| Goal decomposer + deps | S8 | 3, 7 |
+| Diff review + follow-up spawn | S9 | 4 |
+| Hooks (secret-scan) | S11 | 5 |
+| Quick lane | S4 | 5, 6 |
+| Session resume (manual + agent-driven) | S7 | 6, 7 |
+| Pack install / fire / uninstall | S12 | 8 |
+| Consent-loss cleanup | fixes this session | 9 |
+| Status bar HUD | S13 | 10 (implicit throughout) |
+
+Every feature shipped in the v2 plan is exercised at least once. If any turn fails to match its ✓ marker, the plan-section column tells you which code area to debug.
+

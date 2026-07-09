@@ -27,6 +27,15 @@ import { confirmCost, forecastBrief } from '../costPreview';
 
 let panel: vscode.WebviewPanel | undefined;
 
+/** Close the brief-composer tab if it's open. Called on consent loss so a
+ *  user mid-typing on a deleted project doesn't submit into thin air. */
+export function closeBriefComposerIfOpen(): boolean {
+  if (!panel) return false;
+  try { panel.dispose(); } catch {}
+  panel = undefined;
+  return true;
+}
+
 export async function openBriefComposer(
   ctx: vscode.ExtensionContext,
   api: AtruneApi,

@@ -75,6 +75,11 @@ export class ActiveWorkProvider implements vscode.TreeDataProvider<Node> {
     }
 
     // Filter workspaces by the open folder, if any.
+    // BEHAVIOR CHANGE: when a cwd is set and NO workspace binds to it, we
+    // used to fall back to "show all" so the sidebar isn't blank. That was
+    // misleading — after `rm -rf .atrune/` + re-consent, the user would see
+    // stale workspaces from other folders and think their data survived.
+    // Now: no binding → "no project bound to this folder yet, create one".
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
     let matching: WorkspaceSummary[] = all;
     if (cwd) {
@@ -85,9 +90,18 @@ export class ActiveWorkProvider implements vscode.TreeDataProvider<Node> {
         return { ws: w, matches };
       }));
       const filtered = annotated.filter((a) => a.matches).map((a) => a.ws);
-      // If at least one workspace has a folder binding to here, show only
-      // those. Otherwise (nothing bound), show all so the user isn't blank.
-      matching = filtered.length > 0 ? filtered : all;
+      if (filtered.length === 0) {
+        return [
+          { label: 'No project bound to this folder', iconId: 'info' },
+          {
+            label: 'Create one →',
+            description: 'open the new-project form',
+            iconId: 'add',
+            command: { command: 'atrune.newProject', title: 'Create a new project' },
+          },
+        ];
+      }
+      matching = filtered;
     }
 
     // For each workspace, list its briefs (top 5, most recent).

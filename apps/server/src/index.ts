@@ -40,16 +40,31 @@ const app = Fastify({ logger: true });
 // Per-request workspace routing. Each request from a VS Code window
 // carries `X-Atrune-Workspace: <folder-path>` so `getDb()` returns that
 // folder's `<folder>/.atrune/db.sqlite` (per-window isolation without
-// running a server per window). If the header is missing the request
-// falls back to the env-default DB.
+// running a server per window).
+//
+// CONSENT GATE: we ONLY touch a folder if `<folder>/.atrune/.consent.json`
+// already exists (proof the user clicked Allow in the extension). Without
+// that proof we ignore the header and let the request fall through — the
+// server will never autonomously create `.atrune/` in a folder the user
+// hasn't opted into. Any missing-consent header gets logged at most once
+// per (folder, process) so debugging is possible without spamming.
+const _headerWarnedFolders = new Set<string>();
 app.addHook('onRequest', async (req) => {
   const hdr = req.headers['x-atrune-workspace'];
   const folder = typeof hdr === 'string' ? hdr.trim() : '';
   if (!folder) return;
+  const consentMarker = path.join(folder, '.atrune', '.consent.json');
+  if (!fs.existsSync(consentMarker)) {
+    if (!_headerWarnedFolders.has(folder)) {
+      _headerWarnedFolders.add(folder);
+      req.log.warn({ folder }, 'dropping X-Atrune-Workspace header — no .atrune/.consent.json (user has not clicked Allow)');
+    }
+    return;
+  }
   try {
     const dbPath = path.join(folder, '.atrune', 'db.sqlite');
     if (!fs.existsSync(dbPath)) {
-      // First touch for this folder — initialise schema. Cheap and idempotent.
+      // Consent granted but DB missing — safe to init now.
       initDbAt(dbPath);
     }
     setWorkspaceContext(folder);

@@ -27,6 +27,15 @@ interface HunkFile {
 
 let panel: vscode.WebviewPanel | undefined;
 
+/** Close the diff-review tab if it's open. Called on consent loss so a
+ *  half-selected hunk approval doesn't apply against a missing baseGitRef. */
+export function closeDiffReviewIfOpen(): boolean {
+  if (!panel) return false;
+  try { panel.dispose(); } catch {}
+  panel = undefined;
+  return true;
+}
+
 export async function openDiffReview(args: {
   api: AtruneApi;
   workItemId: string;
