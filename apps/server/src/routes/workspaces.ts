@@ -186,10 +186,16 @@ export function registerWorkspaceRoutes(app: FastifyInstance) {
     const rowFor = (slug: string) =>
       db.select().from(schema.workspaces).where(eq(schema.workspaces.id, slug)).all()[0];
 
-    // Hard-collision: an ACTIVE workspace owns this slug.
+    // Hard-collision: an ACTIVE workspace owns this slug. Surface its id so
+    // the extension can offer "Open existing" instead of just rejecting.
     const taken = rowFor(base);
     if (taken && taken.autonomyMode !== 'archived') {
-      reply.code(409); return { error: `workspace "${base}" already exists` };
+      reply.code(409);
+      return {
+        error: `workspace "${base}" already exists`,
+        existingId: taken.id,
+        existingName: taken.name,
+      };
     }
 
     // Walk a suffix counter until we find an unused (or only-archived-elsewhere) slug.

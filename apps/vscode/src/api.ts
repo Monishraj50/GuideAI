@@ -19,7 +19,7 @@ export interface WorkspaceSummary {
 export interface PlanResp {
   workspace: { id: string; name: string; autonomyMode: string };
   agents: { active: number; total: number };
-  pendingApprovals: { id: string; tool: string; argsJson: string; decidedAt: number }[];
+  pendingApprovals: { id: string; tool: string; argsJson: string; decidedAt: number; briefId?: string | null }[];
   briefs: {
     recent: {
       id: string; body: string; status: string; createdAt: number;
@@ -229,6 +229,31 @@ export class AtruneApi {
     } catch (err: any) { return { ok: false, error: String(err?.message ?? err) }; }
   }
 
+  /** Plan editor · list briefs currently paused at PLAN_APPROVED_GATE. */
+  async listPendingPlanReviews(): Promise<Array<{
+    id: string; workspaceId: string; body: string;
+    status: string; planGateState: string; model: string;
+  }>> {
+    try {
+      const r = await fetch(`${base()}/api/briefs/pending-plan-review`);
+      if (!r.ok) return [];
+      const j = await r.json() as any;
+      return Array.isArray(j?.briefs) ? j.briefs : [];
+    } catch { return []; }
+  }
+
+  /** Plan editor · fetch the plan.md body + brief context for the editor. */
+  async getBriefPlan(briefId: string): Promise<{
+    briefId: string; workspaceId: string; body: string;
+    status: string; planGateState: string | null; model: string; planBody: string;
+  } | null> {
+    try {
+      const r = await fetch(`${base()}/api/briefs/${briefId}/plan`);
+      if (!r.ok) return null;
+      return await r.json() as any;
+    } catch { return null; }
+  }
+
   /** S9 · fetch hunk-level diff for a completed work_item vs its baseGitRef. */
   async getWorkItemDiff(workItemId: string): Promise<{
     files: Array<{
@@ -306,8 +331,11 @@ export class AtruneApi {
     targetFolder?: string;
     taggedAgents?: string[];
     budget?: { mode: 'tokens' | 'currency'; amount: number };
-    /** 'auto' (default) runs end-to-end. 'manual' awaits per-phase release. */
-    mode?: 'auto' | 'manual';
+    /** 'auto' runs end-to-end. 'manual' awaits per-phase release.
+     *  'assisted' pauses after Phase 1 (Plan) for user Approve/Regenerate/Reject. */
+    mode?: 'auto' | 'manual' | 'assisted';
+    /** Model tier for Phase 1 (Plan). Overrides router default. */
+    preferredModel?: string;
   }): Promise<{
     ok: boolean; briefId?: string; error?: string;
     /** S4: server routed this brief through the quick-task lane instead of
@@ -327,6 +355,7 @@ export class AtruneApi {
           taggedAgents: args.taggedAgents,
           budget: args.budget,
           mode: args.mode,
+          preferredModel: args.preferredModel,
         }),
       });
       const j = await r.json() as any;
@@ -445,14 +474,28 @@ export class AtruneApi {
     } catch { return []; }
   }
 
-  async createWorkspace(name: string, targetFolder?: string): Promise<{ ok: boolean; id?: string; error?: string }> {
+  async createWorkspace(name: string, targetFolder?: string): Promise<{
+    ok: boolean; id?: string; error?: string;
+    /** Populated on 409 name-collision — the extension can offer "Open existing"
+     *  instead of just rejecting. */
+    existingId?: string; existingName?: string;
+    conflict?: boolean;
+  }> {
     try {
       const r = await fetch(`${base()}/api/workspaces`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ name, targetFolder }),
       });
       const j = await r.json() as any;
-      if (!r.ok) return { ok: false, error: j?.error ?? `http ${r.status}` };
+      if (!r.ok) {
+        return {
+          ok: false,
+          error: j?.error ?? `http ${r.status}`,
+          existingId: j?.existingId,
+          existingName: j?.existingName,
+          conflict: r.status === 409 && !!j?.existingId,
+        };
+      }
       return { ok: true, id: j.id };
     } catch (err: any) {
       return { ok: false, error: String(err?.message ?? err) };

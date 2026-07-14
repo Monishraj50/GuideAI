@@ -36,8 +36,14 @@ export interface Policies {
   rules: Rule[];
 }
 
+// Default = 'auto' so a first-time user's pipeline can actually write files
+// without them having to click through 20 approvals. The hard-deny list below
+// still applies in every mode (rm -rf, --no-verify, force-push, shutdown) so
+// 'auto' is NOT "trust everything" — it's "trust the built-in denylist".
+// Users who want to review every tool call can flip to 'manual' via the
+// sidebar's Set-permission-mode picker.
 const DEFAULT_POLICIES: Policies = {
-  mode: 'manual',
+  mode: 'auto',
   defaultAction: 'ask',
   rules: [
     {
@@ -98,8 +104,22 @@ export function loadPolicies(): Policies {
   try {
     const raw = fs.readFileSync(paths.policiesJson, 'utf8');
     const p = JSON.parse(raw) as Partial<Policies>;
-    const mode: PermissionMode =
-      p.mode === 'auto' || p.mode === 'manual' || p.mode === 'custom' ? p.mode : 'manual';
+    const rawMode = p.mode;
+    const isValid = rawMode === 'auto' || rawMode === 'manual' || rawMode === 'custom';
+    const mode: PermissionMode = isValid ? rawMode : 'auto';
+    // Self-heal: if the file had an invalid / null / missing mode field, write
+    // the normalized value back so subsequent reads (from the hook script, from
+    // other tools) don't have to re-normalize + the file stays truthful.
+    if (!isValid) {
+      try {
+        const healed = {
+          mode,
+          defaultAction: p.defaultAction ?? 'ask',
+          rules: Array.isArray(p.rules) ? p.rules : [],
+        };
+        fs.writeFileSync(paths.policiesJson, JSON.stringify(healed, null, 2));
+      } catch {}
+    }
     return {
       mode,
       defaultAction: p.defaultAction ?? 'ask',

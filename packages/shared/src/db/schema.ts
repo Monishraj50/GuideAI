@@ -66,7 +66,7 @@ export const briefs = sqliteTable('briefs', {
   id: text('id').primaryKey(),
   workspaceId: text('workspace_id').notNull().references(() => workspaces.id),
   body: text('body').notNull(),
-  status: text('status').notNull().default('pending'),  // pending|active|done|cancelled
+  status: text('status').notNull().default('pending'),  // pending|active|done|cancelled|plan-review-pending
   createdAt: integer('created_at').notNull(),
   // One Claude session per brief. Generated as a UUID at submitBrief() and
   // passed to every Claude CLI invocation via --session-id, so all 5 phases
@@ -74,6 +74,14 @@ export const briefs = sqliteTable('briefs', {
   //   claude --resume <claude_session_id>
   // to pick up where the brief left off.
   claudeSessionId: text('claude_session_id'),
+  // Plan-editor feature. When the brief is dispatched in `assisted` mode, the
+  // pipeline pauses after Phase 1 (Plan) until the user Approves via the Plan
+  // editor webview. `pending` = waiting on user, `approved` = released,
+  // `rejected` = brief cancelled by reviewer. NULL for auto/manual briefs.
+  planGateState: text('plan_gate_state'),
+  // Model tier chosen for the Plan phase — writable from the Plan editor's
+  // Regenerate action so users can escalate to Opus for a harder plan.
+  preferredModel: text('preferred_model'),
 });
 
 export const tasks = sqliteTable('tasks', {
@@ -159,6 +167,10 @@ export const projectIntakes = sqliteTable('project_intakes', {
   locked: integer('locked').notNull().default(0),
   lockedAt: integer('locked_at'),
   discoveryContext: text('discovery_context').notNull().default(''),
+  // Plan-editor feature. Which model tier the pipeline uses for Phase 1
+  // (Plan) by default. Can be overridden per-Regenerate in the Plan editor.
+  // Value is a router tier alias (haiku|sonnet|opus).
+  preferredModel: text('preferred_model').notNull().default('sonnet'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
 });

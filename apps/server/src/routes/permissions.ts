@@ -82,6 +82,10 @@ export function registerPermissionRoutes(app: FastifyInstance) {
       }
 
       // ask path: create pending approval, surface to UI, wait for the user.
+      // briefId is preserved on the approval row (via taskId column) so the
+      // sidebar can render "for brief abc123" next to each pending item —
+      // helps disambiguate when multiple sessions have pending approvals
+      // simultaneously.
       const approvalId = `appr-${randomUUID().slice(0, 8)}`;
       const db = getDb();
       db.insert(schema.approvals).values({
@@ -97,10 +101,15 @@ export function registerPermissionRoutes(app: FastifyInstance) {
         id: randomUUID(), ts: Date.now(), workspaceId,
         agentId: agentId ?? 'unknown',
         kind: 'system', level: 'warn',
-        text: `pending approval ${approvalId}: ${tool}(${JSON.stringify(args ?? {}).slice(0, 80)})`,
+        text: `pending approval ${approvalId}: ${tool}(${JSON.stringify(args ?? {}).slice(0, 80)})${briefId ? ` · brief ${briefId}` : ''}`,
       } as SystemChunk);
 
-      const waitMs = Math.min(Math.max(1000, req.body?.waitMs ?? 60_000), 120_000);
+      // 15-minute cap in manual mode so users have real time to review.
+      // Previous cap of 2 min was too aggressive — a user in a meeting or
+      // reading a big diff routinely blew past it, causing the hook to
+      // deny-by-timeout + the Claude session to abort. Auto/custom paths
+      // never take this branch so they aren't affected.
+      const waitMs = Math.min(Math.max(1000, req.body?.waitMs ?? 15 * 60_000), 15 * 60_000);
       const decision: 'approved' | 'denied' = await new Promise((resolve) => {
         const timer = setTimeout(() => {
           WAITERS.delete(approvalId);

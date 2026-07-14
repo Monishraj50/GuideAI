@@ -81,17 +81,21 @@ export class PermissionsProvider implements vscode.TreeDataProvider<Node> {
       for (const p of pending) {
         const args = safeParse(p.argsJson);
         const summary = summarize(p.tool, args);
+        // briefId (stored via approvals.taskId) helps disambiguate rows when
+        // multiple sessions have pending approvals at the same time. Fall
+        // back to the last-6 of the approval id when we don't know the brief.
+        const briefBadge = p.briefId ? `· ${p.briefId.slice(-8)}` : `· ${p.id.slice(-6)}`;
         out.push({
           label: summary,
-          description: p.id.slice(-6),
-          tooltip: `${summary}\n\n${p.argsJson}`,
+          description: briefBadge,
+          tooltip: `${summary}\n\napproval: ${p.id}${p.briefId ? `\nbrief: ${p.briefId}` : ''}\n\n${p.argsJson}`,
           iconId: 'warning',
           contextValue: 'pendingApproval',
           approvalId: p.id,
           command: {
             command: 'atrune.reviewApproval',
             title: 'Review',
-            arguments: [{ approvalId: p.id, tool: p.tool, args }],
+            arguments: [{ approvalId: p.id, tool: p.tool, args, briefId: p.briefId ?? undefined }],
           },
         });
       }

@@ -19,11 +19,17 @@
 
 type GateKey = string; // `${briefId}::${phase}`
 
-export type BriefMode = 'pending' | 'auto' | 'manual';
+export type BriefMode = 'pending' | 'auto' | 'manual' | 'assisted';
 
 /** Reserved gate name awaited at the very top of runPipeline. Released by
  *  start() once the user clicks "Start Implementing" and picks Auto or Manual. */
 export const START_GATE = '_start_';
+
+/** Reserved gate awaited AFTER Phase 1 (Plan) completes, when the brief was
+ *  dispatched in `assisted` mode. Released by the Plan editor webview via
+ *  POST /api/briefs/:briefId/plan/approve. Not awaited in 'auto' or
+ *  'manual' modes — the pipeline moves straight to Implement in those. */
+export const PLAN_APPROVED_GATE = '_plan_approved_';
 
 interface Gate {
   released: boolean;
@@ -71,7 +77,12 @@ export function modeOf(briefId: string): BriefMode {
  */
 export async function awaitRelease(briefId: string, phase: string): Promise<void> {
   const mode = modeOf(briefId);
+  // 'auto' resolves every gate immediately.
+  // 'assisted' resolves the START gate + per-phase gates immediately; the
+  //   Plan-editor pause uses a distinct gate name (PLAN_APPROVED_GATE) which
+  //   this function still awaits when called with it directly.
   if (mode === 'auto') return;
+  if (mode === 'assisted' && phase !== PLAN_APPROVED_GATE) return;
   const g = ensureGate(keyOf(briefId, phase));
   if (g.released) return;
   await g.promise;

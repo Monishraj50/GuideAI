@@ -74,35 +74,13 @@ export class ActiveWorkProvider implements vscode.TreeDataProvider<Node> {
       ];
     }
 
-    // Filter workspaces by the open folder, if any.
-    // BEHAVIOR CHANGE: when a cwd is set and NO workspace binds to it, we
-    // used to fall back to "show all" so the sidebar isn't blank. That was
-    // misleading — after `rm -rf .atrune/` + re-consent, the user would see
-    // stale workspaces from other folders and think their data survived.
-    // Now: no binding → "no project bound to this folder yet, create one".
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
-    let matching: WorkspaceSummary[] = all;
-    if (cwd) {
-      const annotated = await Promise.all(all.map(async (w) => {
-        const meta = await this.api.getWorkspaceMeta(w.id);
-        const folder = meta?.targetFolder ?? null;
-        const matches = !!folder && (folder === cwd || folder.startsWith(cwd + '/') || cwd.startsWith(folder + '/'));
-        return { ws: w, matches };
-      }));
-      const filtered = annotated.filter((a) => a.matches).map((a) => a.ws);
-      if (filtered.length === 0) {
-        return [
-          { label: 'No project bound to this folder', iconId: 'info' },
-          {
-            label: 'Create one →',
-            description: 'open the new-project form',
-            iconId: 'add',
-            command: { command: 'atrune.newProject', title: 'Create a new project' },
-          },
-        ];
-      }
-      matching = filtered;
-    }
+    // Show every workspace the server returned. Server-side per-folder DB
+    // routing (via the X-Atrune-Workspace header, consent-gated) already
+    // scopes this list to the currently-open folder — a strict tree-side
+    // targetFolder-must-match filter would double-gate and hide workspaces
+    // whose meta.json has a null / stale / normalized-differently targetFolder
+    // even though they legitimately live in this folder's .atrune/db.sqlite.
+    const matching: WorkspaceSummary[] = all;
 
     // For each workspace, list its briefs (top 5, most recent).
     const projectNodes = await Promise.all(matching.map(async (w): Promise<Node> => {

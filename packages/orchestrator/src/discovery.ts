@@ -21,6 +21,8 @@ export interface IntakeRecord {
   locked: boolean;
   lockedAt: number | null;
   discoveryContext: string;
+  /** Plan-editor: model tier for Phase 1 (Plan). */
+  preferredModel?: string;
 }
 
 export const BUDGET_BUFFER = 1.3;
@@ -100,6 +102,7 @@ export function loadIntake(workspaceId: string): IntakeRecord | null {
     locked: !!((row as any).locked),
     lockedAt: (row as any).lockedAt ?? null,
     discoveryContext: (row as any).discoveryContext ?? '',
+    preferredModel: (row as any).preferredModel ?? 'sonnet',
   };
 }
 
@@ -120,6 +123,7 @@ export function saveIntake(intake: IntakeRecord): void {
     locked: intake.locked ? 1 : 0,
     lockedAt: intake.lockedAt,
     discoveryContext: intake.discoveryContext ?? '',
+    preferredModel: intake.preferredModel ?? 'sonnet',
     updatedAt: now,
     createdAt: existing?.createdAt ?? now,
   };

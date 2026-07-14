@@ -345,6 +345,10 @@ const MIGRATIONS = [
   "ALTER TABLE work_items ADD COLUMN acceptance TEXT",
   // S9 · diff review base ref.
   "ALTER TABLE work_items ADD COLUMN base_git_ref TEXT",
+  // Plan-editor feature.
+  "ALTER TABLE briefs ADD COLUMN plan_gate_state TEXT",
+  "ALTER TABLE briefs ADD COLUMN preferred_model TEXT",
+  "ALTER TABLE project_intakes ADD COLUMN preferred_model TEXT NOT NULL DEFAULT 'sonnet'",
 ];
 
 function main() {

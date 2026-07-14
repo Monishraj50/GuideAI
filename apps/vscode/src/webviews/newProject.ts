@@ -87,6 +87,12 @@ export async function openNewProject(
         const hireMode: HireMode = ['auto', 'manual', 'hybrid'].includes(msg.hireMode)
           ? msg.hireMode
           : 'manual';
+        // Plan-editor: intake now carries a model preference (Haiku/Sonnet/Opus).
+        // Used to route Phase 1 (Plan). Regenerate button in the Plan editor
+        // may override it per-run.
+        const preferredModel: string = ['haiku', 'sonnet', 'opus'].includes(msg.preferredModel)
+          ? msg.preferredModel
+          : 'sonnet';
 
         if (!name) {
           panel?.webview.postMessage({ type: 'error', error: 'Project name is required' });
@@ -115,6 +121,17 @@ export async function openNewProject(
           } else {
             const created = await api.createWorkspace(name, targetFolder);
             if (!created.ok || !created.id) {
+              // Friendly 409: server tells us the existing id — surface an
+              // "Open existing" affordance in the webview instead of a raw
+              // error the user has to translate.
+              if (created.conflict && created.existingId) {
+                panel?.webview.postMessage({
+                  type: 'conflict',
+                  existingId: created.existingId,
+                  existingName: created.existingName ?? name,
+                });
+                return;
+              }
               throw new Error(created.error ?? 'workspace create failed');
             }
             wsId = created.id;
@@ -132,6 +149,7 @@ export async function openNewProject(
               budgetHintUnit,
               planningMode,
               hireMode,
+              preferredModel,
             }),
           });
           if (!intakeResp.ok) {
@@ -156,7 +174,11 @@ export async function openNewProject(
                     amount: budgetHintUsd,
                   }
                 : undefined,
-              mode: planningMode === 'auto' ? 'auto' : 'auto',
+              // Plan-editor: 'assisted' is now first-class. Pipeline pauses
+              // after Phase 1 for user Approve/Regenerate/Reject via the Plan
+              // editor webview. 'auto' still runs end-to-end without pausing.
+              mode: planningMode === 'assisted' ? 'assisted' : 'auto',
+              preferredModel,
             });
             if (!dispatched.ok) {
               // Workspace is created and intake saved — we surface the dispatch
@@ -181,6 +203,17 @@ export async function openNewProject(
       }
 
       case 'cancel': {
+        panel?.dispose();
+        return;
+      }
+
+      case 'openExisting': {
+        // 409 friendly path — the webview surfaced "already exists · Open it →"
+        // and the user clicked. Set the workspace active + close the form.
+        const wsId = typeof msg.workspaceId === 'string' ? msg.workspaceId : '';
+        if (wsId) {
+          try { await onCreated(wsId); } catch {}
+        }
         panel?.dispose();
         return;
       }
@@ -369,6 +402,16 @@ function renderHtml(opts: { defaultTargetFolder: string; prefill: PrefillState |
       <span class="hint">leave blank = no limit</span>
     </div>
 
+    <label class="field" for="preferred-model">Plan model</label>
+    <div class="field-row">
+      <select id="preferred-model" style="min-width: 160px;">
+        <option value="haiku">Haiku (fastest, cheapest)</option>
+        <option value="sonnet" selected>Sonnet (balanced — default)</option>
+        <option value="opus">Opus (most capable, most expensive)</option>
+      </select>
+      <span class="hint">Model used for Phase 1 (Plan). You can swap it per-run via the Plan editor's Regenerate button.</span>
+    </div>
+
     <label class="field">Planning mode</label>
     <div class="mode-grid">
       <input type="radio" id="plan-auto"     name="planning-mode" value="auto" />
@@ -489,6 +532,7 @@ function renderHtml(opts: { defaultTargetFolder: string; prefill: PrefillState |
 
       const planningMode = document.querySelector('input[name="planning-mode"]:checked')?.value || 'assisted';
       const hireMode = document.querySelector('input[name="hire-mode"]:checked')?.value || 'manual';
+      const preferredModel = document.getElementById('preferred-model')?.value || 'sonnet';
 
       vscode.postMessage({
         type: 'submit',
@@ -501,6 +545,7 @@ function renderHtml(opts: { defaultTargetFolder: string; prefill: PrefillState |
         budgetHintUnit: unit,
         planningMode,
         hireMode,
+        preferredModel,
       });
     });
     document.getElementById('cancel').addEventListener('click', () => {
@@ -516,6 +561,18 @@ function renderHtml(opts: { defaultTargetFolder: string; prefill: PrefillState |
       else if (m.type === 'success') { statusEl.textContent = 'Created · ' + (m.workspaceId || ''); statusEl.className = 'status ok'; }
       else if (m.type === 'error')   { submitBtn.disabled = false; statusEl.textContent = 'Error: ' + m.error; statusEl.className = 'status error'; }
       else if (m.type === 'pickedFolder') { folderEl.value = m.path || ''; }
+      else if (m.type === 'conflict') {
+        // 409 friendly path: project with this name already exists.
+        submitBtn.disabled = false;
+        statusEl.innerHTML = 'Project "' + m.existingName + '" already exists. '
+          + '<a href="#" id="open-existing">Open it →</a>';
+        statusEl.className = 'status error';
+        const link = document.getElementById('open-existing');
+        if (link) link.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          vscode.postMessage({ type: 'openExisting', workspaceId: m.existingId });
+        });
+      }
     });
   </script>
 </body></html>`;

@@ -21,6 +21,8 @@ interface IntakePutBody {
   planningMode?: PlanningMode;
   hireMode?: HireMode;
   discoveryContext?: string;
+  /** Plan-editor: model tier for Phase 1 (Plan). haiku | sonnet | opus */
+  preferredModel?: string;
 }
 
 export function registerIntakeRoutes(app: FastifyInstance) {
@@ -51,7 +53,8 @@ export function registerIntakeRoutes(app: FastifyInstance) {
           locked: existing?.locked ?? false,
           lockedAt: existing?.lockedAt ?? null,
           discoveryContext: b.discoveryContext ?? existing?.discoveryContext ?? '',
-        });
+          preferredModel: b.preferredModel ?? (existing as any)?.preferredModel ?? 'sonnet',
+        } as any);
         return loadIntake(req.params.id);
       } catch (err: any) {
         reply.code(400); return { error: String(err?.message ?? err) };

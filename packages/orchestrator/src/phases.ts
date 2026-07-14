@@ -16,6 +16,7 @@ import { writeOverallPlanMd, writeProjectIndexMd, writeFeatureContextMd } from '
 // S1 strip: diagnoseFailure removed.
 import { normalizeSessionJsonl } from './normalizeSessionJsonl.js';
 import { getDb as getDbForOverall, schema as schemaForOverall } from '@guideai/shared/db';
+import { eq as eqForOverall } from 'drizzle-orm';
 import * as taskGate from './taskGate.js';
 // secondOpinion / designShotgun / pass@k removed in S0 (Claude-only).
 import { renderMemoryBlock } from './memory.js';
@@ -93,6 +94,10 @@ export interface RunPipelineArgs {
   /** Per-phase routing: agent that should actually run each phase. If absent
    *  for a phase, the CoS (agentId above) runs it. */
   route?: Record<Phase, RouteDecision>;
+  /** Plan-editor feature: override the model tier used for Phase 1 (Plan).
+   *  Populated from intake.preferred_model on first run; can be swapped by
+   *  the Plan editor's Regenerate button. Ignored for Implement/Review. */
+  planModelOverride?: string;
 }
 
 export interface PhaseResult {
@@ -128,7 +133,7 @@ export interface PipelineResult {
  * context and writes a markdown file to the brief's artifact directory.
  */
 export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult> {
-  const { workspaceId, agentId, briefId, brief, cwd, securityTagged, designTagged, route } = args;
+  const { workspaceId, agentId, briefId, brief, cwd, securityTagged, designTagged, route, planModelOverride } = args;
   ensureBriefDir(workspaceId, briefId);
 
   // Sessions are now keyed per-task by (workspaceId, featureTag, role).
@@ -235,7 +240,13 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
       });
     }
     previousWorker = worker;
-    let routing = routeModel({ phase, override: (worker.model as any) ?? undefined });
+    // Per-brief model override for Phase 1 (Plan) — set by the Plan editor's
+    // Regenerate action. Falls through to per-agent override or default tier
+    // otherwise.
+    const explicitOverride = phase === 'plan' && planModelOverride
+      ? planModelOverride
+      : (worker.model as any) ?? undefined;
+    let routing = routeModel({ phase, override: explicitOverride });
 
     // Budget + rate-limit gate. May downgrade the model tier, warn, or pause.
     {
@@ -479,6 +490,51 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
     try { writeProjectIndexMd(workspaceId); } catch {}
     if (featureTagForBrief) {
       try { writeFeatureContextMd(workspaceId, featureTagForBrief); } catch {}
+    }
+
+    // Plan-editor feature — if this brief is in `assisted` mode and we just
+    // finished Phase 1 (Plan), pause here until the user Approves via the
+    // Plan editor webview. The webview lands the artifact into the editor,
+    // may call Regenerate (which throws PLAN_REGENERATE_SIGNAL — caller
+    // reruns), or calls Approve (releases the gate).
+    if (phase === 'plan' && taskGate.modeOf(briefId) === 'assisted') {
+      try {
+        const db = getDbForOverall();
+        db.update(schemaForOverall.briefs)
+          .set({ planGateState: 'pending', status: 'plan-review-pending' } as any)
+          .where(eqForOverall(schemaForOverall.briefs.id, briefId)).run();
+      } catch {}
+      appendEvent(workspaceId, {
+        id: randomUUID(), ts: Date.now(), workspaceId, agentId,
+        kind: 'system', level: 'info',
+        text: `plan-review: pipeline paused after Phase 1 — open Atrune Plan Editor to approve or regenerate`,
+      });
+      appendEvent(workspaceId, makePhaseChunk(workspaceId, agentId, briefId, phase, 'paused'));
+      await taskGate.awaitRelease(briefId, taskGate.PLAN_APPROVED_GATE);
+      // On release, decide what happened:
+      //   - state='approved' → user clicked Approve → continue to Implement.
+      //   - state='rejected' → user clicked Reject → cancel the brief.
+      //   - state='pending'  → user clicked Regenerate → this pipeline is
+      //       stale (a new one is being launched via resumeBrief); exit
+      //       cleanly so we don't race the new one into Implement.
+      try {
+        const db = getDbForOverall();
+        const row = db.select().from(schemaForOverall.briefs).all()
+          .find((b: any) => b.id === briefId) as any;
+        if (row?.planGateState === 'rejected') {
+          throw new Error('plan-review: brief rejected by reviewer');
+        }
+        if (row?.planGateState === 'pending') {
+          // Regenerate in flight — a fresh pipeline is (re)starting via
+          // resumeBrief(). Bail out silently so Implement/Review don't
+          // double-run.
+          throw new Error('plan-review: superseded by regenerate');
+        }
+      } catch (err: any) {
+        const msg = String(err?.message ?? '');
+        if (msg.includes('plan-review: brief rejected')) throw err;
+        if (msg.includes('plan-review: superseded by regenerate')) throw err;
+      }
     }
   }
   } finally {

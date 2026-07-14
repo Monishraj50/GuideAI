@@ -23,6 +23,7 @@ import { StartProvider } from './views/start';
 import { FeaturesProvider } from './views/features';
 import { SkillsAndPacksProvider } from './views/skillsAndPacks';
 import { openDiffReview, closeDiffReviewIfOpen } from './webviews/diffReview';
+import { openPlanReview, closePlanReviewIfOpen } from './webviews/planReview';
 import { openApprovalDiff } from './approvalDiff';
 import { PermissionsStream } from './permissionsStream';
 import { openRulesEditor } from './webviews/rulesEditor';
@@ -258,6 +259,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
           try { closeKanbanIfOpen(); } catch {}
           try { closeBriefComposerIfOpen(); } catch {}
           try { closeDiffReviewIfOpen(); } catch {}
+          try { closePlanReviewIfOpen(); } catch {}
           activeWorkspaceId = null;
         }
         await server?.dispose();
@@ -1207,6 +1209,11 @@ export async function activate(ctx: vscode.ExtensionContext) {
   statusBar = new AtruneStatusBar();
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
 
+  // Plan editor · track which briefs we've already popped the editor for so
+  // a same-brief SSE re-arrival (regenerate mid-flight) doesn't spawn a new
+  // tab. Cleared when the brief leaves plan-review-pending status.
+  const _planEditorSeen = new Set<string>();
+
   async function tick() {
     await refreshActiveWorkspace();
     refreshAll();
@@ -1220,6 +1227,43 @@ export async function activate(ctx: vscode.ExtensionContext) {
     } else {
       statusBar?.update(null);
     }
+
+    // Plan editor auto-open: any brief in the active workspace that just
+    // paused at PLAN_APPROVED_GATE pops open the editor. Idempotent — a
+    // regenerate mid-flight re-fetches the plan and re-messages the OPEN
+    // tab (see planReview.ts same-brief branch) rather than opening a new one.
+    try {
+      const pending = await api.listPendingPlanReviews();
+      const forActive = activeWorkspaceId
+        ? pending.filter((b) => b.workspaceId === activeWorkspaceId)
+        : pending;
+      for (const b of forActive) {
+        if (_planEditorSeen.has(b.id)) {
+          // Already opened once; refresh in case the plan.md was regenerated.
+          const detail = await api.getBriefPlan(b.id);
+          if (detail) {
+            openPlanReview({
+              briefId: detail.briefId, briefBody: detail.body,
+              planBody: detail.planBody, model: detail.model,
+              onDone: () => { _planEditorSeen.delete(b.id); refreshAll(); },
+            });
+          }
+          continue;
+        }
+        const detail = await api.getBriefPlan(b.id);
+        if (!detail) continue;
+        _planEditorSeen.add(b.id);
+        openPlanReview({
+          briefId: detail.briefId, briefBody: detail.body,
+          planBody: detail.planBody, model: detail.model,
+          onDone: () => { _planEditorSeen.delete(b.id); refreshAll(); },
+        });
+      }
+      // Prune ids that are no longer pending (approved / rejected / gone).
+      for (const id of Array.from(_planEditorSeen)) {
+        if (!pending.find((p) => p.id === id)) _planEditorSeen.delete(id);
+      }
+    } catch {}
   }
 
   // Set the initial connection + consent context BEFORE the async startup

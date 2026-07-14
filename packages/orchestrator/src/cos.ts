@@ -128,8 +128,14 @@ export async function submitBrief(args: {
    *  per-phase release call (the Kanban drives this). 'pending' (Phase C —
    *  defer-dispatch) blocks at the synthetic start gate until the user clicks
    *  Start Implementing in the project UI; the /start endpoint then promotes
-   *  the brief to auto or manual and releases the gate. */
-  mode?: 'pending' | 'auto' | 'manual';
+   *  the brief to auto or manual and releases the gate. 'assisted' runs
+   *  Phase 1 (Plan), then pauses on the Plan editor for user Approve/
+   *  Regenerate/Reject before Implement + Review continue. */
+  mode?: 'pending' | 'auto' | 'manual' | 'assisted';
+  /** Model tier to use for Phase 1 (Plan). Overrides the S3 default. Sourced
+   *  from project intake's `preferred_model` on first dispatch; the Plan
+   *  editor's Regenerate updates it per re-run. */
+  preferredModel?: string;
 }): Promise<SubmitBriefResult> {
   const { workspaceId, body } = args;
   // A brief is security-tagged if the caller asks for it OR the body contains
@@ -258,6 +264,10 @@ export async function submitBrief(args: {
   db.insert(schema.briefs).values({
     id: briefId, workspaceId, body, status: 'active', createdAt: now(),
     claudeSessionId,
+    // Plan-editor: capture the assisted-mode gate state + the model used for
+    // Phase 1 (Plan). Read back by the /plan/regenerate endpoint.
+    planGateState: args.mode === 'assisted' ? 'pending' : null,
+    preferredModel: args.preferredModel ?? null,
   } as any).run();
 
   // S8 · seed work_items from the goal decomposer. Multi-step briefs land in
@@ -388,9 +398,20 @@ export async function submitBrief(args: {
   // server console.
   void (async () => {
     try {
+      // Read the intake's preferred_model as a fallback if the caller
+      // didn't pass one explicitly. Plan-editor Regenerate sets it per-run.
+      let planModel = args.preferredModel;
+      if (!planModel) {
+        try {
+          const intake = db.select().from(schema.projectIntakes).all()
+            .find((r: any) => r.workspaceId === workspaceId) as any;
+          if (intake?.preferredModel) planModel = intake.preferredModel;
+        } catch {}
+      }
       const pipelineResult = await runPipeline({
         workspaceId, agentId, briefId, brief: body, cwd, securityTagged,
         designTagged: isDesignTagged(body), route,
+        ...(planModel ? { planModelOverride: planModel } : {}),
       });
 
       for (const r of pipelineResult.phaseResults) {

@@ -10,6 +10,10 @@ export interface PendingApproval {
   argsJson: string;
   decision: string;
   decidedAt: number;
+  /** briefId that generated this approval (stored via the approvals.taskId
+   *  column). Populated for approvals created after the 15-min-wait patch so
+   *  the sidebar can disambiguate concurrent sessions. Empty for older rows. */
+  briefId?: string | null;
 }
 
 export function listPending(_workspaceId: string): PendingApproval[] {
@@ -24,6 +28,9 @@ export function listPending(_workspaceId: string): PendingApproval[] {
       argsJson: a.argsJson,
       decision: a.decision,
       decidedAt: a.decidedAt,
+      // approvals.taskId was repurposed to hold briefId when the /evaluate
+      // route persists the approval row. Old rows had `null` here.
+      briefId: (a as any).taskId ?? null,
     }));
 }
 
