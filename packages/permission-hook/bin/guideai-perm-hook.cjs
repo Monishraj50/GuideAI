@@ -38,6 +38,12 @@ const HARD_DENY_BASH_PATTERNS = [
 ];
 
 function localModeIsAuto() {
+  // GLOBAL AUTO OVERRIDE — manual mode is temporarily disabled across the
+  // whole product. Every session runs in auto (hard-denies still apply).
+  // To reintroduce manual mode: delete this early-return + restore the
+  // original policies.json read below.
+  return true;
+  /* eslint-disable-next-line no-unreachable */
   try {
     const raw = fs.readFileSync(POLICIES_JSON, 'utf8');
     const p = JSON.parse(raw);

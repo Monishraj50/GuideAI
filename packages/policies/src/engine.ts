@@ -104,13 +104,13 @@ export function loadPolicies(): Policies {
   try {
     const raw = fs.readFileSync(paths.policiesJson, 'utf8');
     const p = JSON.parse(raw) as Partial<Policies>;
-    const rawMode = p.mode;
-    const isValid = rawMode === 'auto' || rawMode === 'manual' || rawMode === 'custom';
-    const mode: PermissionMode = isValid ? rawMode : 'auto';
-    // Self-heal: if the file had an invalid / null / missing mode field, write
-    // the normalized value back so subsequent reads (from the hook script, from
-    // other tools) don't have to re-normalize + the file stays truthful.
-    if (!isValid) {
+    // GLOBAL AUTO OVERRIDE — manual/custom modes are temporarily disabled.
+    // Any persisted mode is coerced to 'auto' + the file is rewritten so
+    // subsequent reads (hook script, other tools) see the coerced value.
+    // To reintroduce manual/custom: replace this block with the original
+    // isValid-based validation.
+    const mode: PermissionMode = 'auto';
+    if (p.mode !== 'auto') {
       try {
         const healed = {
           mode,

@@ -15,6 +15,7 @@ import { hireAgent } from './hiring.js';
 import { clearSessionAllow } from '@guideai/policies/engine';
 import { classifyBrief } from './classifyBrief.js';
 import { runAutoFix, type DirectTaskRun } from './directTask.js';
+import { createWorkItem, updateWorkItem, markPhaseStarted } from './wbs.js';
 import { outcomeFromReview } from './sessions.js';
 import { pickSession } from './resume.js';
 import { decompose, topoSort } from './decompose.js';
@@ -148,8 +149,13 @@ export async function submitBrief(args: {
   // and run one agent end-to-end. Explicit [heavy] / [quick] tags override
   // the heuristic. Security-tagged briefs bypass the shortcut entirely — we
   // don't want a "one file" security fix to skip review/verdict.
+  //
+  // Assisted mode ALSO bypasses the quick lane. When the caller explicitly
+  // asks for the Plan-editor pause, they want the full plan → implement →
+  // review pipeline (with work_items in the Kanban + per-task diff review) —
+  // not a one-shot fixer that leaves the progress tracker empty.
   const classification = classifyBrief(body);
-  if (classification.lane === 'quick' && !securityTagged) {
+  if (classification.lane === 'quick' && !securityTagged && args.mode !== 'assisted') {
     const briefId = `brief-${randomUUID().slice(0, 8)}`;
     const featureSlug = featureSlugFromBrief(classification.cleanBody);
     // S7 — try to resume an existing session for this (workspace, feature)
@@ -177,6 +183,35 @@ export async function submitBrief(args: {
     // S6 — ensure the feature page exists so appendSessionPointer has
     // something to write into.
     try { upsertFeature(workspaceId, featureSlug, { goal: classification.cleanBody, status: 'in-progress' }); } catch {}
+    // Progress tracker · seed one work_item for the quick fix so the Kanban
+    // shows the task instead of a silent runAutoFix. We use phase='implement'
+    // + status='todo' → then markPhaseStarted flips to in_progress + stamps
+    // baseGitRef (auto-inits git if needed, same helper the heavy pipeline
+    // uses) so per-task Diff review works on quick fixes too.
+    const quickWorkItemTitle = `Quick fix: ${(classification.cleanBody.split('\n').find((l) => l.trim()) ?? classification.cleanBody).trim().slice(0, 100)}`;
+    let quickWorkItemId: string | null = null;
+    try {
+      const quickItem = createWorkItem({
+        workspaceId, briefId,
+        title: quickWorkItemTitle,
+        description: classification.cleanBody,
+        phase: 'implement',
+        status: 'todo',
+        priority: 'high',
+        source: 'auto',
+        featureTag: featureSlug,
+      });
+      quickWorkItemId = quickItem.id;
+      // Flip to in_progress + stamp baseGitRef (auto-git-init happens here
+      // if the target folder isn't a git repo yet — same code path as the
+      // heavy pipeline's phase-start).
+      markPhaseStarted({ workspaceId, briefId, phase: 'implement' });
+    } catch (err: any) {
+      appendEvent(workspaceId, {
+        ...base(workspaceId, agentId), kind: 'system', level: 'warn',
+        text: `quick-lane: could not seed work_item (${err?.message ?? err})`,
+      } as SystemChunk);
+    }
     try {
       const run = await runAutoFix({
         workspaceId,
@@ -187,6 +222,15 @@ export async function submitBrief(args: {
         featureSlug,
         briefId,
       });
+      // Mirror the run's outcome onto the seeded work_item so the progress
+      // tracker shows done / blocked. Skipped silently when seeding failed.
+      if (quickWorkItemId) {
+        try {
+          updateWorkItem(quickWorkItemId, {
+            status: run.status === 'ok' ? 'done' : 'blocked',
+          });
+        } catch {}
+      }
       db.update(schema.briefs)
         .set({ status: run.status === 'ok' ? 'done' : 'failed' })
         .where(eq(schema.briefs.id, briefId)).run();
@@ -212,6 +256,11 @@ export async function submitBrief(args: {
         run,
       };
     } catch (err: any) {
+      // Also mirror the failure on the seeded work_item so the tracker
+      // doesn't strand it as in_progress after runAutoFix threw.
+      if (quickWorkItemId) {
+        try { updateWorkItem(quickWorkItemId, { status: 'blocked' }); } catch {}
+      }
       db.update(schema.briefs).set({ status: 'failed' })
         .where(eq(schema.briefs.id, briefId)).run();
       try {
@@ -668,12 +717,32 @@ export async function resumeBrief(briefId: string): Promise<{
       text: `resume: un-blocked ${blocked.length} failed task(s) for retry`,
     } as SystemChunk);
   }
+  // Thread the same planModelOverride submitBrief uses so the Plan editor's
+  // Regenerate action ACTUALLY re-runs Phase 1 with the picked model (opus /
+  // haiku / sonnet). Falls back to intake.preferred_model if the brief row
+  // doesn't have one stamped.
+  let planModel: string | undefined = (brief as any).preferredModel ?? undefined;
+  if (!planModel) {
+    try {
+      const intake = db.select().from(schema.projectIntakes).all()
+        .find((r: any) => r.workspaceId === workspaceId) as any;
+      if (intake?.preferredModel) planModel = intake.preferredModel;
+    } catch {}
+  }
+  // Loud log so we can tell when regenerate actually kicks off — the
+  // silent-catch pattern above used to hide "resumeBrief never fired"
+  // errors, making Regenerate look like it did nothing.
+  appendEvent(workspaceId, {
+    ...base(workspaceId, agentId), kind: 'system', level: 'info',
+    text: `resume: launching runPipeline for ${briefId}${planModel ? ` with plan model=${planModel}` : ''}`,
+  } as SystemChunk);
   // Fire-and-forget: identical pattern to submitBrief's pipeline.
   void runPipeline({
     workspaceId, agentId, briefId, brief: body, cwd,
     securityTagged: false,
     designTagged: isDesignTagged(body),
     route,
+    ...(planModel ? { planModelOverride: planModel } : {}),
   }).catch((err) => {
     appendEvent(workspaceId, {
       ...base(workspaceId, agentId), kind: 'system', level: 'error',

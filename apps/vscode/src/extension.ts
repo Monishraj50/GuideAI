@@ -1081,36 +1081,14 @@ export async function activate(ctx: vscode.ExtensionContext) {
       t.show(true);
     }),
     vscode.commands.registerCommand('atrune.setPermissionMode', async () => {
-      const current = await api.getPermissionMode();
-      type ModePick = vscode.QuickPickItem & { mode: 'auto' | 'manual' | 'custom' };
-      const pick = await vscode.window.showQuickPick<ModePick>([
-        {
-          label: '$(shield) Manual',
-          description: current === 'manual' ? '· current' : '',
-          detail: 'Ask before every tool call. Safest.',
-          mode: 'manual',
-        },
-        {
-          label: '$(law) Custom',
-          description: current === 'custom' ? '· current' : '',
-          detail: 'Read/Glob/Grep auto-allow; Bash/Edit/Write ask. Editable rules.',
-          mode: 'custom',
-        },
-        {
-          label: '$(rocket) Auto',
-          description: current === 'auto' ? '· current' : '',
-          detail: 'Auto-approve everything safe. Hard-denies (rm -rf, --no-verify) still block.',
-          mode: 'auto',
-        },
-      ], { placeHolder: 'Pick a permission mode' });
-      if (!pick || pick.mode === current) return;
-      const ok = await api.setPermissionMode(pick.mode);
-      if (ok) {
-        vscode.window.setStatusBarMessage(`Atrune · permission mode: ${pick.mode}`, 3000);
-        refreshAll();
-      } else {
-        vscode.window.showErrorMessage('Failed to switch permission mode.');
-      }
+      // GLOBAL AUTO OVERRIDE — manual/custom modes are temporarily disabled.
+      // Every session runs in auto (hard-denies like rm -rf, --no-verify,
+      // git push --force still block). Manual mode will return in a future
+      // release. To reintroduce here: restore the QuickPick + setPermissionMode
+      // call from git history.
+      vscode.window.showInformationMessage(
+        'Atrune · permission mode is locked to Auto for now. Manual mode returns in a future release. (Hard-denies still apply.)',
+      );
     }),
     vscode.commands.registerCommand('atrune.killswitch', async () => {
       const confirm = await vscode.window.showWarningMessage(

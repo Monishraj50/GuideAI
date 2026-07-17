@@ -457,6 +457,18 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
     }
 
     const artifact = artifactPath(workspaceId, briefId, phase);
+    // Loud warning when Claude returned 0 tokens — usually an auth failure,
+    // an unavailable model, or a permission block that killed the CLI
+    // silently. Without this we silently record "(no output)" as a valid
+    // phase result and the user has to guess.
+    if (tokensIn === 0 && tokensOut === 0) {
+      appendEvent(workspaceId, {
+        id: randomUUID(), ts: Date.now(), workspaceId, agentId: worker.id,
+        kind: 'system', level: 'warn',
+        text: `phase ${phase} produced 0 tokens — Claude CLI likely failed silently. `
+          + `Check server.log for [stderr] lines, verify your Claude subscription is connected, or try a different model.`,
+      });
+    }
     const md = `# ${phase} — brief ${briefId}\n\n` +
       `_worker: ${worker.displayName} (${worker.role}) · model: ${routing.tier} · tokens: ${tokensIn} in / ${tokensOut} out_\n\n` +
       `${aiText.trim() || '(no output)'}\n`;

@@ -117,6 +117,7 @@ function esc(s: string): string {
 function renderHtml(args: OpenPlanReviewArgs): string {
   return /* html */`<!doctype html>
 <html><head><meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
 <style>
   :root { color-scheme: light dark; }
   body { font-family: var(--vscode-font-family); font-size: 13px; padding: 12px 16px; }
@@ -186,16 +187,42 @@ function renderHtml(args: OpenPlanReviewArgs): string {
     vscode.postMessage({ type: 'reject', note: document.getElementById('note').value || undefined });
   });
 
+  // Track whether the user manually changed the model dropdown. Once they
+  // do, refreshes from the extension MUST NOT clobber it — otherwise the
+  // 5s poll tick fires refresh with the SERVER'S current model and
+  // overwrites the user's selection, giving the "always snaps back to
+  // Sonnet" symptom.
+  let userChangedModel = false;
+  modelSel.addEventListener('change', () => { userChangedModel = true; });
+
   // Same-brief re-entry from the extension (Regenerate finished, new plan.md written).
   window.addEventListener('message', (evt) => {
     if (evt.data?.type === 'refresh') {
-      document.getElementById('plan').value = evt.data.planBody ?? '';
-      document.getElementById('model-badge').textContent = evt.data.model ?? modelSel.value;
-      modelSel.value = evt.data.model ?? modelSel.value;
+      // Only refresh the plan textarea when the SERVER has new content AND
+      // the user hasn't edited it locally (respect edits-in-progress).
+      const plan = document.getElementById('plan');
+      const badge = document.getElementById('model-badge');
+      if (evt.data.planBody !== undefined && plan.dataset.userEdited !== '1') {
+        plan.value = evt.data.planBody;
+      }
+      if (evt.data.model && !userChangedModel) {
+        // Only sync the dropdown when the user hasn't touched it themselves.
+        modelSel.value = evt.data.model;
+        badge.textContent = evt.data.model;
+      }
       document.getElementById('status').textContent = '';
     } else if (evt.data?.type === 'regenerating') {
       document.getElementById('status').textContent = '↻ regenerating with ' + (evt.data.model ?? '') + '…';
+      // Regenerate WAS accepted by the server — reset the "user picked
+      // model" flag so future refreshes can update the dropdown to reflect
+      // the newly-persisted model.
+      userChangedModel = false;
     }
+  });
+
+  // Detect textarea edits so refresh doesn't overwrite user changes.
+  document.getElementById('plan').addEventListener('input', (e) => {
+    e.target.dataset.userEdited = '1';
   });
 </script>
 </body></html>`;

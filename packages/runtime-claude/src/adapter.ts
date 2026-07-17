@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import readline from 'node:readline';
+import { fileURLToPath } from 'node:url';
 import type {
   AgentHandle,
   RunOnceResult,
@@ -17,12 +18,17 @@ const CLAUDE_BIN = process.env.GUIDEAI_CLAUDE_BIN ?? 'claude';
 
 // Absolute path to our PreToolUse hook script. Resolved at module load so we
 // don't recompute it on every spawn.
+//
+// CRITICAL: this package is ESM (`"type": "module"`), so `__dirname` is
+// `undefined`. Using it as the base would silently fall back to
+// process.cwd() (the server's launch dir), which resolves to a wrong path,
+// which fails fs.existsSync, which makes writePermissionSettings skip
+// silently — the pipeline then spawns Claude with NO hook config, Claude
+// runs in default permission mode, denies every Write, Phase 1 produces
+// zero output. Use import.meta.url via fileURLToPath instead.
 const HOOK_SCRIPT = (() => {
-  // Walk up from this file to find the workspace root, then point at the hook.
-  // adapter.ts lives at packages/runtime-claude/src/, so ../../permission-hook
-  // would point to packages/permission-hook.
   try {
-    const here = __dirname || process.cwd();
+    const here = path.dirname(fileURLToPath(import.meta.url));
     return path.resolve(here, '..', '..', 'permission-hook', 'bin', 'guideai-perm-hook.cjs');
   } catch { return ''; }
 })();
@@ -30,11 +36,25 @@ const HOOK_SCRIPT = (() => {
 const PERMISSIONS_URL = process.env.GUIDEAI_PERMISSIONS_URL ?? 'http://127.0.0.1:4000/api/permissions/evaluate';
 
 function writePermissionSettings(agentCwd: string, opts: SpawnOpts): string | null {
-  if (!HOOK_SCRIPT || !fs.existsSync(HOOK_SCRIPT)) return null;
+  if (!HOOK_SCRIPT || !fs.existsSync(HOOK_SCRIPT)) {
+    // Surface a stderr line — silent skip here was the root cause of the
+    // "Claude requested permissions to write to X, but you haven't granted
+    // it yet" symptom users saw when the hook script couldn't be resolved.
+    try { process.stderr.write(`[adapter] writePermissionSettings skipped — HOOK_SCRIPT missing at ${HOOK_SCRIPT || '(unresolved)'}\n`); } catch {}
+    return null;
+  }
   const settingsDir = path.join(agentCwd, '.claude');
   fs.mkdirSync(settingsDir, { recursive: true });
   const settingsFile = path.join(settingsDir, 'settings.json');
-  // Match every tool — let GuideAI's policy engine decide which ones to gate.
+  // The gate is entirely GuideAI's now:
+  //   1. permissionMode: 'bypassPermissions' — Claude Code stops prompting
+  //      the invisible SDK caller (there IS no user to answer in headless
+  //      -p mode), which was the actual source of the "haven't granted it
+  //      yet" denials for Write/Edit calls.
+  //   2. PreToolUse hook fires on every tool → posts to /api/permissions/
+  //      evaluate → decision honors OUR mode: auto short-circuits to allow,
+  //      manual surfaces a pending row in the sidebar. Hard-denies (rm -rf,
+  //      --no-verify, force-push) still block regardless of mode.
   const config = {
     hooks: {
       PreToolUse: [
@@ -44,11 +64,13 @@ function writePermissionSettings(agentCwd: string, opts: SpawnOpts): string | nu
         },
       ],
     },
-    // Hint to the CLI: we're handling permission via hooks, no need for stdin
-    // prompts (which wouldn't work in -p mode anyway).
-    permissionMode: 'default',
+    permissionMode: 'bypassPermissions',
   };
   fs.writeFileSync(settingsFile, JSON.stringify(config, null, 2));
+  // Trace line — shows up in server.log so we can verify the hook wiring
+  // reached this cwd. Silent success used to hide the "wait, was the config
+  // actually written?" question when Claude denied writes.
+  try { process.stderr.write(`[adapter] wrote hook config → ${settingsFile}\n`); } catch {}
   return settingsFile;
 }
 
@@ -150,11 +172,14 @@ function buildEnv(extra?: Record<string, string>, opts?: SpawnOpts): NodeJS.Proc
   // override > global default > legacy). Deny-by-default for any other secret.
   const apiKey = process.env.ANTHROPIC_API_KEY ?? readStoredClaudeKey(opts?.workspaceId);
   if (apiKey) out.ANTHROPIC_API_KEY = apiKey;
-  // Tell the hook where to phone home + which workspace/agent it's running for.
+  // Tell the hook where to phone home + which workspace/agent/brief it's
+  // running for. Threading briefId lets the sidebar Permissions row show
+  // provenance so users can disambiguate concurrent sessions.
   out.GUIDEAI_PERMISSIONS_URL = PERMISSIONS_URL;
   if (opts) {
     out.GUIDEAI_WORKSPACE_ID = opts.workspaceId;
     out.GUIDEAI_AGENT_ID = opts.agentId;
+    if (opts.briefId) out.GUIDEAI_BRIEF_ID = opts.briefId;
   }
   if (extra) Object.assign(out, extra);
   return out;
@@ -254,6 +279,21 @@ function mapClaudeLine(
   }
 }
 
+/** True iff Claude Code already has a session .jsonl file for this UUID.
+ *  Claude Code stores sessions at `~/.claude/projects/<encoded-cwd>/<sid>.jsonl`.
+ *  We scan every project dir since the encoding varies with cwd and we can't
+ *  reliably rebuild it. Fast: readdir + existsSync on a handful of files. */
+function claudeSessionFileExists(sessionId: string): boolean {
+  try {
+    const projectsDir = path.join(os.homedir(), '.claude', 'projects');
+    if (!fs.existsSync(projectsDir)) return false;
+    for (const d of fs.readdirSync(projectsDir)) {
+      if (fs.existsSync(path.join(projectsDir, d, `${sessionId}.jsonl`))) return true;
+    }
+  } catch {}
+  return false;
+}
+
 function baseArgs(opts: SpawnOpts): string[] {
   const args: string[] = ['--output-format', 'stream-json', '--verbose'];
   if (opts.model) args.push('--model', opts.model);
@@ -263,7 +303,20 @@ function baseArgs(opts: SpawnOpts): string[] {
   }
   // Per-brief Claude session: every phase of a brief reuses the same id so
   // the conversation history is preserved + recoverable via `claude --resume`.
-  if (opts.sessionId) args.push('--session-id', opts.sessionId);
+  //
+  // Claude Code semantics:
+  //   --session-id X → create a NEW session with this id (errors if X exists)
+  //   --resume X     → continue an EXISTING session
+  // Passing --session-id on a session that already exists was the root cause
+  // of "0 tokens on second spawn" — the CLI errors "already in use" and
+  // exits silently in -p mode. Auto-detect and pick the right flag.
+  if (opts.sessionId) {
+    if (claudeSessionFileExists(opts.sessionId)) {
+      args.push('--resume', opts.sessionId);
+    } else {
+      args.push('--session-id', opts.sessionId);
+    }
+  }
   // Human-readable label for the picker — e.g. "frontend-developer · auth-flow".
   if (opts.sessionName) args.push('--name', opts.sessionName);
   return args;

@@ -126,6 +126,7 @@ function renderHtml(workItemId: string, taskTitle: string, files: HunkFile[]): s
 
   return /* html */`<!doctype html>
 <html><head><meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
 <style>
   :root { color-scheme: light dark; }
   body { font-family: var(--vscode-font-family); font-size: 13px; padding: 12px 16px; }

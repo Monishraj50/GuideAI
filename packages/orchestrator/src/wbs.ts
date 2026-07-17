@@ -316,6 +316,49 @@ function stampBaseGitRef(workItemId: string, workspaceId: string): void {
   // Late-require so this module doesn't take a hard child_process dep in
   // environments (test drivers) that never call markPhaseStarted.
   const { execSync } = require('node:child_process') as typeof import('node:child_process');
+  const fsMod = require('node:fs') as typeof import('node:fs');
+  const pathMod = require('node:path') as typeof import('node:path');
+  // Auto-init the target folder as a git repo if it isn't one. Without this,
+  // Diff review returns "no baseGitRef" and the per-task review affordance
+  // does nothing — a common case since Atrune-managed folders often start
+  // as plain directories. Baseline commit gives a real HEAD to diff against;
+  // subsequent Claude edits show up as a clean per-task hunk set.
+  const dotGit = pathMod.join(cwd, '.git');
+  if (!fsMod.existsSync(dotGit)) {
+    try {
+      execSync('git init', { cwd, stdio: ['ignore', 'ignore', 'ignore'] });
+      // Local identity so `git commit` works even when the user has no
+      // global git identity configured. Scope is --local so we don't touch
+      // the user's global config.
+      execSync('git config user.email "atrune@local"', { cwd, stdio: 'ignore' });
+      execSync('git config user.name "Atrune"', { cwd, stdio: 'ignore' });
+      // Ignore Atrune's own bookkeeping so its churn doesn't show up in
+      // per-task diffs. `.atrune/` = per-workspace SQLite + logs;
+      // `.claude/` = Claude Code's hook config we drop per spawn.
+      const gitignorePath = pathMod.join(cwd, '.gitignore');
+      const gitignore = fsMod.existsSync(gitignorePath)
+        ? fsMod.readFileSync(gitignorePath, 'utf8')
+        : '';
+      const additions: string[] = [];
+      if (!/^\.atrune\/?$/m.test(gitignore)) additions.push('.atrune/');
+      if (!/^\.claude\/?$/m.test(gitignore)) additions.push('.claude/');
+      if (additions.length > 0) {
+        fsMod.writeFileSync(
+          gitignorePath,
+          (gitignore ? gitignore.replace(/\s*$/, '\n') : '') + additions.join('\n') + '\n',
+        );
+      }
+      execSync('git add -A', { cwd, stdio: 'ignore' });
+      // --allow-empty covers a truly empty target folder; the .gitignore
+      // above at least gives us one file to commit.
+      execSync('git commit --allow-empty -m "atrune baseline"', { cwd, stdio: 'ignore' });
+    } catch {
+      // git binary missing / permission problem / etc. Fall through: the
+      // `git rev-parse HEAD` below will fail too, we silently skip stamping,
+      // and diff review will still report "no baseGitRef" with an accurate
+      // reason. Better than crashing the pipeline over a review feature.
+    }
+  }
   let head: string;
   try {
     head = execSync('git rev-parse HEAD', { cwd, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
@@ -342,6 +385,48 @@ export function markPhaseComplete(args: {
     updateWorkItem(r.id, { status: 'done' });
   }
   return matching.map((r) => getWorkItem(r.id)!);
+}
+
+/** Plan-editor · flip every `phase='plan'` work_item for this brief back to
+ *  `in_progress` so the Progress tracker reflects the regeneration. Called
+ *  from the /plan/regenerate route BEFORE the fresh pipeline starts.
+ *
+ *  Also clears `claudeSessionId` — CRITICAL for Regenerate: the previous run
+ *  minted a Claude session UUID + created its .jsonl file at
+ *  `~/.claude/projects/<encoded-cwd>/<sid>.jsonl`. If we re-spawn with the
+ *  same `--session-id X`, Claude Code errors "Session ID X is already in
+ *  use" → the child exits with 0 tokens → Regenerate looks like a silent
+ *  no-op. Nulling `claudeSessionId` here makes resolveTaskSession() mint a
+ *  FRESH UUID on the next Phase 1, so the spawn creates a NEW session file
+ *  and Phase 1 actually runs. The OLD .jsonl stays on disk as history. */
+export function revertPlanWorkItemsToInProgress(args: {
+  workspaceId: string;
+  briefId: string;
+}): number {
+  const db = getDb();
+  const now = Date.now();
+  const matching = db.select().from(schema.workItems).all()
+    .filter((r) => r.workspaceId === args.workspaceId
+      && r.briefId === args.briefId
+      && r.phase === 'plan'
+      && r.status !== 'cancelled');
+  for (const r of matching) {
+    updateWorkItem(r.id, { status: 'in_progress' });
+    // Reset completedAt + null claudeSessionId so a fresh session is minted
+    // on the next Phase 1 spawn. See docblock for the rationale.
+    try {
+      db.update(schema.workItems)
+        .set({
+          completedAt: null as any,
+          updatedAt: now,
+          startedAt: now,
+          claudeSessionId: null as any,
+        } as any)
+        .where(eq(schema.workItems.id, r.id))
+        .run();
+    } catch {}
+  }
+  return matching.length;
 }
 
 /** Mark all items matching a (briefId, phase) as blocked (UI shows this as

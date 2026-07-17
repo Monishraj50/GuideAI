@@ -24,6 +24,10 @@ export interface SpawnOpts {
    *  prompt box + the `--resume` picker so the user can tell sessions apart
    *  at a glance (otherwise it's just a UUID prefix). */
   sessionName?: string;
+  /** Brief id — threaded into GUIDEAI_BRIEF_ID env so the PreToolUse hook's
+   *  approval rows carry provenance ("Edit foo.ts · brief abc123") in the
+   *  Permissions sidebar. */
+  briefId?: string;
 }
 
 export interface RunOnceResult {

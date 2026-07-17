@@ -21,8 +21,11 @@ export function registerPolicyRoutes(app: FastifyInstance) {
       reply.code(400);
       return { error: 'mode must be one of: auto, manual, custom' };
     }
-    setMode(mode);
-    return { ok: true, mode };
+    // GLOBAL AUTO OVERRIDE — silently coerce every incoming mode to 'auto'
+    // until manual/custom are reintroduced. Coercion (vs 400 error) keeps
+    // existing UI clients working without a schema break.
+    setMode('auto');
+    return { ok: true, mode: 'auto' as const, coerced: mode !== 'auto' };
   });
 
   app.get<{ Querystring: { workspaceId?: string } }>(

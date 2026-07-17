@@ -56,10 +56,11 @@ export class PermissionsProvider implements vscode.TreeDataProvider<Node> {
     const out: Node[] = [
       {
         label: `Mode: ${prettyMode(mode)}`,
-        description: 'click to change',
+        description: 'locked — manual mode returns soon',
+        tooltip: 'Every Claude session runs in auto mode. Hard-denies (rm -rf, --no-verify, git push --force, shutdown) still block. Manual mode will return in a future release.',
         iconId: modeIcon(mode),
         contextValue: 'permissionMode',
-        command: { command: 'atrune.setPermissionMode', title: 'Set mode' },
+        command: { command: 'atrune.setPermissionMode', title: 'Mode info' },
       },
       {
         label: 'Killswitch — stop every running agent',

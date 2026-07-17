@@ -150,8 +150,15 @@ export async function openBriefComposer(
         panel?.webview.postMessage({ type: 'submitting' });
         // targetFolder is now a workspace-level setting; the orchestrator
         // reads it from the workspace meta.json. We don't send it per-brief.
+        //
+        // Dispatched briefs mirror the project-creation flow: assisted mode,
+        // so Phase 1 pauses at the Plan editor for Approve / Regenerate /
+        // Reject. preferredModel is read server-side from the workspace's
+        // intake row when we don't send one explicitly — matches the
+        // regenerate route's fallback path.
         const r = await api.submitBrief({
-          workspaceId: wsId, body, securityTagged, taggedAgents, budget, mode: 'auto',
+          workspaceId: wsId, body, securityTagged, taggedAgents, budget,
+          mode: 'assisted',
         });
         if (r.ok) {
           panel?.webview.postMessage({ type: 'success', briefId: r.briefId });

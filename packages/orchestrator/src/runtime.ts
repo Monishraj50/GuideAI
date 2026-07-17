@@ -175,6 +175,7 @@ export async function runTask(
       model: vessel.model,
       onChunk: opts.onChunk,
       ...(vessel.sessionId ? { sessionId: vessel.sessionId } : {}),
+      ...(task.briefId ? { briefId: task.briefId } : {}),
     },
     prompt,
   );

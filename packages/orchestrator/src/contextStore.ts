@@ -197,6 +197,30 @@ export function appendSessionPointer(args: {
   fs.writeFileSync(featurePath, content);
 }
 
+/** Plan-editor · reject flow: strip a specific session row from the feature's
+ *  `## Sessions` table (no-op if the row / feature / table doesn't exist).
+ *  We identify the row by the session UUID string in the first column. */
+export function removeSessionPointer(args: {
+  workspaceId: string;
+  slug: string;
+  sessionId: string;
+}): boolean {
+  const featurePath = path.join(featureDir(args.workspaceId, args.slug), 'FEATURE.md');
+  if (!fs.existsSync(featurePath)) return false;
+  const before = fs.readFileSync(featurePath, 'utf-8');
+  // Match the pipe-table row that starts with a backtick-wrapped session id.
+  // e.g. `| \`abc-uuid…\` | 2026-07-05 | did-this | ✓ shipped |`
+  const rowRe = new RegExp(`^\\|\\s*\`${escapeRe(args.sessionId)}\`\\s*\\|.*$\\n?`, 'm');
+  const after = before.replace(rowRe, '');
+  if (after === before) return false;
+  fs.writeFileSync(featurePath, after);
+  return true;
+}
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 // ───────── project TOC ─────────
 
 interface FeatureSummary {
